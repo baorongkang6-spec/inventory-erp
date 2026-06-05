@@ -113,3 +113,42 @@ class OverviewReportTests(TestCase):
         # 应付：期初2000 + 1130 - 500核销 = 期末2630
         self.assertEqual(ov["payable"]["opening"], Decimal("2000.00"))
         self.assertEqual(ov["payable"]["ending"], Decimal("2630.00"))
+
+
+class ReconciliationTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from datetime import date
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from apps.finance.services import create_purchase_invoice
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        create_purchase_invoice(company=cls.c1, user=None, doc_date=date(2026, 6, 1), supplier=cls.sup,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0.13")}])  # 应付 1130
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        cls.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="finance", codename="view_purchaseinvoice"))
+
+    def test_payable_recon_lines(self):
+        from apps.opening.reports import recon_lines
+        lines = recon_lines(self.c1, "payable")
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["system_amount"], Decimal("1130.00"))
+
+    def test_reconciliation_post_persists_diff(self):
+        from apps.opening.models import ReconciliationRun
+        self.client.force_login(self.user)
+        # 外部值填 1100 → 差异 -30
+        resp = self.client.post("/reconciliation/", {
+            "category": "payable", "as_of": "2026-06-30", "ext-0": "1100",
+        }, SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        run = ReconciliationRun.objects.get(company=self.c1, category="payable")
+        line = run.lines.get()
+        self.assertEqual(line.system_amount, Decimal("1130.00"))
+        self.assertEqual(line.external_amount, Decimal("1100.00"))
+        self.assertEqual(line.diff, Decimal("-30.00"))

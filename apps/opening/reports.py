@@ -96,3 +96,42 @@ def overview_table(companies):
                 totals[k] += r[k]
         blocks.append({"key": key, "label": label, "rows": rows, "totals": totals})
     return blocks
+
+
+# ============================= 月底对账（M5-3）================================
+def recon_lines(company, category):
+    """返回某类别的系统侧对账行：[{label, system_amount}]。"""
+    from apps.finance.models import NoteReceivable, PurchaseInvoice, SalesInvoice
+    out = []
+    if category == "bank":
+        for acc in BankAccount.objects.filter(company=company).order_by("name"):
+            jin = _s(BankJournal.objects.filter(company=company, bank_account=acc,
+                                                direction=BankJournal.Direction.IN))
+            jout = _s(BankJournal.objects.filter(company=company, bank_account=acc,
+                                                 direction=BankJournal.Direction.OUT))
+            out.append({"label": str(acc), "system_amount": acc.opening_balance + jin - jout})
+    elif category == "note_recv":
+        for n in NoteReceivable.objects.filter(company=company).exclude(
+                status=NoteReceivable.Status.VOID).order_by("doc_no"):
+            if n.unused > 0:
+                out.append({"label": f"{n.doc_no} {n.note_no}", "system_amount": n.unused})
+    elif category == "stock":
+        for b in StockBalance.objects.filter(company=company).select_related("product").order_by("product__code"):
+            if b.amount or b.quantity:
+                out.append({"label": f"{b.product.code} {b.product.name}（{b.quantity}）",
+                            "system_amount": b.amount})
+    elif category == "receivable":
+        agg = {}
+        for inv in SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED).select_related("customer"):
+            if inv.outstanding:
+                agg[inv.customer] = agg.get(inv.customer, Z) + inv.outstanding
+        for cust, amt in sorted(agg.items(), key=lambda kv: kv[0].code):
+            out.append({"label": str(cust), "system_amount": amt})
+    elif category == "payable":
+        agg = {}
+        for inv in PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED).select_related("supplier"):
+            if inv.outstanding:
+                agg[inv.supplier] = agg.get(inv.supplier, Z) + inv.outstanding
+        for sup, amt in sorted(agg.items(), key=lambda kv: kv[0].code):
+            out.append({"label": str(sup), "system_amount": amt})
+    return out

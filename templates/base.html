@@ -70,6 +70,7 @@
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'payables_report' %}">应付账款余额表</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'receivables_report' %}">应收账款余额表</a></li>{% endif %}
             {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'notes_balance_report' %}">票据余额表</a></li>{% endif %}
+            {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'reconciliation' %}">月底对账</a></li>{% endif %}
             {% if perms.finance.add_purchaseinvoice %}<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="{% url 'opening_import' %}">期初导入</a></li>{% endif %}
           </ul>
         </li>

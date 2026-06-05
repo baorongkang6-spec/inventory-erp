@@ -10,7 +10,8 @@ from apps.accounts import roles
 from apps.core.scope import get_active_company, get_visible_companies
 
 from .imports import IMPORTERS, TEMPLATES, build_template
-from .reports import overview_table
+from .models import ReconciliationLine, ReconciliationRun
+from .reports import overview_table, recon_lines
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -70,3 +71,46 @@ def overview(request):
     blocks = overview_table(companies)
     return render(request, "opening/overview.html",
                   {"companies": companies, "blocks": blocks})
+
+
+# ============================= 月底对账（M5-3）================================
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def reconciliation(request):
+    from decimal import Decimal, InvalidOperation
+
+    from django.utils import timezone
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+
+    categories = ReconciliationRun.Category.choices
+    category = request.GET.get("category") or request.POST.get("category") or "bank"
+    sys_lines = recon_lines(company, category)
+    result = None
+
+    if request.method == "POST":
+        as_of = request.POST.get("as_of") or str(timezone.localdate())
+        run = ReconciliationRun.objects.create(
+            company=company, created_by=request.user, category=category, as_of_date=as_of)
+        result = []
+        for i, line in enumerate(sys_lines):
+            raw = (request.POST.get(f"ext-{i}") or "").strip()
+            try:
+                ext = Decimal(raw) if raw else line["system_amount"]
+            except (InvalidOperation, ValueError):
+                ext = line["system_amount"]
+            diff = ext - line["system_amount"]
+            ReconciliationLine.objects.create(
+                run=run, item_label=line["label"], system_amount=line["system_amount"],
+                external_amount=ext, diff=diff)
+            result.append({"label": line["label"], "system": line["system_amount"],
+                           "external": ext, "diff": diff})
+        messages.success(request, "对账完成，已保存对账记录")
+
+    return render(request, "opening/reconciliation.html", {
+        "categories": categories, "category": category,
+        "sys_lines": sys_lines, "result": result, "today": timezone.localdate(),
+    })

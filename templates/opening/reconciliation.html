@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}月底对账 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-3">月底对账<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-auto">
+    <label class="form-label">对账类别</label>
+    <select name="category" class="form-select" onchange="this.form.submit()">
+      {% for val, label in categories %}
+      <option value="{{ val }}" {% if val == category %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+
+{% if result %}
+<div class="card mb-3">
+  <div class="card-header">对账结果（差异≠0 标红）</div>
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light"><tr><th class="text-start">项目</th><th>系统余额</th><th>外部余额</th><th>差异</th></tr></thead>
+      <tbody>
+        {% for r in result %}
+        <tr class="{% if r.diff %}table-danger{% endif %}">
+          <td class="text-start">{{ r.label }}</td><td>{{ r.system }}</td><td>{{ r.external }}</td>
+          <td class="fw-semibold">{{ r.diff }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="category" value="{{ category }}">
+  <div class="row g-2 mb-3">
+    <div class="col-auto">
+      <label class="form-label">截止日期</label>
+      <input type="date" name="as_of" value="{{ today|date:'Y-m-d' }}" class="form-control">
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">录入外部余额（留空＝与系统一致）</div>
+    <div class="table-responsive">
+      <table class="table table-striped mb-0 align-middle text-end">
+        <thead class="table-light"><tr><th class="text-start">项目</th><th>系统余额</th><th style="width:20%">外部余额</th></tr></thead>
+        <tbody>
+          {% for line in sys_lines %}
+          <tr>
+            <td class="text-start">{{ line.label }}</td>
+            <td>{{ line.system_amount }}</td>
+            <td><input type="number" step="0.01" name="ext-{{ forloop.counter0 }}"
+                       class="form-control form-control-sm text-end" placeholder="{{ line.system_amount }}"></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" class="text-center text-muted py-3">该类别暂无可对账项目</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if sys_lines %}<button type="submit" class="btn btn-primary mt-3">生成对账表</button>{% endif %}
+</form>
+{% endif %}
+{% endblock %}
