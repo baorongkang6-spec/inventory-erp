@@ -152,3 +152,37 @@ class ReconciliationTests(TestCase):
         self.assertEqual(line.system_amount, Decimal("1130.00"))
         self.assertEqual(line.external_amount, Decimal("1100.00"))
         self.assertEqual(line.diff, Decimal("-30.00"))
+
+
+class OpeningImportViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        cls.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="finance", codename="add_purchaseinvoice"))
+
+    def test_import_view_uploads_stock(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.inventory.models import StockBalance
+        buf = _xlsx([["商品编码", "数量", "单价"], ["P001", 20, 5]])
+        self.client.force_login(self.user)
+        resp = self.client.post("/opening/", {
+            "kind": "stock",
+            "file": SimpleUploadedFile("o.xlsx", buf.read(),
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        bal = StockBalance.objects.get(company=self.c1, product=self.p)
+        self.assertEqual(bal.quantity, Decimal("20.000"))
+        self.assertEqual(bal.amount, Decimal("100.00"))
+
+    def test_template_download(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/opening/template/stock/", SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("spreadsheetml", resp["Content-Type"])

@@ -218,7 +218,8 @@ class Command(BaseCommand):
         for code in ("C1", "C2", "C3"):
             BankAccount.objects.get_or_create(
                 company=self.companies[code], name="基本户",
-                defaults={"bank_name": "中国银行", "account_no": f"6217-{code}-0001"},
+                defaults={"bank_name": "中国银行", "account_no": f"6217-{code}-0001",
+                          "opening_balance": Decimal("100000.00")},  # 期初银行存款演示
             )
         self.stdout.write("  · 样例商品/客户/供应商/银行账户")
 
