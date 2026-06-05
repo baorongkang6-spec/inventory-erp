@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}首页 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">欢迎，{{ user }}</h3>
+  {% if active_company %}<span class="badge text-bg-primary fs-6">当前账套：{{ active_company }}</span>{% endif %}
+</div>
+
+{% if user_roles %}
+<p class="text-muted">你的角色：
+  {% for r in user_roles %}<span class="badge text-bg-info">{{ r }}</span> {% endfor %}
+</p>
+{% elif user.is_superuser %}
+<p class="text-muted"><span class="badge text-bg-dark">超级管理员</span></p>
+{% else %}
+<div class="alert alert-warning">尚未分配角色，请联系管理员在后台为你分配角色与可见公司。</div>
+{% endif %}
+
+<div class="row g-3 mt-1">
+  {% if is_overview_role %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card h-100 border-primary">
+      <div class="card-body">
+        <h5 class="card-title">跨公司总览</h5>
+        <p class="card-text text-muted">三家公司银行存款/库存/往来/票据的期初·收入·发出·结存汇总。</p>
+        <span class="badge text-bg-secondary">M5 实现</span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">商品库存</h5>
+        <p class="card-text text-muted">
+          {% if is_inventory_only %}查看当前账套的库存商品数量。{% else %}维护商品主数据；M1 起含数量金额与移动加权单价。{% endif %}
+        </p>
+        <a href="{% url 'product_list' %}" class="btn btn-sm btn-outline-primary">进入商品</a>
+      </div>
+    </div>
+  </div>
+
+  {% if menu.customers %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">客户</h5>
+        <p class="card-text text-muted">维护销售对象主数据。</p>
+        <a href="{% url 'customer_list' %}" class="btn btn-sm btn-outline-primary">进入客户</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if menu.suppliers %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">供应商</h5>
+        <p class="card-text text-muted">维护采购对象主数据。</p>
+        <a href="{% url 'supplier_list' %}" class="btn btn-sm btn-outline-primary">进入供应商</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

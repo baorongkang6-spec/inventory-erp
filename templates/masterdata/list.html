@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ title }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  {% if can_add %}<a href="{{ create_url }}" class="btn btn-primary btn-sm">新增{{ title }}</a>{% endif %}
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+          <th class="text-end">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% for cell in row.cells %}<td>{{ cell|default:"—" }}</td>{% endfor %}
+          <td class="text-end text-nowrap">
+            {% if can_change %}<a href="{{ row.edit_url }}" class="btn btn-sm btn-outline-secondary">编辑</a>{% endif %}
+            {% if can_delete %}<a href="{{ row.delete_url }}" class="btn btn-sm btn-outline-danger">删除</a>{% endif %}
+            {% if not can_change and not can_delete %}<span class="text-muted small">只读</span>{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="{{ headers|length|add:1 }}" class="text-center text-muted py-4">当前账套暂无{{ title }}数据</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

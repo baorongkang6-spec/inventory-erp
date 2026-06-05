@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}登录 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-sm-8 col-md-5 col-lg-4">
+    <div class="card shadow-sm mt-5">
+      <div class="card-body p-4">
+        <h4 class="card-title text-center mb-4">关联企业库存 ERP</h4>
+        {% if form.errors %}
+        <div class="alert alert-danger">用户名或密码不正确。</div>
+        {% endif %}
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label" for="id_username">用户名</label>
+            <input type="text" name="username" id="id_username" class="form-control" autofocus required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="id_password">密码</label>
+            <input type="password" name="password" id="id_password" class="form-control" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">登录</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
