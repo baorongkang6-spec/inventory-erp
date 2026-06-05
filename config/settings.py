@@ -7,10 +7,14 @@
 - 密钥、调试开关均走环境变量，仓库内只留安全的开发默认值。
 """
 
+import datetime
 import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 启用日（期初基准日）。SPEC §8.1：2026-06-01，可经环境变量覆盖。
+OPENING_DATE = datetime.date.fromisoformat(os.environ.get("ERP_OPENING_DATE", "2026-06-01"))
 
 
 def env_bool(key: str, default: bool) -> bool:
@@ -45,6 +49,7 @@ INSTALLED_APPS = [
     "apps.purchasing",
     "apps.sales",
     "apps.finance",
+    "apps.opening",
 ]
 
 MIDDLEWARE = [

@@ -54,6 +54,7 @@ class PurchaseInvoice(CompanyScopedModel):
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    is_opening = models.BooleanField("期初", default=False)
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.REGISTERED)
     remark = models.CharField("备注", max_length=255, blank=True)
 
@@ -213,6 +214,7 @@ class SalesInvoice(CompanyScopedModel):
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    is_opening = models.BooleanField("期初", default=False)
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.REGISTERED)
     remark = models.CharField("备注", max_length=255, blank=True)
 
@@ -345,6 +347,7 @@ class NoteReceivable(CompanyScopedModel):
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.ON_HAND)
     remark = models.CharField("备注", max_length=255, blank=True)
     is_imported = models.BooleanField("Excel导入", default=False)
+    is_opening = models.BooleanField("期初", default=False)
 
     class Meta:
         verbose_name = "应收票据"
@@ -380,6 +383,7 @@ class NotePayable(CompanyScopedModel):
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.ISSUED)
     remark = models.CharField("备注", max_length=255, blank=True)
     is_imported = models.BooleanField("Excel导入", default=False)
+    is_opening = models.BooleanField("期初", default=False)
 
     class Meta:
         verbose_name = "应付票据"

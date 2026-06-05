@@ -257,7 +257,7 @@ def allocate_receipt(*, receipt, allocations, user=None):
 # ============================= 票据（M3）=====================================
 @transaction.atomic
 def create_note_receivable(*, company, user, draw_date, amount, customer=None,
-                           note_no="", due_date=None, remark="") -> NoteReceivable:
+                           note_no="", due_date=None, remark="", is_opening=False) -> NoteReceivable:
     """登记一张应收票据。"""
     amount = round_money(amount)
     if amount <= 0:
@@ -266,7 +266,7 @@ def create_note_receivable(*, company, user, draw_date, amount, customer=None,
         company=company, created_by=user,
         doc_no=next_doc_no(NoteReceivable, company, "YSP", draw_date),
         note_no=note_no, draw_date=draw_date, due_date=due_date,
-        customer=customer, amount=amount, remark=remark,
+        customer=customer, amount=amount, remark=remark, is_opening=is_opening,
     )
     AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=note,
                     summary=f"应收票据 {note.doc_no} 金额 {amount}")
@@ -275,7 +275,7 @@ def create_note_receivable(*, company, user, draw_date, amount, customer=None,
 
 @transaction.atomic
 def create_note_payable(*, company, user, draw_date, supplier, amount,
-                        note_no="", due_date=None, remark="") -> NotePayable:
+                        note_no="", due_date=None, remark="", is_opening=False) -> NotePayable:
     """登记一张应付票据。"""
     amount = round_money(amount)
     if amount <= 0:
@@ -284,7 +284,7 @@ def create_note_payable(*, company, user, draw_date, supplier, amount,
         company=company, created_by=user,
         doc_no=next_doc_no(NotePayable, company, "YFP", draw_date),
         note_no=note_no, draw_date=draw_date, due_date=due_date,
-        supplier=supplier, amount=amount, remark=remark,
+        supplier=supplier, amount=amount, remark=remark, is_opening=is_opening,
     )
     AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=note,
                     summary=f"应付票据 {note.doc_no} 供应商 {supplier} 金额 {amount}")
@@ -372,3 +372,44 @@ def settle_payable_against_purchase(*, note, allocations, user=None):
         invoice_model=PurchaseInvoice, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
         allocations=allocations, is_endorsement=False, user=user,
     )
+
+
+# ============================= 期初往来（M5）==================================
+@transaction.atomic
+def create_opening_payable(*, company, user, supplier, amount, doc_date) -> PurchaseInvoice:
+    """期初应付：建一张 is_opening 采购发票（含税额=期初应付，单行「期初」）。"""
+    amount = round_money(amount)
+    inv = PurchaseInvoice.objects.create(
+        company=company, created_by=user, is_opening=True,
+        doc_no=next_doc_no(PurchaseInvoice, company, "QCYF", doc_date),
+        invoice_no="期初", doc_date=doc_date, supplier=supplier,
+        amount_untaxed=amount, tax_amount=ZERO_MONEY, amount_taxed=amount,
+        remark="期初应付",
+    )
+    PurchaseInvoiceLine.objects.create(
+        invoice=inv, description="期初应付", amount_untaxed=amount,
+        tax_rate=ZERO_MONEY, tax_amount=ZERO_MONEY, amount_taxed=amount,
+    )
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=inv,
+                    summary=f"期初应付 {supplier} {amount}")
+    return inv
+
+
+@transaction.atomic
+def create_opening_receivable(*, company, user, customer, amount, doc_date) -> SalesInvoice:
+    """期初应收：建一张 is_opening 销售发票（含税额=期初应收，单行「期初」）。"""
+    amount = round_money(amount)
+    inv = SalesInvoice.objects.create(
+        company=company, created_by=user, is_opening=True,
+        doc_no=next_doc_no(SalesInvoice, company, "QCYS", doc_date),
+        invoice_no="期初", doc_date=doc_date, customer=customer,
+        amount_untaxed=amount, tax_amount=ZERO_MONEY, amount_taxed=amount,
+        remark="期初应收",
+    )
+    SalesInvoiceLine.objects.create(
+        invoice=inv, description="期初应收", amount_untaxed=amount,
+        tax_rate=ZERO_MONEY, tax_amount=ZERO_MONEY, amount_taxed=amount,
+    )
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=inv,
+                    summary=f"期初应收 {customer} {amount}")
+    return inv

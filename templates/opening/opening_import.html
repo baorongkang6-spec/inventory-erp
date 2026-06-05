@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}期初导入 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-1">期初数据导入<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<p class="text-muted">启用日（期初基准日）：<strong>{{ opening_date }}</strong>。每类下载模板→填好→上传；重复导入自动跳过。</p>
+
+<div class="row g-3">
+  {% for c in cards %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">{{ c.label }}</h5>
+        <a href="{% url 'opening_template' c.kind %}" class="btn btn-sm btn-outline-secondary mb-3">下载模板</a>
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <input type="hidden" name="kind" value="{{ c.kind }}">
+          <div class="input-group input-group-sm">
+            <input type="file" name="file" accept=".xlsx" class="form-control" required>
+            <button type="submit" class="btn btn-primary">导入</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
