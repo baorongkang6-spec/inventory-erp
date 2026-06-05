@@ -2,9 +2,20 @@
 {% block title %}{{ doc.doc_no }} · 采购入库{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">采购入库单 {{ doc.doc_no }}</h4>
-  <a href="{% url 'inbound_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  <h4 class="mb-0">采购入库单 {{ doc.doc_no }}
+    {% if doc.status == 'void' %}<span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
+  <div class="d-flex gap-2">
+    {% if doc.status != 'void' and not doc.source_outbound_id and perms.purchasing.void_purchaseinbound %}
+    <form method="post" action="{% url 'inbound_void' doc.pk %}" onsubmit="return confirm('确认作废本入库单？将反向冲减库存。');">
+      {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'inbound_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
 </div>
+{% if doc.source_outbound_id %}
+<div class="alert alert-info">本单由关联销售出库自动生成；如需作废请作废对方的源销售出库单以联动。</div>
+{% endif %}
 
 <div class="card mb-3">
   <div class="card-body row g-2">

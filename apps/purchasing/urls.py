@@ -8,4 +8,5 @@ urlpatterns = [
     path("inbound/", views.InboundListView.as_view(), name="inbound_list"),
     path("inbound/new/", views.inbound_create, name="inbound_create"),
     path("inbound/<int:pk>/", views.InboundDetailView.as_view(), name="inbound_detail"),
+    path("inbound/<int:pk>/void/", views.inbound_void, name="inbound_void"),
 ]

@@ -4,14 +4,16 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
 from apps.core.mixins import CompanyScopedMixin
+from apps.core.scope import get_active_company, get_visible_companies
 from apps.inventory.services import InventoryError
 
 from .forms import InboundHeaderForm, InboundLineFormSet
 from .models import PurchaseInbound
-from .services import create_and_post_inbound
+from .services import create_and_post_inbound, void_purchase_inbound
 
 
 class InboundListView(CompanyScopedMixin, ListView):
@@ -70,5 +72,19 @@ def inbound_create(request):
 
 
 def _active_company(request):
-    from apps.core.scope import get_active_company, get_visible_companies
     return get_active_company(request, list(get_visible_companies(request.user)))
+
+
+@require_POST
+@login_required
+@permission_required("purchasing.void_purchaseinbound", raise_exception=True)
+def inbound_void(request, pk):
+    company = _active_company(request)
+    doc = get_object_or_404(PurchaseInbound, pk=pk, company=company)
+    try:
+        void_purchase_inbound(doc, request.user)
+    except InventoryError as e:
+        messages.error(request, f"作废失败：{e}")
+    else:
+        messages.success(request, f"已作废采购入库 {doc.doc_no}")
+    return redirect("inbound_detail", pk=doc.pk)

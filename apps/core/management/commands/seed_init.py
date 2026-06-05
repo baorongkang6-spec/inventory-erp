@@ -62,6 +62,7 @@ ROLE_PERMS = {
         "masterdata.add_supplier", "masterdata.change_supplier",
         "masterdata.view_supplier", "masterdata.delete_supplier",
         "purchasing.add_purchaseinbound", "purchasing.view_purchaseinbound",
+        "purchasing.void_purchaseinbound",
         "inventory.view_stockbalance",
     ],
     # 销售：管客户、建销售出库、看库存（仅数量）
@@ -70,6 +71,7 @@ ROLE_PERMS = {
         "masterdata.add_customer", "masterdata.change_customer",
         "masterdata.view_customer", "masterdata.delete_customer",
         "sales.add_salesoutbound", "sales.view_salesoutbound",
+        "sales.void_salesoutbound",
         "inventory.view_stockbalance",
     ],
     # 财务：看全部往来、看单据、看库存含金额、管理银行账户与发票/应付

@@ -2,8 +2,9 @@
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
 from apps.core.mixins import CompanyScopedMixin
@@ -12,7 +13,7 @@ from apps.inventory.services import InsufficientStockError, InventoryError
 
 from .forms import OutboundHeaderForm, OutboundLineFormSet
 from .models import SalesOutbound
-from .services import create_and_post_outbound
+from .services import create_and_post_outbound, void_sales_outbound
 
 
 class OutboundListView(CompanyScopedMixin, ListView):
@@ -30,7 +31,22 @@ class OutboundDetailView(CompanyScopedMixin, DetailView):
     context_object_name = "doc"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("customer")
+        return super().get_queryset().select_related("customer", "mirror_inbound")
+
+
+@require_POST
+@login_required
+@permission_required("sales.void_salesoutbound", raise_exception=True)
+def outbound_void(request, pk):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    doc = get_object_or_404(SalesOutbound, pk=pk, company=company)
+    try:
+        void_sales_outbound(doc, request.user)
+    except InventoryError as e:
+        messages.error(request, f"作废失败：{e}")
+    else:
+        messages.success(request, f"已作废销售出库 {doc.doc_no}")
+    return redirect("outbound_detail", pk=doc.pk)
 
 
 @login_required

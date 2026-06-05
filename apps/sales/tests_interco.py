@@ -59,3 +59,56 @@ class IntercoMirrorTests(TestCase):
         )
         self.assertIsNone(out.mirror_inbound)
         self.assertFalse(PurchaseInbound.objects.filter(company=self.c2).exists())
+
+
+class IntercoVoidTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.c2 = Company.objects.create(code="C2", name="恒本源", short_name="恒本源")
+        cls.p1 = Product.objects.create(company=cls.c1, code="P001", name="环氧树脂")
+        cls.cust_c2 = Customer.objects.create(
+            company=cls.c1, code="REL-C2", name="恒本源", related_company=cls.c2)
+        post_inbound(cls.c1, cls.p1, Decimal("100"), Decimal("10"))
+
+    def _mirror_outbound(self, qty):
+        return create_and_post_outbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust_c2,
+            lines=[{"product": self.p1, "quantity": Decimal(qty)}])
+
+    def test_void_outbound_cascades_to_mirror_and_reverses_both(self):
+        out = self._mirror_outbound("30")
+        inbound = out.mirror_inbound
+        p_c2 = Product.objects.get(company=self.c2, code="P001")
+        from apps.sales.services import void_sales_outbound
+        void_sales_outbound(out, None)
+        out.refresh_from_db(); inbound.refresh_from_db()
+        self.assertEqual(out.status, "void")
+        self.assertEqual(inbound.status, "void")  # 镜像联动作废
+        # C1 库存恢复 100，C2 库存归 0
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c1, product=self.p1).quantity, Decimal("100.000"))
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c2, product=p_c2).quantity, Decimal("0.000"))
+
+    def test_void_blocked_when_mirror_stock_consumed(self):
+        from apps.sales.services import void_sales_outbound
+        from apps.inventory.services import InsufficientStockError, post_outbound
+        out = self._mirror_outbound("30")
+        p_c2 = Product.objects.get(company=self.c2, code="P001")
+        # C2 把镜像入库的货卖掉一部分 → 反冲会致负库存
+        post_outbound(self.c2, p_c2, Decimal("25"))
+        with self.assertRaises(InsufficientStockError):
+            void_sales_outbound(out, None)
+        out.refresh_from_db()
+        # 整体回滚：源单未作废，C1 仍是出库后的 70
+        self.assertEqual(out.status, "posted")
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c1, product=self.p1).quantity, Decimal("70.000"))
+
+    def test_cannot_void_mirror_directly(self):
+        from apps.purchasing.services import void_purchase_inbound
+        from apps.inventory.services import InventoryError
+        out = self._mirror_outbound("30")
+        with self.assertRaises(InventoryError):
+            void_purchase_inbound(out.mirror_inbound, None)  # 直接作废镜像应被拒绝

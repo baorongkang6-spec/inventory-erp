@@ -68,6 +68,42 @@ def post_inbound(company, product, quantity, unit_price, *,
 
 
 @transaction.atomic
+def reverse_move(move: StockMove, *, source_type="", source_id="", source_no="") -> StockMove:
+    """精确反冲一笔历史流水（用于单据作废）。
+
+    - 反冲入库：从结存中扣回原数量与原金额；若现存数量/金额不足（货已被后续消耗）→
+      抛 InsufficientStockError，拒绝作废。
+    - 反冲出库：把原数量与原成本加回结存。
+    生成一笔方向相反的补偿流水，金额照原值，保证数量金额式账可追溯。
+    """
+    bal = _get_balance_for_update(move.company, move.product)
+    if move.direction == StockMove.Direction.IN:
+        if move.quantity > bal.quantity or move.amount > bal.amount:
+            raise InsufficientStockError(move.product, bal.quantity, move.quantity)
+        bal.quantity = round_qty(bal.quantity - move.quantity)
+        bal.amount = round_money(bal.amount - move.amount)
+        new_dir = StockMove.Direction.OUT
+    else:
+        bal.quantity = round_qty(bal.quantity + move.quantity)
+        bal.amount = round_money(bal.amount + move.amount)
+        new_dir = StockMove.Direction.IN
+
+    if bal.quantity == 0:
+        bal.amount = ZERO_MONEY
+        bal.avg_price = ZERO_MONEY
+    else:
+        bal.avg_price = round_money(bal.amount / bal.quantity)
+    bal.save(update_fields=["quantity", "amount", "avg_price", "updated_at"])
+
+    return StockMove.objects.create(
+        company=move.company, product=move.product, direction=new_dir,
+        quantity=move.quantity, unit_price=move.unit_price, amount=move.amount,
+        balance_quantity=bal.quantity, balance_amount=bal.amount, balance_price=bal.avg_price,
+        source_type=source_type, source_id=str(source_id), source_no=source_no,
+    )
+
+
+@transaction.atomic
 def post_outbound(company, product, quantity, *,
                   source_type="", source_id="", source_no="") -> StockMove:
     """出库过账：按当前移动加权均价结转成本。库存不足抛 InsufficientStockError。"""

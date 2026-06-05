@@ -2,9 +2,20 @@
 {% block title %}{{ doc.doc_no }} · 销售出库{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">销售出库单 {{ doc.doc_no }}</h4>
-  <a href="{% url 'outbound_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  <h4 class="mb-0">销售出库单 {{ doc.doc_no }}
+    {% if doc.status == 'void' %}<span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
+  <div class="d-flex gap-2">
+    {% if doc.status != 'void' and perms.sales.void_salesoutbound %}
+    <form method="post" action="{% url 'outbound_void' doc.pk %}" onsubmit="return confirm('确认作废本出库单？将反向冲减库存{% if doc.mirror_inbound_id %}，并联动作废对方镜像入库{% endif %}。');">
+      {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'outbound_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
 </div>
+{% if doc.mirror_inbound_id %}
+<div class="alert alert-info">本单为关联交易：已在对方账套自动生成镜像采购入库单 {{ doc.mirror_inbound.company.code }} {{ doc.mirror_inbound.doc_no }}。作废本单将联动作废它。</div>
+{% endif %}
 
 <div class="card mb-3">
   <div class="card-body row g-2">

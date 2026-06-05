@@ -45,6 +45,7 @@ class PurchaseInbound(CompanyScopedModel):
         constraints = [
             models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_inbound_company_docno")
         ]
+        permissions = [("void_purchaseinbound", "作废采购入库单")]
 
     def __str__(self) -> str:
         return self.doc_no

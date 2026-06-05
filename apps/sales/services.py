@@ -9,7 +9,7 @@ from django.db import transaction
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import ZERO_MONEY, ZERO_QTY, round_money, round_qty
-from apps.inventory.services import post_outbound
+from apps.inventory.services import InventoryError, post_outbound, reverse_move
 
 from .models import SalesOutbound, SalesOutboundLine
 
@@ -107,3 +107,31 @@ def _mirror_to_related_company(outbound, user):
         actor=user, company=company_b, action=AuditLog.Action.LINK, target=inbound,
         summary=f"关联联动：由 {outbound.company.code} 出库 {outbound.doc_no} 自动生成入库 {inbound.doc_no}",
     )
+
+
+@transaction.atomic
+def void_sales_outbound(doc, user=None):
+    """作废销售出库单：先联动作废镜像采购入库（若有），再反冲本公司库存。
+
+    顺序：先作废对方镜像入库（反冲 B 库存，B 货已消耗则报错、整笔不作废），
+    再把本单数量与成本加回 A 库存。整体事务，任一步失败全部回滚。
+    """
+    from apps.purchasing.services import void_purchase_inbound
+
+    if doc.status == SalesOutbound.Status.VOID:
+        raise InventoryError("该出库单已作废")
+
+    mirror = doc.mirror_inbound
+    if mirror is not None and mirror.status != mirror.Status.VOID:
+        void_purchase_inbound(mirror, user, _from_source=True)
+
+    for line in doc.lines.select_related("stock_move"):
+        if line.stock_move_id:
+            reverse_move(line.stock_move, source_type="SalesOutboundVoid",
+                         source_id=doc.pk, source_no=f"作废{doc.doc_no}")
+    doc.status = SalesOutbound.Status.VOID
+    doc.save(update_fields=["status"])
+    AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.VOID, target=doc,
+                    summary=f"作废销售出库 {doc.doc_no}（反冲库存"
+                            + ("，并联动作废镜像入库）" if mirror else "）"))
+    return doc

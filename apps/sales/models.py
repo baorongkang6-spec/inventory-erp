@@ -42,6 +42,7 @@ class SalesOutbound(CompanyScopedModel):
         verbose_name = "销售出库单"
         verbose_name_plural = "销售出库单"
         ordering = ["-doc_date", "-id"]
+        permissions = [("void_salesoutbound", "作废销售出库单")]
         constraints = [
             models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_outbound_company_docno")
         ]
