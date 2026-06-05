@@ -36,6 +36,9 @@ urlpatterns = [
     # 票据（M3）
     path("notes-receivable/", views.NoteReceivableListView.as_view(), name="note_receivable_list"),
     path("notes-receivable/new/", views.note_receivable_create, name="note_receivable_create"),
+    path("notes-receivable/<int:pk>/settle/", views.note_receivable_settle, name="note_receivable_settle"),
+    path("notes-receivable/<int:pk>/endorse/", views.note_receivable_endorse, name="note_receivable_endorse"),
     path("notes-payable/", views.NotePayableListView.as_view(), name="note_payable_list"),
     path("notes-payable/new/", views.note_payable_create, name="note_payable_create"),
+    path("notes-payable/<int:pk>/settle/", views.note_payable_settle, name="note_payable_settle"),
 ]

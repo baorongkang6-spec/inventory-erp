@@ -51,6 +51,9 @@ from .services import (
     create_purchase_invoice,
     create_receipt,
     create_sales_invoice,
+    endorse_receivable_against_purchase,
+    settle_payable_against_purchase,
+    settle_receivable_against_sales,
 )
 
 
@@ -649,3 +652,76 @@ def note_payable_create(request):
     else:
         form = NotePayableForm(company=company, initial={"draw_date": timezone.localdate()})
     return render(request, "finance/note_form.html", {"form": form, "title": "应付票据登记"})
+
+
+# ============================= 票据冲销（M3-2）================================
+def _note_settle(request, *, note, candidates, service, title, hint, redirect_to):
+    """票据冲销通用视图：列出候选发票，逐张填冲销额，调用对应服务。"""
+    if request.method == "POST":
+        allocations = []
+        for inv in candidates:
+            raw = (request.POST.get(f"alloc-{inv.pk}") or "").strip()
+            if raw:
+                try:
+                    allocations.append({"invoice": inv, "amount": Decimal(raw)})
+                except (InvalidOperation, ValueError):
+                    messages.error(request, f"发票 {inv.doc_no} 的冲销金额无效")
+                    break
+        else:
+            try:
+                service(note=note, allocations=allocations, user=request.user)
+            except SettlementError as e:
+                messages.error(request, f"冲销失败：{e}")
+            else:
+                messages.success(request, "票据冲销完成")
+                return redirect(redirect_to)
+    return render(request, "finance/note_settle.html",
+                  {"note": note, "candidates": candidates, "title": title, "hint": hint})
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+def note_receivable_settle(request, pk):
+    """应收票据 → 冲应收账款（销售发票）。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    note = get_object_or_404(NoteReceivable, pk=pk, company=company)
+    candidates = [i for i in SalesInvoice.objects.filter(
+        company=company, status=SalesInvoice.Status.REGISTERED).order_by("doc_date", "id")
+        if i.outstanding > 0]
+    return _note_settle(request, note=note, candidates=candidates,
+                        service=settle_receivable_against_sales,
+                        title=f"应收票据冲应收 · {note.doc_no}",
+                        hint="用该票据冲销下列销售发票（应收账款）。",
+                        redirect_to="note_receivable_list")
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+def note_receivable_endorse(request, pk):
+    """应收票据 → 背书抵应付（采购发票）。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    note = get_object_or_404(NoteReceivable, pk=pk, company=company)
+    candidates = [i for i in PurchaseInvoice.objects.filter(
+        company=company, status=PurchaseInvoice.Status.REGISTERED).order_by("doc_date", "id")
+        if i.outstanding > 0]
+    return _note_settle(request, note=note, candidates=candidates,
+                        service=endorse_receivable_against_purchase,
+                        title=f"应收票据背书抵应付 · {note.doc_no}",
+                        hint="把该票据背书转让给供应商，抵付下列采购发票（应付账款）。",
+                        redirect_to="note_receivable_list")
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+def note_payable_settle(request, pk):
+    """应付票据 → 抵应付（采购发票）。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    note = get_object_or_404(NotePayable, pk=pk, company=company)
+    candidates = [i for i in PurchaseInvoice.objects.filter(
+        company=company, status=PurchaseInvoice.Status.REGISTERED).order_by("doc_date", "id")
+        if i.outstanding > 0]
+    return _note_settle(request, note=note, candidates=candidates,
+                        service=settle_payable_against_purchase,
+                        title=f"应付票据抵应付 · {note.doc_no}",
+                        hint="用开出的应付票据抵减下列采购发票（应付账款）。",
+                        redirect_to="note_payable_list")

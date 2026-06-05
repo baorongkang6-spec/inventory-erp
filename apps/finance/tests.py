@@ -293,3 +293,68 @@ class NoteRegistrationTests(TestCase):
                                    supplier=self.sup, amount=Decimal("3000"))
         self.assertEqual(npay.doc_no, "YFP-C1-20260605-001")
         self.assertEqual(npay.unused, Decimal("3000.00"))
+
+
+class NoteSettlementTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+
+    def _sales_inv(self, untaxed):
+        return create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            customer=self.cust, lines=[{"product": self.p, "description": "",
+            "amount_untaxed": Decimal(untaxed), "tax_rate": Decimal("0.13")}])
+
+    def _purchase_inv(self, untaxed):
+        return create_purchase_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            supplier=self.sup, lines=[{"product": self.p, "description": "",
+            "amount_untaxed": Decimal(untaxed), "tax_rate": Decimal("0.13")}])
+
+    def test_receivable_note_settles_sales(self):
+        from apps.finance.services import create_note_receivable, settle_receivable_against_sales
+        inv = self._sales_inv("1000")  # 含税 1130
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                                      amount=Decimal("1130"), customer=self.cust)
+        settle_receivable_against_sales(note=note,
+            allocations=[{"invoice": inv, "amount": Decimal("1130")}])
+        inv.refresh_from_db(); note.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("0.00"))
+        self.assertEqual(note.unused, Decimal("0.00"))
+        self.assertEqual(note.status, "settled")
+
+    def test_receivable_note_endorse_to_payable(self):
+        from apps.finance.services import create_note_receivable, endorse_receivable_against_purchase
+        pinv = self._purchase_inv("2000")  # 含税 2260
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                                      amount=Decimal("2260"), customer=self.cust)
+        endorse_receivable_against_purchase(note=note,
+            allocations=[{"invoice": pinv, "amount": Decimal("2260")}])
+        pinv.refresh_from_db(); note.refresh_from_db()
+        self.assertEqual(pinv.outstanding, Decimal("0.00"))
+        self.assertEqual(note.status, "endorsed")
+
+    def test_payable_note_settles_purchase_partial(self):
+        from apps.finance.services import create_note_payable, settle_payable_against_purchase
+        pinv = self._purchase_inv("2000")  # 含税 2260
+        note = create_note_payable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                                   supplier=self.sup, amount=Decimal("5000"))
+        settle_payable_against_purchase(note=note,
+            allocations=[{"invoice": pinv, "amount": Decimal("2260")}])
+        pinv.refresh_from_db(); note.refresh_from_db()
+        self.assertEqual(pinv.outstanding, Decimal("0.00"))
+        self.assertEqual(note.unused, Decimal("2740.00"))  # 5000-2260
+
+    def test_note_over_use_rejected(self):
+        from apps.finance.services import create_note_receivable, settle_receivable_against_sales, SettlementError
+        inv = self._sales_inv("1000")  # 1130
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                                      amount=Decimal("500"), customer=self.cust)
+        with self.assertRaises(SettlementError):
+            settle_receivable_against_sales(note=note,
+                allocations=[{"invoice": inv, "amount": Decimal("600")}])  # 超票据可用
+        inv.refresh_from_db(); note.refresh_from_db()
+        self.assertEqual(note.settled_amount, Decimal("0.00"))
+        self.assertEqual(inv.settled_amount, Decimal("0.00"))

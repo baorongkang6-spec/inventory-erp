@@ -28,7 +28,12 @@
           <td class="text-end">{{ n.settled_amount }}</td>
           <td class="text-end fw-semibold">{{ n.unused }}</td>
           <td>{{ n.get_status_display }}</td>
-          <td class="text-nowrap"><!-- 冲销操作 M3-2 --></td>
+          <td class="text-nowrap">
+            {% if n.unused > 0 and n.status == 'on_hand' and perms.finance.add_notesettlement %}
+            <a href="{% url 'note_receivable_settle' n.pk %}" class="btn btn-sm btn-outline-success">冲应收</a>
+            <a href="{% url 'note_receivable_endorse' n.pk %}" class="btn btn-sm btn-outline-primary">背书抵应付</a>
+            {% endif %}
+          </td>
         </tr>
         {% empty %}
         <tr><td colspan="10" class="text-center text-muted py-4">当前账套暂无应收票据</td></tr>

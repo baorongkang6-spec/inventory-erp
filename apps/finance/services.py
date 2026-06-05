@@ -289,3 +289,86 @@ def create_note_payable(*, company, user, draw_date, supplier, amount,
     AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=note,
                     summary=f"应付票据 {note.doc_no} 供应商 {supplier} 金额 {amount}")
     return note
+
+
+def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
+                is_endorsement, user):
+    """票据冲销通用核心：把票据未用额冲抵若干发票未核销额。
+
+    校验：金额>0、不超票据未用额、不超各发票未核销额；任一违反整体回滚。
+    """
+    NoteModel = type(note)
+    note = NoteModel.objects.select_for_update().get(pk=note.pk)
+    if note.status in ("void", "settled", "endorsed"):
+        raise SettlementError(f"票据 {note.doc_no} 状态为「{note.get_status_display()}」，不可再冲销")
+
+    total = ZERO_MONEY
+    cleaned = []
+    for a in allocations:
+        amount = round_money(a["amount"])
+        if amount <= 0:
+            continue
+        inv = invoice_model.objects.select_for_update().get(pk=a["invoice"].pk)
+        if inv.company_id != note.company_id:
+            raise SettlementError("票据与发票公司不一致")
+        if amount > inv.outstanding:
+            raise SettlementError(f"冲销额 {amount} 超过发票 {inv.doc_no} 未核销 {inv.outstanding}")
+        total += amount
+        cleaned.append((inv, amount))
+
+    if not cleaned:
+        raise SettlementError("请填写有效的冲销金额")
+    if total > note.unused:
+        raise SettlementError(f"冲销合计 {total} 超过票据未用额 {note.unused}")
+
+    for inv, amount in cleaned:
+        NoteSettlement.objects.create(
+            company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
+            invoice_kind=invoice_kind, invoice_id=inv.pk, invoice_no=inv.doc_no,
+            amount=amount, is_endorsement=is_endorsement,
+        )
+        inv.settled_amount += amount
+        inv.save(update_fields=["settled_amount"])
+
+    note.settled_amount += total
+    if is_endorsement:
+        note.status = NoteReceivable.Status.ENDORSED
+    elif note.unused == 0:
+        note.status = type(note).Status.SETTLED
+    note.save(update_fields=["settled_amount", "status"])
+
+    AuditLog.record(
+        actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
+        summary=f"票据冲销 {note.doc_no} 冲 {total}（{len(cleaned)} 张发票{'，背书抵付' if is_endorsement else ''}）",
+    )
+    return note
+
+
+@transaction.atomic
+def settle_receivable_against_sales(*, note, allocations, user=None):
+    """应收票据 → 核销应收账款（冲销售发票）。"""
+    return _apply_note(
+        note=note, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+        invoice_model=SalesInvoice, invoice_kind=NoteSettlement.InvoiceKind.SALES,
+        allocations=allocations, is_endorsement=False, user=user,
+    )
+
+
+@transaction.atomic
+def endorse_receivable_against_purchase(*, note, allocations, user=None):
+    """应收票据 → 背书转让给供应商抵付应付账款（冲采购发票）。"""
+    return _apply_note(
+        note=note, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+        invoice_model=PurchaseInvoice, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+        allocations=allocations, is_endorsement=True, user=user,
+    )
+
+
+@transaction.atomic
+def settle_payable_against_purchase(*, note, allocations, user=None):
+    """应付票据 → 抵减应付账款（冲采购发票）。"""
+    return _apply_note(
+        note=note, note_kind=NoteSettlement.NoteKind.PAYABLE,
+        invoice_model=PurchaseInvoice, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+        allocations=allocations, is_endorsement=False, user=user,
+    )
