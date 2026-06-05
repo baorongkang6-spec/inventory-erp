@@ -32,6 +32,11 @@ class SalesOutbound(CompanyScopedModel):
     remark = models.CharField("备注", max_length=255, blank=True)
     total_quantity = models.DecimalField("总数量", max_digits=18, decimal_places=3, default=ZERO_QTY)
     total_cost = models.DecimalField("总成本", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    # 关联联动（M4）：本单面向关联公司时，自动在对方账套生成的镜像采购入库单
+    mirror_inbound = models.ForeignKey(
+        "purchasing.PurchaseInbound", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name="关联镜像入库单",
+    )
 
     class Meta:
         verbose_name = "销售出库单"

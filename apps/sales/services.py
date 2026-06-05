@@ -53,4 +53,57 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
         actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
         summary=f"销售出库 {doc.doc_no} 出 {total_qty} 件 成本 {total_cost}",
     )
+
+    # 关联交易自动联动（M4，SPEC §5）：客户指向系统内关联公司则镜像生成对方采购入库
+    _mirror_to_related_company(doc, user)
     return doc
+
+
+def _ensure_product_in(company_b, source_product):
+    """在 B 账套按编码取/建对应商品（关联镜像需要 B 有同编码商品）。"""
+    from apps.masterdata.models import Product
+    prod, _ = Product.objects.get_or_create(
+        company=company_b, code=source_product.code,
+        defaults={
+            "name": source_product.name, "spec": source_product.spec,
+            "unit": source_product.unit, "category": source_product.category,
+            "default_tax_rate": source_product.default_tax_rate,
+        },
+    )
+    return prod
+
+
+def _mirror_to_related_company(outbound, user):
+    """若出库单客户对应系统内关联公司 B，则在 B 自动生成镜像采购入库单（外购）。
+
+    照搬数量与移动加权结转成本（作为 B 的入库成本单价）；商品在 B 按编码自动配齐。
+    在同一事务内完成：镜像失败则整笔出库回滚（完全自动、原子）。
+    """
+    from apps.purchasing.services import create_and_post_inbound
+
+    customer = outbound.customer
+    company_b = getattr(customer, "related_company", None) if customer else None
+    if company_b is None or not company_b.is_active:
+        return
+
+    lines = [
+        {
+            "product": _ensure_product_in(company_b, ln.product),
+            "quantity": ln.quantity,
+            "unit_price": ln.unit_cost,   # B 以 A 的结转成本入库（关联调拨按成本平移）
+        }
+        for ln in outbound.lines.select_related("product")
+    ]
+    inbound = create_and_post_inbound(
+        company=company_b, user=user, doc_date=outbound.doc_date, lines=lines,
+        remark=f"关联自动生成：源 {outbound.company.code} {outbound.doc_no}",
+    )
+    inbound.source_outbound = outbound
+    inbound.save(update_fields=["source_outbound"])
+    outbound.mirror_inbound = inbound
+    outbound.save(update_fields=["mirror_inbound"])
+
+    AuditLog.record(
+        actor=user, company=company_b, action=AuditLog.Action.LINK, target=inbound,
+        summary=f"关联联动：由 {outbound.company.code} 出库 {outbound.doc_no} 自动生成入库 {inbound.doc_no}",
+    )
