@@ -84,6 +84,7 @@ class AuditLog(models.Model):
         VOID = "void", "作废"
         LINK = "link", "关联联动"
         OFFSET = "offset", "冲销核销"
+        LOGIN = "login", "登录"
 
     company = models.ForeignKey(
         Company, on_delete=models.PROTECT, null=True, blank=True, verbose_name="所属公司"

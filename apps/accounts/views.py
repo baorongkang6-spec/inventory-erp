@@ -1,13 +1,32 @@
-"""登录后首页（按角色区分）与账套切换。"""
+"""登录后首页（按角色区分）、账套切换、带防爆破的登录视图。"""
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import LoginView
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.core.scope import get_active_company, get_visible_companies, set_active_company
 
 from . import roles
+from .security import client_ip, is_locked
+
+
+class LockoutLoginView(LoginView):
+    """登录视图：被锁定的「用户名+IP」直接拒绝，避免继续爆破。"""
+
+    def post(self, request, *args, **kwargs):
+        username = request.POST.get("username", "")
+        if is_locked(username, client_ip(request)):
+            form = self.get_form()
+            form.add_error(
+                None,
+                f"登录失败次数过多，账号已临时锁定，请约 "
+                f"{settings.LOGIN_LOCKOUT_SECONDS // 60} 分钟后再试。",
+            )
+            return self.form_invalid(form)
+        return super().post(request, *args, **kwargs)
 
 
 @login_required
