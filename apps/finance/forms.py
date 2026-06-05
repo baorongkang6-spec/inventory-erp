@@ -6,7 +6,7 @@ from apps.core.forms import BootstrapForm, CompanyScopedModelForm
 from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Product, Supplier
 
-from .models import BankAccount
+from .models import BankAccount, Payment
 
 
 class BankAccountForm(CompanyScopedModelForm):
@@ -90,3 +90,32 @@ class BasePurchaseInvoiceLineFormSet(forms.BaseFormSet):
 PurchaseInvoiceLineFormSet = forms.formset_factory(
     PurchaseInvoiceLineForm, formset=BasePurchaseInvoiceLineFormSet, extra=8
 )
+
+
+# --- 付款登记 -----------------------------------------------------------------
+class PaymentForm(forms.ModelForm):
+    """付款登记。bank_account/supplier 按当前账套过滤；company 由视图注入。"""
+
+    class Meta:
+        model = Payment
+        fields = ["doc_date", "bank_account", "supplier", "amount", "summary"]
+        widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["bank_account"].queryset = BankAccount.objects.filter(
+                company=company, is_active=True
+            )
+            self.fields["supplier"].queryset = Supplier.objects.filter(
+                company=company, is_active=True
+            )
+        for name, field in self.fields.items():
+            w = field.widget
+            w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount is None or amount <= 0:
+            raise forms.ValidationError("付款金额必须大于 0")
+        return amount

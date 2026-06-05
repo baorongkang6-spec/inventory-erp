@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import BankAccount, PurchaseInvoice, PurchaseInvoiceLine
+from .models import (
+    BankAccount,
+    BankJournal,
+    Payment,
+    PurchaseInvoice,
+    PurchaseInvoiceLine,
+)
 
 
 @admin.register(BankAccount)
@@ -29,3 +35,24 @@ class PurchaseInvoiceAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ("doc_no", "company", "doc_date", "bank_account", "supplier",
+                    "amount", "settled_amount", "status")
+    list_filter = ("company", "status")
+    search_fields = ("doc_no",)
+    date_hierarchy = "doc_date"
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(BankJournal)
+class BankJournalAdmin(admin.ModelAdmin):
+    list_display = ("date", "company", "bank_account", "direction", "amount",
+                    "counterparty", "summary", "source_no", "is_imported")
+    list_filter = ("company", "bank_account", "direction", "is_imported")
+    search_fields = ("summary", "counterparty", "source_no")
+    date_hierarchy = "date"

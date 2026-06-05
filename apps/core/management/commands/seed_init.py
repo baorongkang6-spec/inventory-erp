@@ -35,14 +35,17 @@ ROLE_PERMS = {
         "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
         "inventory.view_stockbalance", "inventory.view_amount",
         "finance.view_bankaccount", "finance.view_purchaseinvoice",
+        "finance.view_payment", "finance.view_bankjournal",
     ],
-    # 出纳：只读总览 + 资金录入（管理银行账户）
+    # 出纳：只读总览 + 资金录入（管理银行账户、登记付款）
     roles.CASHIER: _VIEW_MASTERDATA + [
         "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
         "inventory.view_stockbalance", "inventory.view_amount",
         "finance.add_bankaccount", "finance.change_bankaccount",
         "finance.view_bankaccount", "finance.delete_bankaccount",
         "finance.view_purchaseinvoice",
+        "finance.add_payment", "finance.view_payment",
+        "finance.view_bankjournal",
     ],
     # 采购：管供应商、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
@@ -68,6 +71,8 @@ ROLE_PERMS = {
         "finance.add_bankaccount", "finance.change_bankaccount",
         "finance.view_bankaccount", "finance.delete_bankaccount",
         "finance.add_purchaseinvoice", "finance.view_purchaseinvoice",
+        "finance.add_payment", "finance.view_payment",
+        "finance.view_bankjournal",
     ],
 }
 

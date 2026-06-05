@@ -13,4 +13,8 @@ urlpatterns = [
     path("purchase-invoices/", views.PurchaseInvoiceListView.as_view(), name="purchase_invoice_list"),
     path("purchase-invoices/new/", views.purchase_invoice_create, name="purchase_invoice_create"),
     path("purchase-invoices/<int:pk>/", views.PurchaseInvoiceDetailView.as_view(), name="purchase_invoice_detail"),
+    # 付款登记
+    path("payments/", views.PaymentListView.as_view(), name="payment_list"),
+    path("payments/new/", views.payment_create, name="payment_create"),
+    path("payments/<int:pk>/", views.PaymentDetailView.as_view(), name="payment_detail"),
 ]

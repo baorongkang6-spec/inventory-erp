@@ -6,7 +6,8 @@ from decimal import Decimal
 from django.test import TestCase
 
 from apps.core.models import Company
-from apps.finance.services import compute_tax, create_purchase_invoice
+from apps.finance.models import BankAccount, BankJournal
+from apps.finance.services import compute_tax, create_payment, create_purchase_invoice
 from apps.masterdata.models import Product, Supplier
 
 
@@ -40,3 +41,27 @@ class PurchaseInvoiceTests(TestCase):
         self.assertEqual(inv.settled_amount, Decimal("0.00"))
         self.assertEqual(inv.outstanding, Decimal("1239.00"))  # 应付余额
         self.assertEqual(inv.lines.count(), 2)
+
+
+class PaymentTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+
+    def test_payment_auto_generates_bank_journal(self):
+        pay = create_payment(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            bank_account=self.acc, supplier=self.sup, amount=Decimal("500"), summary="付货款",
+        )
+        self.assertEqual(pay.doc_no, "FK-C1-20260605-001")
+        self.assertEqual(pay.amount, Decimal("500.00"))
+        self.assertEqual(pay.unallocated, Decimal("500.00"))
+        # 自动生成一条支出日记账
+        self.assertIsNotNone(pay.bank_journal)
+        j = pay.bank_journal
+        self.assertEqual(j.direction, BankJournal.Direction.OUT)
+        self.assertEqual(j.amount, Decimal("500.00"))
+        self.assertEqual(j.signed_amount, Decimal("-500.00"))
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)

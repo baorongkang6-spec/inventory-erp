@@ -13,6 +13,8 @@ def style_fields(form):
         elif isinstance(widget, (forms.DateInput,)):
             widget.attrs.setdefault("class", "form-control")
             widget.attrs.setdefault("type", "date")
+            # <input type=date> 要求 ISO 格式，覆盖 zh-hans 本地化格式
+            widget.format = "%Y-%m-%d"
         else:
             widget.attrs.setdefault("class", "form-control")
 

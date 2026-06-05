@@ -98,3 +98,75 @@ class PurchaseInvoiceLine(models.Model):
 
     def __str__(self) -> str:
         return f"{self.product or self.description} {self.amount_taxed}"
+
+
+class BankJournal(CompanyScopedModel):
+    """银行存款日记账。来源：付款/收款自动生成、Excel 导入。SPEC §7.1。"""
+
+    class Direction(models.TextChoices):
+        IN = "in", "收入"
+        OUT = "out", "支出"
+
+    bank_account = models.ForeignKey(
+        BankAccount, on_delete=models.PROTECT, verbose_name="银行账户", related_name="journals"
+    )
+    date = models.DateField("日期")
+    direction = models.CharField("方向", max_length=4, choices=Direction.choices)
+    amount = models.DecimalField("金额", max_digits=18, decimal_places=2)
+    counterparty = models.CharField("对方单位", max_length=128, blank=True)
+    summary = models.CharField("摘要", max_length=255, blank=True)
+    is_imported = models.BooleanField("Excel导入", default=False)
+    source_type = models.CharField("来源类型", max_length=32, blank=True)
+    source_id = models.CharField("来源ID", max_length=32, blank=True)
+    source_no = models.CharField("来源单号", max_length=64, blank=True)
+
+    class Meta:
+        verbose_name = "银行存款日记账"
+        verbose_name_plural = "银行存款日记账"
+        ordering = ["date", "id"]
+        indexes = [models.Index(fields=["company", "bank_account", "date"])]
+
+    def __str__(self) -> str:
+        return f"[{self.get_direction_display()}] {self.amount} {self.summary}"
+
+    @property
+    def signed_amount(self):
+        """收入为正、支出为负，便于累计余额。"""
+        return self.amount if self.direction == self.Direction.IN else -self.amount
+
+
+class Payment(CompanyScopedModel):
+    """付款登记。保存即自动生成一条银行存款日记账（支出）。"""
+
+    class Status(models.TextChoices):
+        POSTED = "posted", "已登记"
+        VOID = "void", "已作废"
+
+    doc_no = models.CharField("付款单号", max_length=32)
+    doc_date = models.DateField("付款日期")
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="付款银行账户")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="收款供应商")
+    amount = models.DecimalField("付款金额", max_digits=18, decimal_places=2)
+    settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    summary = models.CharField("摘要", max_length=255, blank=True)
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.POSTED)
+    bank_journal = models.ForeignKey(
+        BankJournal, on_delete=models.PROTECT, null=True, blank=True,
+        verbose_name="对应日记账", related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "付款登记"
+        verbose_name_plural = "付款登记"
+        ordering = ["-doc_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_payment_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+    @property
+    def unallocated(self):
+        """未核销（可用于核销应付的剩余款）。"""
+        return self.amount - self.settled_amount

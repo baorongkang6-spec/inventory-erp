@@ -6,7 +6,7 @@ from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import ZERO_MONEY, round_money
 
-from .models import PurchaseInvoice, PurchaseInvoiceLine
+from .models import BankJournal, Payment, PurchaseInvoice, PurchaseInvoiceLine
 
 
 def compute_tax(amount_untaxed, tax_rate):
@@ -57,3 +57,32 @@ def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
         summary=f"采购发票 {inv.doc_no} 供应商 {supplier} 含税 {total_taxed}（应付）",
     )
     return inv
+
+
+@transaction.atomic
+def create_payment(*, company, user, doc_date, bank_account, supplier, amount, summary="") -> Payment:
+    """付款登记：保存付款单并自动生成一条银行存款日记账（支出）。SPEC §7.1。"""
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("付款金额必须大于 0")
+
+    pay = Payment.objects.create(
+        company=company, created_by=user,
+        doc_no=next_doc_no(Payment, company, "FK", doc_date),
+        doc_date=doc_date, bank_account=bank_account, supplier=supplier,
+        amount=amount, summary=summary,
+    )
+    journal = BankJournal.objects.create(
+        company=company, created_by=user, bank_account=bank_account, date=doc_date,
+        direction=BankJournal.Direction.OUT, amount=amount,
+        counterparty=str(supplier), summary=summary or f"付款 {pay.doc_no}",
+        source_type="Payment", source_id=str(pay.pk), source_no=pay.doc_no,
+    )
+    pay.bank_journal = journal
+    pay.save(update_fields=["bank_journal"])
+
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.CREATE, target=pay,
+        summary=f"付款 {pay.doc_no} 付 {supplier} {amount}（{bank_account}）",
+    )
+    return pay

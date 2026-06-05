@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ pay.doc_no }} · 付款登记{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">付款单 {{ pay.doc_no }}</h4>
+  <a href="{% url 'payment_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body row g-2">
+    <div class="col-md-3"><span class="text-muted">公司：</span>{{ pay.company }}</div>
+    <div class="col-md-3"><span class="text-muted">日期：</span>{{ pay.doc_date }}</div>
+    <div class="col-md-3"><span class="text-muted">银行账户：</span>{{ pay.bank_account }}</div>
+    <div class="col-md-3"><span class="text-muted">供应商：</span>{{ pay.supplier }}</div>
+    <div class="col-md-3"><span class="text-muted">付款金额：</span>{{ pay.amount }}</div>
+    <div class="col-md-3"><span class="text-muted">已核销：</span>{{ pay.settled_amount }}</div>
+    <div class="col-md-3"><span class="text-muted">未核销：</span><strong>{{ pay.unallocated }}</strong></div>
+    <div class="col-md-3"><span class="text-muted">状态：</span>{{ pay.get_status_display }}</div>
+    <div class="col-md-12"><span class="text-muted">摘要：</span>{{ pay.summary|default:"—" }}</div>
+  </div>
+</div>
+
+{% if pay.bank_journal %}
+<div class="alert alert-info">
+  已自动生成银行存款日记账：{{ pay.bank_journal.date }} ·
+  {{ pay.bank_journal.bank_account }} · 支出 {{ pay.bank_journal.amount }} ·
+  {{ pay.bank_journal.summary }}
+</div>
+{% endif %}
+{% endblock %}
