@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ inv.doc_no }} · 销售发票{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">销售发票 {{ inv.doc_no }}</h4>
+  <a href="{% url 'sales_invoice_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body row g-2">
+    <div class="col-md-3"><span class="text-muted">公司：</span>{{ inv.company }}</div>
+    <div class="col-md-3"><span class="text-muted">开票日期：</span>{{ inv.doc_date }}</div>
+    <div class="col-md-3"><span class="text-muted">发票号码：</span>{{ inv.invoice_no|default:"—" }}</div>
+    <div class="col-md-3"><span class="text-muted">客户：</span>{{ inv.customer }}</div>
+    <div class="col-md-3"><span class="text-muted">状态：</span>{{ inv.get_status_display }}</div>
+    <div class="col-md-3"><span class="text-muted">含税(应收)：</span>{{ inv.amount_taxed }}</div>
+    <div class="col-md-3"><span class="text-muted">已核销：</span>{{ inv.settled_amount }}</div>
+    <div class="col-md-3"><span class="text-muted">未核销：</span><strong>{{ inv.outstanding }}</strong></div>
+    <div class="col-md-12"><span class="text-muted">备注：</span>{{ inv.remark|default:"—" }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>商品/摘要</th><th class="text-end">不含税</th><th class="text-end">税率</th>
+            <th class="text-end">税额</th><th class="text-end">含税</th></tr>
+      </thead>
+      <tbody>
+        {% for ln in inv.lines.all %}
+        <tr>
+          <td>{{ ln.product|default:ln.description|default:"—" }}</td>
+          <td class="text-end">{{ ln.amount_untaxed }}</td>
+          <td class="text-end">{{ ln.tax_rate }}</td>
+          <td class="text-end">{{ ln.tax_amount }}</td>
+          <td class="text-end">{{ ln.amount_taxed }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light">
+        <tr><th>合计</th><th class="text-end">{{ inv.amount_untaxed }}</th><th></th>
+            <th class="text-end">{{ inv.tax_amount }}</th><th class="text-end">{{ inv.amount_taxed }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

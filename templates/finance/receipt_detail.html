@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ rec.doc_no }} · 收款登记{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">收款单 {{ rec.doc_no }}</h4>
+  <div class="d-flex gap-2">
+    {% if rec.unallocated > 0 and perms.finance.add_receiptallocation %}
+    <a href="{% url 'receipt_allocate' rec.pk %}" class="btn btn-success btn-sm">核销应收</a>
+    {% endif %}
+    <a href="{% url 'receipt_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body row g-2">
+    <div class="col-md-3"><span class="text-muted">公司：</span>{{ rec.company }}</div>
+    <div class="col-md-3"><span class="text-muted">日期：</span>{{ rec.doc_date }}</div>
+    <div class="col-md-3"><span class="text-muted">银行账户：</span>{{ rec.bank_account }}</div>
+    <div class="col-md-3"><span class="text-muted">客户：</span>{{ rec.customer }}</div>
+    <div class="col-md-3"><span class="text-muted">收款金额：</span>{{ rec.amount }}</div>
+    <div class="col-md-3"><span class="text-muted">已核销：</span>{{ rec.settled_amount }}</div>
+    <div class="col-md-3"><span class="text-muted">未核销：</span><strong>{{ rec.unallocated }}</strong></div>
+    <div class="col-md-3"><span class="text-muted">状态：</span>{{ rec.get_status_display }}</div>
+    <div class="col-md-12"><span class="text-muted">摘要：</span>{{ rec.summary|default:"—" }}</div>
+  </div>
+</div>
+
+{% if rec.bank_journal %}
+<div class="alert alert-info">
+  已自动生成银行存款日记账：{{ rec.bank_journal.date }} ·
+  {{ rec.bank_journal.bank_account }} · 收入 {{ rec.bank_journal.amount }} ·
+  {{ rec.bank_journal.summary }}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">核销明细</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>销售发票</th><th>开票日期</th><th class="text-end">核销金额</th><th>核销时间</th></tr>
+      </thead>
+      <tbody>
+        {% for a in rec.allocations.all %}
+        <tr>
+          <td><a href="{% url 'sales_invoice_detail' a.invoice.pk %}">{{ a.invoice.doc_no }}</a></td>
+          <td>{{ a.invoice.doc_date }}</td>
+          <td class="text-end">{{ a.amount }}</td>
+          <td>{{ a.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="text-center text-muted py-3">尚未核销</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

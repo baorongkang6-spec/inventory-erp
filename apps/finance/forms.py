@@ -4,9 +4,9 @@ from django import forms
 
 from apps.core.forms import BootstrapForm, CompanyScopedModelForm
 from apps.core.money import DEFAULT_TAX_RATE
-from apps.masterdata.models import Product, Supplier
+from apps.masterdata.models import Customer, Product, Supplier
 
-from .models import BankAccount, Payment
+from .models import BankAccount, Payment, Receipt
 
 
 class BankAccountForm(CompanyScopedModelForm):
@@ -118,4 +118,108 @@ class PaymentForm(forms.ModelForm):
         amount = self.cleaned_data["amount"]
         if amount is None or amount <= 0:
             raise forms.ValidationError("付款金额必须大于 0")
+        return amount
+
+
+# --- 销售发票 -----------------------------------------------------------------
+class SalesInvoiceHeaderForm(BootstrapForm):
+    doc_date = forms.DateField(label="开票日期")
+    customer = forms.ModelChoiceField(label="客户", queryset=Customer.objects.none())
+    invoice_no = forms.CharField(label="发票号码", required=False, max_length=64)
+    remark = forms.CharField(label="备注", required=False, max_length=255)
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["customer"].queryset = Customer.objects.filter(
+                company=company, is_active=True
+            )
+
+
+class SalesInvoiceLineForm(BootstrapForm):
+    product = forms.ModelChoiceField(
+        label="商品", queryset=Product.objects.none(), required=False, empty_label="—（可不选）"
+    )
+    description = forms.CharField(label="摘要", required=False, max_length=128)
+    amount_untaxed = forms.DecimalField(
+        label="不含税金额", required=False, max_digits=18, decimal_places=2, min_value=0
+    )
+    tax_rate = forms.DecimalField(
+        label="税率", required=False, max_digits=5, decimal_places=4,
+        min_value=0, max_value=1, initial=DEFAULT_TAX_RATE,
+    )
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["product"].queryset = Product.objects.filter(
+                company=company, is_active=True
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        amt = cleaned.get("amount_untaxed")
+        product = cleaned.get("product")
+        desc = cleaned.get("description")
+        if amt in (None, "") and not product and not desc:
+            cleaned["_empty"] = True
+            return cleaned
+        cleaned["_empty"] = False
+        if amt is None or amt <= 0:
+            self.add_error("amount_untaxed", "不含税金额必须大于 0")
+        if cleaned.get("tax_rate") is None:
+            cleaned["tax_rate"] = DEFAULT_TAX_RATE
+        return cleaned
+
+
+class BaseSalesInvoiceLineFormSet(forms.BaseFormSet):
+    def __init__(self, *args, company=None, **kwargs):
+        self.company = company
+        super().__init__(*args, **kwargs)
+
+    def get_form_kwargs(self, index):
+        kwargs = super().get_form_kwargs(index)
+        kwargs["company"] = self.company
+        return kwargs
+
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+        valid = [f.cleaned_data for f in self.forms
+                 if f.cleaned_data and not f.cleaned_data.get("_empty")]
+        if not valid:
+            raise forms.ValidationError("至少录入一行明细")
+        self.valid_lines = valid
+
+
+SalesInvoiceLineFormSet = forms.formset_factory(
+    SalesInvoiceLineForm, formset=BaseSalesInvoiceLineFormSet, extra=8
+)
+
+
+# --- 收款登记 -----------------------------------------------------------------
+class ReceiptForm(forms.ModelForm):
+    class Meta:
+        model = Receipt
+        fields = ["doc_date", "bank_account", "customer", "amount", "summary"]
+        widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["bank_account"].queryset = BankAccount.objects.filter(
+                company=company, is_active=True
+            )
+            self.fields["customer"].queryset = Customer.objects.filter(
+                company=company, is_active=True
+            )
+        for name, field in self.fields.items():
+            w = field.widget
+            w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount is None or amount <= 0:
+            raise forms.ValidationError("收款金额必须大于 0")
         return amount

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}收款登记 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">收款登记<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  {% if perms.finance.add_receipt %}
+  <a href="{% url 'receipt_create' %}" class="btn btn-primary btn-sm">登记收款</a>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>收款单号</th><th>日期</th><th>银行账户</th><th>客户</th>
+            <th class="text-end">收款金额</th><th class="text-end">已核销</th>
+            <th class="text-end">未核销</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        {% for r in receipts %}
+        <tr>
+          <td><a href="{% url 'receipt_detail' r.pk %}">{{ r.doc_no }}</a></td>
+          <td>{{ r.doc_date }}</td>
+          <td>{{ r.bank_account }}</td>
+          <td>{{ r.customer }}</td>
+          <td class="text-end">{{ r.amount }}</td>
+          <td class="text-end">{{ r.settled_amount }}</td>
+          <td class="text-end fw-semibold">{{ r.unallocated }}</td>
+          <td>{{ r.get_status_display }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-4">当前账套暂无收款记录</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

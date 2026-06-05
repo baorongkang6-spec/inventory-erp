@@ -12,6 +12,10 @@ from .models import (
     PaymentAllocation,
     PurchaseInvoice,
     PurchaseInvoiceLine,
+    Receipt,
+    ReceiptAllocation,
+    SalesInvoice,
+    SalesInvoiceLine,
 )
 
 
@@ -140,3 +144,108 @@ def allocate_payment(*, payment, allocations, user=None):
         summary=f"应付核销 {payment.doc_no} 核销 {total}（{len(cleaned)} 张发票）",
     )
     return payment
+
+
+# ============================= 销售侧（镜像采购侧）=============================
+@transaction.atomic
+def create_sales_invoice(*, company, user, doc_date, customer, lines,
+                         invoice_no="", remark="") -> SalesInvoice:
+    """开具销售发票并产生应收账款（发票即应收单据）。镜像 create_purchase_invoice。"""
+    inv = SalesInvoice.objects.create(
+        company=company, created_by=user,
+        doc_no=next_doc_no(SalesInvoice, company, "XSF", doc_date),
+        invoice_no=invoice_no, doc_date=doc_date, customer=customer, remark=remark,
+    )
+    total_untaxed = total_tax = total_taxed = ZERO_MONEY
+    for ln in lines:
+        untaxed = round_money(ln["amount_untaxed"])
+        rate = ln["tax_rate"]
+        tax, taxed = compute_tax(untaxed, rate)
+        SalesInvoiceLine.objects.create(
+            invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
+            amount_untaxed=untaxed, tax_rate=rate, tax_amount=tax, amount_taxed=taxed,
+            source_outbound_line=ln.get("source_outbound_line"),
+        )
+        total_untaxed += untaxed
+        total_tax += tax
+        total_taxed += taxed
+
+    inv.amount_untaxed = total_untaxed
+    inv.tax_amount = total_tax
+    inv.amount_taxed = total_taxed
+    inv.save(update_fields=["amount_untaxed", "tax_amount", "amount_taxed"])
+
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.CREATE, target=inv,
+        summary=f"销售发票 {inv.doc_no} 客户 {customer} 含税 {total_taxed}（应收）",
+    )
+    return inv
+
+
+@transaction.atomic
+def create_receipt(*, company, user, doc_date, bank_account, customer, amount, summary="") -> Receipt:
+    """收款登记：保存收款单并自动生成一条银行存款日记账（收入）。镜像 create_payment。"""
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("收款金额必须大于 0")
+
+    rec = Receipt.objects.create(
+        company=company, created_by=user,
+        doc_no=next_doc_no(Receipt, company, "SK", doc_date),
+        doc_date=doc_date, bank_account=bank_account, customer=customer,
+        amount=amount, summary=summary,
+    )
+    journal = BankJournal.objects.create(
+        company=company, created_by=user, bank_account=bank_account, date=doc_date,
+        direction=BankJournal.Direction.IN, amount=amount,
+        counterparty=str(customer), summary=summary or f"收款 {rec.doc_no}",
+        source_type="Receipt", source_id=str(rec.pk), source_no=rec.doc_no,
+    )
+    rec.bank_journal = journal
+    rec.save(update_fields=["bank_journal"])
+
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.CREATE, target=rec,
+        summary=f"收款 {rec.doc_no} 收 {customer} {amount}（{bank_account}）",
+    )
+    return rec
+
+
+@transaction.atomic
+def allocate_receipt(*, receipt, allocations, user=None):
+    """把收款核销到若干销售发票。镜像 allocate_payment。"""
+    receipt = Receipt.objects.select_for_update().get(pk=receipt.pk)
+    total = ZERO_MONEY
+    cleaned = []
+    for a in allocations:
+        amount = round_money(a["amount"])
+        if amount <= 0:
+            continue
+        invoice = SalesInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
+        if invoice.company_id != receipt.company_id or invoice.customer_id != receipt.customer_id:
+            raise SettlementError("发票与收款的公司/客户不一致")
+        if amount > invoice.outstanding:
+            raise SettlementError(
+                f"核销额 {amount} 超过发票 {invoice.doc_no} 未核销 {invoice.outstanding}"
+            )
+        total += amount
+        cleaned.append((invoice, amount))
+
+    if not cleaned:
+        raise SettlementError("请填写有效的核销金额")
+    if total > receipt.unallocated:
+        raise SettlementError(f"核销合计 {total} 超过收款未核销 {receipt.unallocated}")
+
+    for invoice, amount in cleaned:
+        ReceiptAllocation.objects.create(receipt=receipt, invoice=invoice, amount=amount)
+        invoice.settled_amount += amount
+        invoice.save(update_fields=["settled_amount"])
+
+    receipt.settled_amount += total
+    receipt.save(update_fields=["settled_amount"])
+
+    AuditLog.record(
+        actor=user, company=receipt.company, action=AuditLog.Action.OFFSET, target=receipt,
+        summary=f"应收核销 {receipt.doc_no} 核销 {total}（{len(cleaned)} 张发票）",
+    )
+    return receipt

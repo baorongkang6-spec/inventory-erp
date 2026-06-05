@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}开具销售发票 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-3">开具销售发票<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+
+<form method="get" class="card card-body mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-6">
+      <label class="form-label">从出库单带入明细（可选）</label>
+      <select name="outbound" class="form-select">
+        <option value="">— 不带入，手工录入 —</option>
+        {% for ob in outbounds %}
+        <option value="{{ ob.pk }}">{{ ob.doc_no }} · {{ ob.doc_date }} · {{ ob.customer|default:"无客户" }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto"><button type="submit" class="btn btn-outline-secondary">带入</button></div>
+  </div>
+</form>
+
+<form method="post">
+  {% csrf_token %}
+  {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
+
+  <div class="card mb-3">
+    <div class="card-body row g-3">
+      <div class="col-md-3">
+        <label class="form-label">{{ header.doc_date.label }}</label>{{ header.doc_date }}
+        {% for e in header.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">{{ header.customer.label }}</label>{{ header.customer }}
+        {% for e in header.customer.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">{{ header.invoice_no.label }}</label>{{ header.invoice_no }}
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">{{ header.remark.label }}</label>{{ header.remark }}
+      </div>
+    </div>
+  </div>
+
+  {{ formset.management_form }}
+  <div class="card mb-3">
+    <div class="card-header">发票明细（不含税金额 + 税率 → 自动算含税）</div>
+    <div class="table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th style="width:30%">商品(可选)</th><th style="width:25%">摘要</th>
+              <th style="width:22%">不含税金额</th><th style="width:18%">税率</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for form in formset %}
+          <tr>
+            <td>{{ form.product }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.description }}</td>
+            <td>{{ form.amount_untaxed }}{% for e in form.amount_untaxed.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.tax_rate }}{% for e in form.tax_rate.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td class="text-muted small">第 {{ forloop.counter }} 行</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">开具发票（产生应收）</button>
+    <a href="{% url 'sales_invoice_list' %}" class="btn btn-outline-secondary">取消</a>
+  </div>
+  <p class="text-muted small mt-2">从出库单带入的金额为结转成本，请改为实际售价后开票。含税 = 不含税 ×(1+税率)。</p>
+</form>
+{% endblock %}

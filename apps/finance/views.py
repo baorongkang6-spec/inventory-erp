@@ -18,19 +18,26 @@ from apps.core.crud import (
 from apps.core.mixins import CompanyScopedMixin
 from apps.core.scope import get_active_company, get_visible_companies
 from apps.purchasing.models import PurchaseInbound
+from apps.sales.models import SalesOutbound
 
 from .forms import (
     BankAccountForm,
     PaymentForm,
     PurchaseInvoiceHeaderForm,
     PurchaseInvoiceLineFormSet,
+    ReceiptForm,
+    SalesInvoiceHeaderForm,
+    SalesInvoiceLineFormSet,
 )
-from .models import BankAccount, Payment, PurchaseInvoice
+from .models import BankAccount, Payment, PurchaseInvoice, Receipt, SalesInvoice
 from .services import (
     SettlementError,
     allocate_payment,
+    allocate_receipt,
     create_payment,
     create_purchase_invoice,
+    create_receipt,
+    create_sales_invoice,
 )
 
 
@@ -231,3 +238,163 @@ def payment_allocate(request, pk):
 
     return render(request, "finance/payment_allocate.html",
                   {"payment": payment, "open_invoices": open_invoices})
+
+
+# ============================= 销售侧（镜像采购侧）=============================
+class SalesInvoiceListView(CompanyScopedMixin, ListView):
+    model = SalesInvoice
+    template_name = "finance/sales_invoice_list.html"
+    context_object_name = "invoices"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("customer")
+
+
+class SalesInvoiceDetailView(CompanyScopedMixin, DetailView):
+    model = SalesInvoice
+    template_name = "finance/sales_invoice_detail.html"
+    context_object_name = "inv"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("customer")
+
+
+def _outbound_prefill(company, outbound_id):
+    outbound = SalesOutbound.objects.filter(company=company, pk=outbound_id).first()
+    if not outbound:
+        return {}, [], None
+    lines = [
+        {
+            "product": ln.product_id,
+            "description": ln.product.name,
+            "amount_untaxed": ln.amount,      # 出库结转成本作不含税额初值，用户可改为售价
+            "tax_rate": ln.product.default_tax_rate,
+        }
+        for ln in outbound.lines.select_related("product")
+    ]
+    header = {"customer": outbound.customer_id, "doc_date": outbound.doc_date}
+    return header, lines, outbound
+
+
+@login_required
+@permission_required("finance.add_salesinvoice", raise_exception=True)
+def sales_invoice_create(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+
+    if request.method == "POST":
+        header = SalesInvoiceHeaderForm(request.POST, company=company)
+        formset = SalesInvoiceLineFormSet(request.POST, company=company)
+        if header.is_valid() and formset.is_valid():
+            lines = [
+                {"product": cd.get("product"), "description": cd.get("description", ""),
+                 "amount_untaxed": cd["amount_untaxed"], "tax_rate": cd["tax_rate"]}
+                for cd in formset.valid_lines
+            ]
+            inv = create_sales_invoice(
+                company=company, user=request.user,
+                doc_date=header.cleaned_data["doc_date"],
+                customer=header.cleaned_data["customer"],
+                invoice_no=header.cleaned_data.get("invoice_no", ""),
+                remark=header.cleaned_data.get("remark", ""), lines=lines,
+            )
+            messages.success(request, f"销售发票已开具（应收）：{inv.doc_no}")
+            return redirect("sales_invoice_detail", pk=inv.pk)
+    else:
+        header_initial = {"doc_date": timezone.localdate()}
+        lines_initial = []
+        outbound_id = request.GET.get("outbound")
+        if outbound_id:
+            h, lines_initial, outbound = _outbound_prefill(company, outbound_id)
+            if outbound:
+                header_initial.update(h)
+                messages.info(request, f"已从出库单 {outbound.doc_no} 带出明细，请核对售价/税率后开具")
+        header = SalesInvoiceHeaderForm(company=company, initial=header_initial)
+        formset = SalesInvoiceLineFormSet(company=company, initial=lines_initial)
+
+    outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
+    return render(request, "finance/sales_invoice_form.html",
+                  {"header": header, "formset": formset, "outbounds": outbounds, "title": "销售发票"})
+
+
+class ReceiptListView(CompanyScopedMixin, ListView):
+    model = Receipt
+    template_name = "finance/receipt_list.html"
+    context_object_name = "receipts"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("customer", "bank_account")
+
+
+class ReceiptDetailView(CompanyScopedMixin, DetailView):
+    model = Receipt
+    template_name = "finance/receipt_detail.html"
+    context_object_name = "rec"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("customer", "bank_account", "bank_journal")
+
+
+@login_required
+@permission_required("finance.add_receipt", raise_exception=True)
+def receipt_create(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+
+    if request.method == "POST":
+        form = ReceiptForm(request.POST, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            rec = create_receipt(
+                company=company, user=request.user, doc_date=cd["doc_date"],
+                bank_account=cd["bank_account"], customer=cd["customer"],
+                amount=cd["amount"], summary=cd.get("summary", ""),
+            )
+            messages.success(request, f"收款已登记，并生成银行日记账：{rec.doc_no}")
+            return redirect("receipt_detail", pk=rec.pk)
+    else:
+        form = ReceiptForm(company=company, initial={"doc_date": timezone.localdate()})
+
+    return render(request, "finance/receipt_form.html", {"form": form, "title": "收款登记"})
+
+
+@login_required
+@permission_required("finance.add_receiptallocation", raise_exception=True)
+def receipt_allocate(request, pk):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    receipt = get_object_or_404(Receipt, pk=pk, company=company)
+
+    open_invoices = [
+        inv for inv in SalesInvoice.objects.filter(
+            company=company, customer=receipt.customer,
+            status=SalesInvoice.Status.REGISTERED,
+        ).order_by("doc_date", "id")
+        if inv.outstanding > 0
+    ]
+
+    if request.method == "POST":
+        allocations = []
+        for inv in open_invoices:
+            raw = (request.POST.get(f"alloc-{inv.pk}") or "").strip()
+            if raw:
+                try:
+                    amt = Decimal(raw)
+                except (InvalidOperation, ValueError):
+                    messages.error(request, f"发票 {inv.doc_no} 的核销金额无效")
+                    break
+                allocations.append({"invoice": inv, "amount": amt})
+        else:
+            try:
+                allocate_receipt(receipt=receipt, allocations=allocations, user=request.user)
+            except SettlementError as e:
+                messages.error(request, f"核销失败：{e}")
+            else:
+                messages.success(request, "核销完成")
+                return redirect("receipt_detail", pk=receipt.pk)
+
+    return render(request, "finance/receipt_allocate.html",
+                  {"receipt": receipt, "open_invoices": open_invoices})

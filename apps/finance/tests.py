@@ -10,11 +10,14 @@ from apps.finance.models import BankAccount, BankJournal
 from apps.finance.services import (
     SettlementError,
     allocate_payment,
+    allocate_receipt,
     compute_tax,
     create_payment,
     create_purchase_invoice,
+    create_receipt,
+    create_sales_invoice,
 )
-from apps.masterdata.models import Product, Supplier
+from apps.masterdata.models import Customer, Product, Supplier
 
 
 class PurchaseInvoiceTests(TestCase):
@@ -136,3 +139,53 @@ class AllocationTests(TestCase):
         a.refresh_from_db(); pay.refresh_from_db()
         self.assertEqual(a.settled_amount, Decimal("0.00"))  # 整体回滚
         self.assertEqual(pay.settled_amount, Decimal("0.00"))
+
+
+class SalesSideTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+
+    def test_sales_invoice_produces_receivable(self):
+        inv = create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0.13")}],
+        )
+        self.assertEqual(inv.doc_no, "XSF-C1-20260605-001")
+        self.assertEqual(inv.amount_taxed, Decimal("1130.00"))
+        self.assertEqual(inv.outstanding, Decimal("1130.00"))
+
+    def test_receipt_auto_journal_and_allocate(self):
+        inv = create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0.13")}],
+        )
+        rec = create_receipt(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+                             bank_account=self.acc, customer=self.cust, amount=Decimal("1130"))
+        self.assertEqual(rec.doc_no, "SK-C1-20260605-001")
+        # 自动生成收入日记账
+        self.assertEqual(rec.bank_journal.direction, BankJournal.Direction.IN)
+        self.assertEqual(rec.bank_journal.signed_amount, Decimal("1130.00"))
+        # 核销
+        allocate_receipt(receipt=rec, allocations=[{"invoice": inv, "amount": Decimal("1130")}])
+        inv.refresh_from_db(); rec.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("0.00"))
+        self.assertEqual(rec.unallocated, Decimal("0.00"))
+
+    def test_receipt_over_allocate_rejected(self):
+        inv = create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("100"),
+                    "tax_rate": Decimal("0.13")}],
+        )  # 113
+        rec = create_receipt(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+                             bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
+        with self.assertRaises(SettlementError):
+            allocate_receipt(receipt=rec, allocations=[{"invoice": inv, "amount": Decimal("200")}])
+        inv.refresh_from_db()
+        self.assertEqual(inv.settled_amount, Decimal("0.00"))

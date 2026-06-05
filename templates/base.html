@@ -41,6 +41,12 @@
         {% if perms.finance.view_payment %}
         <li class="nav-item"><a class="nav-link" href="{% url 'payment_list' %}">付款</a></li>
         {% endif %}
+        {% if perms.finance.view_salesinvoice %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'sales_invoice_list' %}">销售发票</a></li>
+        {% endif %}
+        {% if perms.finance.view_receipt %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'receipt_list' %}">收款</a></li>
+        {% endif %}
         {% if perms.finance.view_bankaccount %}
         <li class="nav-item"><a class="nav-link" href="{% url 'bankaccount_list' %}">银行账户</a></li>
         {% endif %}

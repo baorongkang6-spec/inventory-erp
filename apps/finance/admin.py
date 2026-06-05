@@ -7,6 +7,10 @@ from .models import (
     PaymentAllocation,
     PurchaseInvoice,
     PurchaseInvoiceLine,
+    Receipt,
+    ReceiptAllocation,
+    SalesInvoice,
+    SalesInvoiceLine,
 )
 
 
@@ -63,3 +67,42 @@ class BankJournalAdmin(admin.ModelAdmin):
     list_filter = ("company", "bank_account", "direction", "is_imported")
     search_fields = ("summary", "counterparty", "source_no")
     date_hierarchy = "date"
+
+
+class SalesInvoiceLineInline(admin.TabularInline):
+    model = SalesInvoiceLine
+    extra = 0
+    readonly_fields = ("product", "description", "amount_untaxed", "tax_rate",
+                       "tax_amount", "amount_taxed", "source_outbound_line")
+    can_delete = False
+
+
+@admin.register(SalesInvoice)
+class SalesInvoiceAdmin(admin.ModelAdmin):
+    list_display = ("doc_no", "company", "doc_date", "customer", "amount_taxed",
+                    "settled_amount", "status")
+    list_filter = ("company", "status")
+    search_fields = ("doc_no", "invoice_no")
+    date_hierarchy = "doc_date"
+    inlines = [SalesInvoiceLineInline]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(Receipt)
+class ReceiptAdmin(admin.ModelAdmin):
+    list_display = ("doc_no", "company", "doc_date", "bank_account", "customer",
+                    "amount", "settled_amount", "status")
+    list_filter = ("company", "status")
+    search_fields = ("doc_no",)
+    date_hierarchy = "doc_date"
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(ReceiptAllocation)
+class ReceiptAllocationAdmin(admin.ModelAdmin):
+    list_display = ("receipt", "invoice", "amount", "created_at")
+    search_fields = ("receipt__doc_no", "invoice__doc_no")

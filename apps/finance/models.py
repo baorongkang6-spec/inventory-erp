@@ -7,7 +7,7 @@ from django.db import models
 
 from apps.core.models import CompanyScopedModel
 from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY
-from apps.masterdata.models import Product, Supplier
+from apps.masterdata.models import Customer, Product, Supplier
 
 
 class BankAccount(CompanyScopedModel):
@@ -191,3 +191,121 @@ class PaymentAllocation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.payment.doc_no} ↔ {self.invoice.doc_no} {self.amount}"
+
+
+# ============================= 销售侧（镜像采购侧）=============================
+class SalesInvoice(CompanyScopedModel):
+    """销售发票（开具即产生应收账款）。镜像 PurchaseInvoice。"""
+
+    class Status(models.TextChoices):
+        REGISTERED = "registered", "已开具"
+        VOID = "void", "已作废"
+
+    doc_no = models.CharField("登记单号", max_length=32)
+    invoice_no = models.CharField("发票号码", max_length=64, blank=True)
+    doc_date = models.DateField("开票日期")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="客户")
+    amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.REGISTERED)
+    remark = models.CharField("备注", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "销售发票"
+        verbose_name_plural = "销售发票"
+        ordering = ["-doc_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_sinvoice_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+    @property
+    def outstanding(self):
+        """未核销（应收余额）。"""
+        return self.amount_taxed - self.settled_amount
+
+
+class SalesInvoiceLine(models.Model):
+    invoice = models.ForeignKey(
+        SalesInvoice, on_delete=models.CASCADE, related_name="lines", verbose_name="发票"
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.PROTECT, null=True, blank=True, verbose_name="商品"
+    )
+    description = models.CharField("摘要", max_length=128, blank=True)
+    amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2)
+    tax_rate = models.DecimalField("税率", max_digits=5, decimal_places=4, default=DEFAULT_TAX_RATE)
+    tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    source_outbound_line = models.ForeignKey(
+        "sales.SalesOutboundLine", on_delete=models.SET_NULL,
+        null=True, blank=True, verbose_name="来源出库明细",
+    )
+
+    class Meta:
+        verbose_name = "销售发票明细"
+        verbose_name_plural = "销售发票明细"
+
+    def __str__(self) -> str:
+        return f"{self.product or self.description} {self.amount_taxed}"
+
+
+class Receipt(CompanyScopedModel):
+    """收款登记。保存即自动生成一条银行存款日记账（收入）。镜像 Payment。"""
+
+    class Status(models.TextChoices):
+        POSTED = "posted", "已登记"
+        VOID = "void", "已作废"
+
+    doc_no = models.CharField("收款单号", max_length=32)
+    doc_date = models.DateField("收款日期")
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="收款银行账户")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="付款客户")
+    amount = models.DecimalField("收款金额", max_digits=18, decimal_places=2)
+    settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    summary = models.CharField("摘要", max_length=255, blank=True)
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.POSTED)
+    bank_journal = models.ForeignKey(
+        BankJournal, on_delete=models.PROTECT, null=True, blank=True,
+        verbose_name="对应日记账", related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "收款登记"
+        verbose_name_plural = "收款登记"
+        ordering = ["-doc_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_receipt_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+    @property
+    def unallocated(self):
+        return self.amount - self.settled_amount
+
+
+class ReceiptAllocation(models.Model):
+    """收款 ↔ 销售发票 的核销记录。镜像 PaymentAllocation。"""
+
+    receipt = models.ForeignKey(
+        Receipt, on_delete=models.CASCADE, related_name="allocations", verbose_name="收款"
+    )
+    invoice = models.ForeignKey(
+        SalesInvoice, on_delete=models.PROTECT, related_name="allocations", verbose_name="销售发票"
+    )
+    amount = models.DecimalField("核销金额", max_digits=18, decimal_places=2)
+    created_at = models.DateTimeField("核销时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "应收核销"
+        verbose_name_plural = "应收核销"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.receipt.doc_no} ↔ {self.invoice.doc_no} {self.amount}"

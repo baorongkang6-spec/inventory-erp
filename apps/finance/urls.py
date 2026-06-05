@@ -18,4 +18,13 @@ urlpatterns = [
     path("payments/new/", views.payment_create, name="payment_create"),
     path("payments/<int:pk>/", views.PaymentDetailView.as_view(), name="payment_detail"),
     path("payments/<int:pk>/allocate/", views.payment_allocate, name="payment_allocate"),
+    # 销售发票（→应收）
+    path("sales-invoices/", views.SalesInvoiceListView.as_view(), name="sales_invoice_list"),
+    path("sales-invoices/new/", views.sales_invoice_create, name="sales_invoice_create"),
+    path("sales-invoices/<int:pk>/", views.SalesInvoiceDetailView.as_view(), name="sales_invoice_detail"),
+    # 收款登记 + 应收核销
+    path("receipts/", views.ReceiptListView.as_view(), name="receipt_list"),
+    path("receipts/new/", views.receipt_create, name="receipt_create"),
+    path("receipts/<int:pk>/", views.ReceiptDetailView.as_view(), name="receipt_detail"),
+    path("receipts/<int:pk>/allocate/", views.receipt_allocate, name="receipt_allocate"),
 ]
