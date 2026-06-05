@@ -273,3 +273,23 @@ class BankJournalImportViewTests(TestCase):
         self.assertEqual(BankJournal.objects.filter(company=self.c1, is_imported=True).count(), 2)
         upload()  # 第二次全部重复
         self.assertEqual(BankJournal.objects.filter(company=self.c1, is_imported=True).count(), 2)
+
+
+class NoteRegistrationTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+
+    def test_create_notes(self):
+        from apps.finance.services import create_note_receivable, create_note_payable
+        nr = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                                    amount=Decimal("5000"), customer=self.cust, note_no="BA001")
+        self.assertEqual(nr.doc_no, "YSP-C1-20260605-001")
+        self.assertEqual(nr.unused, Decimal("5000.00"))
+        self.assertEqual(nr.status, "on_hand")
+        npay = create_note_payable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                                   supplier=self.sup, amount=Decimal("3000"))
+        self.assertEqual(npay.doc_no, "YFP-C1-20260605-001")
+        self.assertEqual(npay.unused, Decimal("3000.00"))

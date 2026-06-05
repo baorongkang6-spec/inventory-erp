@@ -37,6 +37,7 @@ ROLE_PERMS = {
         "finance.view_bankaccount", "finance.view_purchaseinvoice",
         "finance.view_payment", "finance.view_bankjournal",
         "finance.view_salesinvoice", "finance.view_receipt",
+        "finance.view_notereceivable", "finance.view_notepayable",
     ],
     # 出纳：只读总览 + 资金录入（管理银行账户、登记付款/收款及核销）
     roles.CASHIER: _VIEW_MASTERDATA + [
@@ -51,6 +52,9 @@ ROLE_PERMS = {
         "finance.view_salesinvoice",
         "finance.add_receipt", "finance.view_receipt",
         "finance.add_receiptallocation", "finance.view_receiptallocation",
+        "finance.add_notereceivable", "finance.view_notereceivable",
+        "finance.add_notepayable", "finance.view_notepayable",
+        "finance.add_notesettlement", "finance.view_notesettlement",
     ],
     # 采购：管供应商、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
@@ -82,6 +86,9 @@ ROLE_PERMS = {
         "finance.add_salesinvoice", "finance.view_salesinvoice",
         "finance.add_receipt", "finance.view_receipt",
         "finance.add_receiptallocation", "finance.view_receiptallocation",
+        "finance.add_notereceivable", "finance.view_notereceivable",
+        "finance.add_notepayable", "finance.view_notepayable",
+        "finance.add_notesettlement", "finance.view_notesettlement",
     ],
 }
 

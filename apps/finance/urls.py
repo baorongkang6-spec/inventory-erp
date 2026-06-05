@@ -33,4 +33,9 @@ urlpatterns = [
     path("reports/bank-journal/import/", views.bank_journal_import, name="bank_journal_import"),
     path("reports/payables/", views.payables_report, name="payables_report"),
     path("reports/receivables/", views.receivables_report, name="receivables_report"),
+    # 票据（M3）
+    path("notes-receivable/", views.NoteReceivableListView.as_view(), name="note_receivable_list"),
+    path("notes-receivable/new/", views.note_receivable_create, name="note_receivable_create"),
+    path("notes-payable/", views.NotePayableListView.as_view(), name="note_payable_list"),
+    path("notes-payable/new/", views.note_payable_create, name="note_payable_create"),
 ]

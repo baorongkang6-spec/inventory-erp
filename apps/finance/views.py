@@ -22,6 +22,8 @@ from apps.sales.models import SalesOutbound
 
 from .forms import (
     BankAccountForm,
+    NotePayableForm,
+    NoteReceivableForm,
     PaymentForm,
     PurchaseInvoiceHeaderForm,
     PurchaseInvoiceLineFormSet,
@@ -32,6 +34,8 @@ from .forms import (
 from .models import (
     BankAccount,
     BankJournal,
+    NotePayable,
+    NoteReceivable,
     Payment,
     PurchaseInvoice,
     Receipt,
@@ -41,6 +45,8 @@ from .services import (
     SettlementError,
     allocate_payment,
     allocate_receipt,
+    create_note_payable,
+    create_note_receivable,
     create_payment,
     create_purchase_invoice,
     create_receipt,
@@ -578,3 +584,68 @@ def bank_journal_import(request):
                 return redirect("bank_journal_report")
 
     return render(request, "finance/bank_journal_import.html", {"accounts": accounts})
+
+
+# ============================= 票据登记（M3-1）================================
+class NoteReceivableListView(CompanyScopedMixin, ListView):
+    model = NoteReceivable
+    template_name = "finance/note_receivable_list.html"
+    context_object_name = "notes"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("customer")
+
+
+class NotePayableListView(CompanyScopedMixin, ListView):
+    model = NotePayable
+    template_name = "finance/note_payable_list.html"
+    context_object_name = "notes"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("supplier")
+
+
+@login_required
+@permission_required("finance.add_notereceivable", raise_exception=True)
+def note_receivable_create(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+    if request.method == "POST":
+        form = NoteReceivableForm(request.POST, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            create_note_receivable(
+                company=company, user=request.user, draw_date=cd["draw_date"],
+                amount=cd["amount"], customer=cd.get("customer"), note_no=cd.get("note_no", ""),
+                due_date=cd.get("due_date"), remark=cd.get("remark", ""),
+            )
+            messages.success(request, "应收票据已登记")
+            return redirect("note_receivable_list")
+    else:
+        form = NoteReceivableForm(company=company, initial={"draw_date": timezone.localdate()})
+    return render(request, "finance/note_form.html", {"form": form, "title": "应收票据登记"})
+
+
+@login_required
+@permission_required("finance.add_notepayable", raise_exception=True)
+def note_payable_create(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+    if request.method == "POST":
+        form = NotePayableForm(request.POST, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            create_note_payable(
+                company=company, user=request.user, draw_date=cd["draw_date"],
+                supplier=cd["supplier"], amount=cd["amount"], note_no=cd.get("note_no", ""),
+                due_date=cd.get("due_date"), remark=cd.get("remark", ""),
+            )
+            messages.success(request, "应付票据已登记")
+            return redirect("note_payable_list")
+    else:
+        form = NotePayableForm(company=company, initial={"draw_date": timezone.localdate()})
+    return render(request, "finance/note_form.html", {"form": form, "title": "应付票据登记"})

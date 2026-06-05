@@ -3,6 +3,9 @@ from django.contrib import admin
 from .models import (
     BankAccount,
     BankJournal,
+    NotePayable,
+    NoteReceivable,
+    NoteSettlement,
     Payment,
     PaymentAllocation,
     PurchaseInvoice,
@@ -106,3 +109,35 @@ class ReceiptAdmin(admin.ModelAdmin):
 class ReceiptAllocationAdmin(admin.ModelAdmin):
     list_display = ("receipt", "invoice", "amount", "created_at")
     search_fields = ("receipt__doc_no", "invoice__doc_no")
+
+
+@admin.register(NoteReceivable)
+class NoteReceivableAdmin(admin.ModelAdmin):
+    list_display = ("doc_no", "company", "draw_date", "due_date", "customer",
+                    "amount", "settled_amount", "status")
+    list_filter = ("company", "status")
+    search_fields = ("doc_no", "note_no")
+    date_hierarchy = "draw_date"
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(NotePayable)
+class NotePayableAdmin(admin.ModelAdmin):
+    list_display = ("doc_no", "company", "draw_date", "due_date", "supplier",
+                    "amount", "settled_amount", "status")
+    list_filter = ("company", "status")
+    search_fields = ("doc_no", "note_no")
+    date_hierarchy = "draw_date"
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(NoteSettlement)
+class NoteSettlementAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "company", "note_kind", "note_no",
+                    "invoice_kind", "invoice_no", "amount", "is_endorsement")
+    list_filter = ("company", "note_kind", "invoice_kind", "is_endorsement")
+    search_fields = ("note_no", "invoice_no")

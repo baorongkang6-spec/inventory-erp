@@ -47,6 +47,15 @@
         {% if perms.finance.view_receipt %}
         <li class="nav-item"><a class="nav-link" href="{% url 'receipt_list' %}">收款</a></li>
         {% endif %}
+        {% if perms.finance.view_notereceivable or perms.finance.view_notepayable %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">票据</a>
+          <ul class="dropdown-menu">
+            {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'note_receivable_list' %}">应收票据</a></li>{% endif %}
+            {% if perms.finance.view_notepayable %}<li><a class="dropdown-item" href="{% url 'note_payable_list' %}">应付票据</a></li>{% endif %}
+          </ul>
+        </li>
+        {% endif %}
         {% if perms.finance.view_bankaccount %}
         <li class="nav-item"><a class="nav-link" href="{% url 'bankaccount_list' %}">银行账户</a></li>
         {% endif %}

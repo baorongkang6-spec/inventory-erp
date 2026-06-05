@@ -309,3 +309,119 @@ class ReceiptAllocation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.receipt.doc_no} ↔ {self.invoice.doc_no} {self.amount}"
+
+
+# ============================= 票据（M3）=====================================
+class NoteReceivable(CompanyScopedModel):
+    """应收票据（收到的银行承兑汇票等）。SPEC §7.2 / §7.4。
+
+    用途（按未用额分次使用）：① 核销应收账款（冲销售发票）；
+    ② 背书转让给供应商抵付应付账款（冲采购发票，置「已背书」）。
+    """
+
+    class Status(models.TextChoices):
+        ON_HAND = "on_hand", "在手"
+        ENDORSED = "endorsed", "已背书"
+        SETTLED = "settled", "已结算"
+        VOID = "void", "已作废"
+
+    doc_no = models.CharField("登记单号", max_length=32)
+    note_no = models.CharField("票据号码", max_length=64, blank=True)
+    draw_date = models.DateField("出票日期")
+    due_date = models.DateField("到期日期", null=True, blank=True)
+    customer = models.ForeignKey(
+        Customer, on_delete=models.PROTECT, null=True, blank=True, verbose_name="出票/来源客户"
+    )
+    amount = models.DecimalField("票面金额", max_digits=18, decimal_places=2)
+    settled_amount = models.DecimalField("已用金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.ON_HAND)
+    remark = models.CharField("备注", max_length=255, blank=True)
+    is_imported = models.BooleanField("Excel导入", default=False)
+
+    class Meta:
+        verbose_name = "应收票据"
+        verbose_name_plural = "应收票据"
+        ordering = ["-draw_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_notercv_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+    @property
+    def unused(self):
+        return self.amount - self.settled_amount
+
+
+class NotePayable(CompanyScopedModel):
+    """应付票据（开给供应商的票据）。用途：抵减应付账款（冲采购发票）。"""
+
+    class Status(models.TextChoices):
+        ISSUED = "issued", "已开出"
+        SETTLED = "settled", "已结算"
+        VOID = "void", "已作废"
+
+    doc_no = models.CharField("登记单号", max_length=32)
+    note_no = models.CharField("票据号码", max_length=64, blank=True)
+    draw_date = models.DateField("开票日期")
+    due_date = models.DateField("到期日期", null=True, blank=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="收票供应商")
+    amount = models.DecimalField("票面金额", max_digits=18, decimal_places=2)
+    settled_amount = models.DecimalField("已用金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.ISSUED)
+    remark = models.CharField("备注", max_length=255, blank=True)
+    is_imported = models.BooleanField("Excel导入", default=False)
+
+    class Meta:
+        verbose_name = "应付票据"
+        verbose_name_plural = "应付票据"
+        ordering = ["-draw_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_notepay_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+    @property
+    def unused(self):
+        return self.amount - self.settled_amount
+
+
+class NoteSettlement(models.Model):
+    """票据冲销记录（统一三类用途）。
+
+    note_kind + note_id 指向票据；invoice_kind + invoice_id 指向被冲发票。
+    - 应收票据 → 冲应收（销售发票）：endorse=False
+    - 应收票据 → 背书抵应付（采购发票）：endorse=True
+    - 应付票据 → 抵应付（采购发票）
+    用泛指字段避免多张关联表；金额在服务层校验。
+    """
+
+    class NoteKind(models.TextChoices):
+        RECEIVABLE = "ar_note", "应收票据"
+        PAYABLE = "ap_note", "应付票据"
+
+    class InvoiceKind(models.TextChoices):
+        SALES = "sales", "销售发票(应收)"
+        PURCHASE = "purchase", "采购发票(应付)"
+
+    company = models.ForeignKey("core.Company", on_delete=models.PROTECT, verbose_name="所属公司")
+    note_kind = models.CharField("票据类型", max_length=10, choices=NoteKind.choices)
+    note_id = models.PositiveIntegerField("票据ID")
+    note_no = models.CharField("票据单号", max_length=32, blank=True)
+    invoice_kind = models.CharField("发票类型", max_length=10, choices=InvoiceKind.choices)
+    invoice_id = models.PositiveIntegerField("发票ID")
+    invoice_no = models.CharField("发票单号", max_length=32, blank=True)
+    amount = models.DecimalField("冲销金额", max_digits=18, decimal_places=2)
+    is_endorsement = models.BooleanField("背书抵付", default=False)
+    created_at = models.DateTimeField("冲销时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "票据冲销"
+        verbose_name_plural = "票据冲销"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.note_no} → {self.invoice_no} {self.amount}"

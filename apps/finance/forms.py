@@ -6,7 +6,7 @@ from apps.core.forms import BootstrapForm, CompanyScopedModelForm
 from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Customer, Product, Supplier
 
-from .models import BankAccount, Payment, Receipt
+from .models import BankAccount, NotePayable, NoteReceivable, Payment, Receipt
 
 
 class BankAccountForm(CompanyScopedModelForm):
@@ -222,4 +222,61 @@ class ReceiptForm(forms.ModelForm):
         amount = self.cleaned_data["amount"]
         if amount is None or amount <= 0:
             raise forms.ValidationError("收款金额必须大于 0")
+        return amount
+
+
+# --- 票据登记（M3）-----------------------------------------------------------
+class _NoteFormMixin:
+    """票据表单公共：日期控件 ISO、字段样式、对手按账套过滤。"""
+
+    def _style(self):
+        for name, field in self.fields.items():
+            w = field.widget
+            if isinstance(w, forms.DateInput):
+                w.attrs.setdefault("type", "date")
+                w.format = "%Y-%m-%d"
+            w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
+
+
+class NoteReceivableForm(_NoteFormMixin, forms.ModelForm):
+    class Meta:
+        model = NoteReceivable
+        fields = ["note_no", "draw_date", "due_date", "customer", "amount", "remark"]
+        widgets = {
+            "draw_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+            "due_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+        }
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["customer"].queryset = Customer.objects.filter(company=company, is_active=True)
+        self._style()
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount is None or amount <= 0:
+            raise forms.ValidationError("票面金额必须大于 0")
+        return amount
+
+
+class NotePayableForm(_NoteFormMixin, forms.ModelForm):
+    class Meta:
+        model = NotePayable
+        fields = ["note_no", "draw_date", "due_date", "supplier", "amount", "remark"]
+        widgets = {
+            "draw_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+            "due_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+        }
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["supplier"].queryset = Supplier.objects.filter(company=company, is_active=True)
+        self._style()
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount is None or amount <= 0:
+            raise forms.ValidationError("票面金额必须大于 0")
         return amount

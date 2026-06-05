@@ -8,6 +8,9 @@ from apps.core.money import ZERO_MONEY, round_money
 
 from .models import (
     BankJournal,
+    NotePayable,
+    NoteReceivable,
+    NoteSettlement,
     Payment,
     PaymentAllocation,
     PurchaseInvoice,
@@ -249,3 +252,40 @@ def allocate_receipt(*, receipt, allocations, user=None):
         summary=f"应收核销 {receipt.doc_no} 核销 {total}（{len(cleaned)} 张发票）",
     )
     return receipt
+
+
+# ============================= 票据（M3）=====================================
+@transaction.atomic
+def create_note_receivable(*, company, user, draw_date, amount, customer=None,
+                           note_no="", due_date=None, remark="") -> NoteReceivable:
+    """登记一张应收票据。"""
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("票面金额必须大于 0")
+    note = NoteReceivable.objects.create(
+        company=company, created_by=user,
+        doc_no=next_doc_no(NoteReceivable, company, "YSP", draw_date),
+        note_no=note_no, draw_date=draw_date, due_date=due_date,
+        customer=customer, amount=amount, remark=remark,
+    )
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=note,
+                    summary=f"应收票据 {note.doc_no} 金额 {amount}")
+    return note
+
+
+@transaction.atomic
+def create_note_payable(*, company, user, draw_date, supplier, amount,
+                        note_no="", due_date=None, remark="") -> NotePayable:
+    """登记一张应付票据。"""
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("票面金额必须大于 0")
+    note = NotePayable.objects.create(
+        company=company, created_by=user,
+        doc_no=next_doc_no(NotePayable, company, "YFP", draw_date),
+        note_no=note_no, draw_date=draw_date, due_date=due_date,
+        supplier=supplier, amount=amount, remark=remark,
+    )
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=note,
+                    summary=f"应付票据 {note.doc_no} 供应商 {supplier} 金额 {amount}")
+    return note
