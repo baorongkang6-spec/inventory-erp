@@ -57,8 +57,8 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
     from apps.purchasing.services import _record_expenses
     _record_expenses(company, user, doc, doc_date, expenses, kind="sales")
 
-    # 归还出库：冲减借调往来（SPEC §4.1）
-    if sales_type == SalesOutbound.SalesType.RETURN:
+    # 借调类出库（借出/归还）：在出库方记一笔借调往来（OUT，SPEC §4.1）
+    if sales_type in (SalesOutbound.SalesType.RETURN, SalesOutbound.SalesType.LEND):
         from apps.finance.models import BorrowTransaction
         BorrowTransaction.objects.create(
             company=company, created_by=user,
@@ -112,9 +112,16 @@ def _mirror_to_related_company(outbound, user):
         }
         for ln in outbound.lines.select_related("product")
     ]
+    # 销售→对方外购入库；借出/归还→对方借调入库（SPEC §5）
+    borrow_kind = outbound.sales_type in (
+        SalesOutbound.SalesType.LEND, SalesOutbound.SalesType.RETURN)
+    from apps.purchasing.models import PurchaseInbound
     inbound = create_and_post_inbound(
         company=company_b, user=user, doc_date=outbound.doc_date, lines=lines,
         remark=f"关联自动生成：源 {outbound.company.code} {outbound.doc_no}",
+        purchase_type=(PurchaseInbound.PurchaseType.BORROW if borrow_kind
+                       else PurchaseInbound.PurchaseType.EXTERNAL),
+        borrow_counterparty=str(outbound.company) if borrow_kind else "",
     )
     inbound.source_outbound = outbound
     inbound.save(update_fields=["source_outbound"])

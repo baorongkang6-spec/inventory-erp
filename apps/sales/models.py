@@ -14,7 +14,8 @@ from apps.masterdata.models import Customer, Product
 class SalesOutbound(CompanyScopedModel):
     class SalesType(models.TextChoices):
         SALE = "sale", "销售"
-        RETURN = "return", "归还"  # M6（借调归还）
+        LEND = "lend", "借出"      # M6 借调出库（借出给对方）
+        RETURN = "return", "归还"  # M6 借调归还（归还借入的货）
 
     class Status(models.TextChoices):
         POSTED = "posted", "已过账"

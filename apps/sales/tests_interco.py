@@ -112,3 +112,46 @@ class IntercoVoidTests(TestCase):
         out = self._mirror_outbound("30")
         with self.assertRaises(InventoryError):
             void_purchase_inbound(out.mirror_inbound, None)  # 直接作废镜像应被拒绝
+
+
+class IntercoBorrowTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.c2 = Company.objects.create(code="C2", name="恒本源", short_name="恒本源")
+        cls.p1 = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.rel = Customer.objects.create(company=cls.c1, code="REL-C2", name="恒本源",
+                                          related_company=cls.c2)
+        post_inbound(cls.c1, cls.p1, Decimal("100"), Decimal("10"))
+
+    def test_lend_mirrors_borrow_in(self):
+        from apps.finance.models import BorrowTransaction
+        out = create_and_post_outbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.rel,
+            lines=[{"product": self.p1, "quantity": Decimal("30")}], sales_type="lend")
+        # 对方 C2 自动生成借调入库
+        inbound = out.mirror_inbound
+        self.assertIsNotNone(inbound)
+        self.assertEqual(inbound.company, self.c2)
+        self.assertEqual(inbound.purchase_type, "borrow")
+        p_c2 = Product.objects.get(company=self.c2, code="P001")
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c2, product=p_c2).quantity, Decimal("30.000"))
+        # 借调往来：C1 侧记 OUT(对方欠我 -300)，C2 侧记 IN(欠 C1 +300)
+        c1_bal = sum((t.signed_amount for t in BorrowTransaction.objects.filter(company=self.c1)), Decimal("0"))
+        c2_bal = sum((t.signed_amount for t in BorrowTransaction.objects.filter(company=self.c2)), Decimal("0"))
+        self.assertEqual(c1_bal, Decimal("-300.00"))
+        self.assertEqual(c2_bal, Decimal("300.00"))
+
+    def test_void_lend_cascades_borrow(self):
+        from apps.finance.models import BorrowTransaction
+        from apps.sales.services import void_sales_outbound
+        out = create_and_post_outbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.rel,
+            lines=[{"product": self.p1, "quantity": Decimal("30")}], sales_type="lend")
+        void_sales_outbound(out, None)
+        out.refresh_from_db()
+        self.assertEqual(out.status, "void")
+        self.assertEqual(out.mirror_inbound.status, "void")
+        # 两侧借调往来均撤销
+        self.assertEqual(BorrowTransaction.objects.count(), 0)
