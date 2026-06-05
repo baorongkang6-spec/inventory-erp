@@ -242,3 +242,34 @@ class Command(BaseCommand):
             {"product": p001, "quantity": Decimal("60")},
         ])
         self.stdout.write("  · 样例单据（入库×2 + 出库×1，演示移动加权）")
+
+        # --- M2 资金往来演示 ---
+        from apps.finance.models import BankAccount
+        from apps.finance.services import (
+            allocate_payment, allocate_receipt, create_payment,
+            create_purchase_invoice, create_receipt, create_sales_invoice,
+        )
+        from apps.masterdata.models import Customer, Supplier
+
+        sup = Supplier.objects.get(company=c1, code="SUP-EXT01")
+        cust = Customer.objects.get(company=c1, code="CUST-C2")
+        acc = BankAccount.objects.get(company=c1, name="基本户")
+
+        # 采购发票：不含税 1650 + 13% → 含税 1864.50 应付；付款 1000 部分核销
+        pinv = create_purchase_invoice(company=c1, user=None, doc_date=d, supplier=sup, lines=[
+            {"product": p001, "description": "环氧树脂", "amount_untaxed": Decimal("1650"),
+             "tax_rate": Decimal("0.13")},
+        ])
+        pay = create_payment(company=c1, user=None, doc_date=d, bank_account=acc,
+                             supplier=sup, amount=Decimal("1000"), summary="付货款")
+        allocate_payment(payment=pay, allocations=[{"invoice": pinv, "amount": Decimal("1000")}])
+
+        # 销售发票：售价不含税 4000 + 13% → 含税 4520 应收；收款 4520 全额核销
+        sinv = create_sales_invoice(company=c1, user=None, doc_date=d, customer=cust, lines=[
+            {"product": p001, "description": "环氧树脂", "amount_untaxed": Decimal("4000"),
+             "tax_rate": Decimal("0.13")},
+        ])
+        rec = create_receipt(company=c1, user=None, doc_date=d, bank_account=acc,
+                             customer=cust, amount=Decimal("4520"), summary="收货款")
+        allocate_receipt(receipt=rec, allocations=[{"invoice": sinv, "amount": Decimal("4520")}])
+        self.stdout.write("  · 样例资金往来（采购发票+部分付款核销、销售发票+全额收款核销）")

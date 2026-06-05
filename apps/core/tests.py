@@ -28,6 +28,16 @@ class SeedInitTests(TestCase):
         self.assertEqual(bal.amount, Decimal("990.00"))
         self.assertEqual(bal.avg_price, Decimal("11.00"))
 
+        # M2 资金往来演示：采购发票含税 1864.50，付款核销 1000 → 应付余额 864.50
+        from apps.finance.models import PurchaseInvoice, SalesInvoice
+        pinv = PurchaseInvoice.objects.get(company__code="C1")
+        self.assertEqual(pinv.amount_taxed, Decimal("1864.50"))
+        self.assertEqual(pinv.outstanding, Decimal("864.50"))
+        # 销售发票含税 4520，收款全额核销 → 应收余额 0
+        sinv = SalesInvoice.objects.get(company__code="C1")
+        self.assertEqual(sinv.amount_taxed, Decimal("4520.00"))
+        self.assertEqual(sinv.outstanding, Decimal("0.00"))
+
     def test_seed_is_idempotent(self):
         self._run()
         self._run()  # 第二次不应报错，也不应重复建公司/单据
