@@ -77,6 +77,7 @@ def outbound_create(request):
                     customer=header.cleaned_data.get("customer"),
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
+                    sales_type=header.cleaned_data["sales_type"],
                 )
             except InsufficientStockError as e:
                 messages.error(request, f"库存不足，整单未保存：{e}")

@@ -16,7 +16,9 @@ from .models import SalesOutbound, SalesOutboundLine
 
 @transaction.atomic
 def create_and_post_outbound(*, company, user, doc_date, lines,
-                             customer=None, remark="", expenses=None) -> SalesOutbound:
+                             customer=None, remark="", expenses=None,
+                             sales_type=SalesOutbound.SalesType.SALE,
+                             borrow_counterparty="") -> SalesOutbound:
     """创建销售出库单并逐行过账减少库存（结转移动加权成本）。
 
     lines: [{"product": Product, "quantity": Decimal}, ...]
@@ -28,6 +30,7 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
         doc_no=next_doc_no(SalesOutbound, company, "CK", doc_date),
         doc_date=doc_date,
         customer=customer,
+        sales_type=sales_type,
         remark=remark,
     )
 
@@ -53,6 +56,16 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
     # 其他费用（期间费用，不计入存货成本）
     from apps.purchasing.services import _record_expenses
     _record_expenses(company, user, doc, doc_date, expenses, kind="sales")
+
+    # 归还出库：冲减借调往来（SPEC §4.1）
+    if sales_type == SalesOutbound.SalesType.RETURN:
+        from apps.finance.models import BorrowTransaction
+        BorrowTransaction.objects.create(
+            company=company, created_by=user,
+            counterparty=borrow_counterparty or (str(customer) if customer else ""),
+            direction=BorrowTransaction.Direction.OUT, amount=total_cost, date=doc_date,
+            source_type="SalesOutbound", source_id=str(doc.pk), source_no=doc.doc_no,
+        )
 
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
@@ -134,6 +147,10 @@ def void_sales_outbound(doc, user=None):
         if line.stock_move_id:
             reverse_move(line.stock_move, source_type="SalesOutboundVoid",
                          source_id=doc.pk, source_no=f"作废{doc.doc_no}")
+    # 归还出库作废：撤销借调往来
+    from apps.finance.models import BorrowTransaction
+    BorrowTransaction.objects.filter(
+        company=doc.company, source_type="SalesOutbound", source_id=str(doc.pk)).delete()
     doc.status = SalesOutbound.Status.VOID
     doc.save(update_fields=["status"])
     AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.VOID, target=doc,

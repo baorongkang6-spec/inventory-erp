@@ -5,11 +5,14 @@ from django import forms
 from apps.core.forms import BootstrapForm
 from apps.masterdata.models import Customer, Product
 
+from .models import SalesOutbound
+
 
 class OutboundHeaderForm(BootstrapForm):
     doc_date = forms.DateField(label="出库日期")
+    sales_type = forms.ChoiceField(label="销售方式", choices=SalesOutbound.SalesType.choices)
     customer = forms.ModelChoiceField(
-        label="客户", queryset=Customer.objects.none(), required=False, empty_label="（未指定）"
+        label="客户/归还对象", queryset=Customer.objects.none(), required=False, empty_label="（未指定）"
     )
     remark = forms.CharField(label="备注", required=False, max_length=255)
 

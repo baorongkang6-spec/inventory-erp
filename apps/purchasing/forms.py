@@ -8,11 +8,14 @@ from django import forms
 from apps.core.forms import BootstrapForm
 from apps.masterdata.models import Product, Supplier
 
+from .models import PurchaseInbound
+
 
 class InboundHeaderForm(BootstrapForm):
     doc_date = forms.DateField(label="入库日期")
+    purchase_type = forms.ChoiceField(label="采购方式", choices=PurchaseInbound.PurchaseType.choices)
     supplier = forms.ModelChoiceField(
-        label="供应商", queryset=Supplier.objects.none(), required=False, empty_label="（外购/未指定）"
+        label="供应商/出借方", queryset=Supplier.objects.none(), required=False, empty_label="（外购/未指定）"
     )
     remark = forms.CharField(label="备注", required=False, max_length=255)
 

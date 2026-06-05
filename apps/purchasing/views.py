@@ -62,6 +62,7 @@ def inbound_create(request):
                     supplier=header.cleaned_data.get("supplier"),
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
+                    purchase_type=header.cleaned_data["purchase_type"],
                 )
             except InventoryError as e:
                 messages.error(request, f"过账失败：{e}")

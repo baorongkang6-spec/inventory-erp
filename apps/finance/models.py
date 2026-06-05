@@ -469,3 +469,37 @@ class ExpenseEntry(CompanyScopedModel):
 
     def __str__(self) -> str:
         return f"{self.category} {self.amount}"
+
+
+class BorrowTransaction(CompanyScopedModel):
+    """借调往来（SPEC §4.1）。性质类其他应付，不涉税。
+
+    借入（借调入库）→ direction=in，往来增加；
+    归还（归还出库）→ direction=out，往来减少。
+    某对手单位余额 = Σ借入金额 − Σ归还金额。
+    """
+
+    class Direction(models.TextChoices):
+        IN = "in", "借入"
+        OUT = "out", "归还"
+
+    counterparty = models.CharField("对手单位", max_length=128)
+    direction = models.CharField("方向", max_length=4, choices=Direction.choices)
+    amount = models.DecimalField("金额", max_digits=18, decimal_places=2)
+    date = models.DateField("日期")
+    source_type = models.CharField("来源单类型", max_length=32, blank=True)
+    source_id = models.CharField("来源单ID", max_length=32, blank=True)
+    source_no = models.CharField("来源单号", max_length=64, blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "借调往来"
+        verbose_name_plural = "借调往来"
+        ordering = ["counterparty", "date", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.counterparty} [{self.get_direction_display()}] {self.amount}"
+
+    @property
+    def signed_amount(self):
+        return self.amount if self.direction == self.Direction.IN else -self.amount

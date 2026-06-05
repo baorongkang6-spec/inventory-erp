@@ -38,7 +38,7 @@ ROLE_PERMS = {
         "finance.view_payment", "finance.view_bankjournal",
         "finance.view_salesinvoice", "finance.view_receipt",
         "finance.view_notereceivable", "finance.view_notepayable",
-        "masterdata.view_expensecategory", "finance.view_expenseentry",
+        "masterdata.view_expensecategory", "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
     # 出纳：只读总览 + 资金录入（管理银行账户、登记付款/收款及核销）
     roles.CASHIER: _VIEW_MASTERDATA + [
@@ -56,7 +56,7 @@ ROLE_PERMS = {
         "finance.add_notereceivable", "finance.view_notereceivable",
         "finance.add_notepayable", "finance.view_notepayable",
         "finance.add_notesettlement", "finance.view_notesettlement",
-        "masterdata.view_expensecategory", "finance.view_expenseentry",
+        "masterdata.view_expensecategory", "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
     # 采购：管供应商、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
@@ -68,7 +68,7 @@ ROLE_PERMS = {
         "inventory.view_stockbalance",
         "masterdata.add_expensecategory", "masterdata.change_expensecategory",
         "masterdata.view_expensecategory", "masterdata.delete_expensecategory",
-        "finance.view_expenseentry",
+        "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
     # 销售：管客户、建销售出库、看库存（仅数量）
     roles.SALES: [
@@ -78,7 +78,7 @@ ROLE_PERMS = {
         "sales.add_salesoutbound", "sales.view_salesoutbound",
         "sales.void_salesoutbound",
         "inventory.view_stockbalance",
-        "masterdata.view_expensecategory", "finance.view_expenseentry",
+        "masterdata.view_expensecategory", "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
     # 财务：看全部往来、看单据、看库存含金额、管理银行账户与发票/应付
     roles.FINANCE: _VIEW_MASTERDATA + [
@@ -99,7 +99,7 @@ ROLE_PERMS = {
         "finance.add_notesettlement", "finance.view_notesettlement",
         "masterdata.add_expensecategory", "masterdata.change_expensecategory",
         "masterdata.view_expensecategory", "masterdata.delete_expensecategory",
-        "finance.view_expenseentry",
+        "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
 }
 

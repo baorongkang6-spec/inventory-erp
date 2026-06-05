@@ -12,7 +12,9 @@ from .models import PurchaseInbound, PurchaseInboundLine
 
 @transaction.atomic
 def create_and_post_inbound(*, company, user, doc_date, lines,
-                            supplier=None, remark="", expenses=None) -> PurchaseInbound:
+                            supplier=None, remark="", expenses=None,
+                            purchase_type=PurchaseInbound.PurchaseType.EXTERNAL,
+                            borrow_counterparty="") -> PurchaseInbound:
     """创建采购入库单并逐行过账增加库存。
 
     lines: [{"product": Product, "quantity": Decimal, "unit_price": Decimal}, ...]
@@ -27,6 +29,7 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
         doc_no=next_doc_no(PurchaseInbound, company, "RK", doc_date),
         doc_date=doc_date,
         supplier=supplier,
+        purchase_type=purchase_type,
         remark=remark,
     )
 
@@ -68,6 +71,16 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
 
     # 记录其他费用（含计入成本与期间费用）
     _record_expenses(company, user, doc, doc_date, expenses, kind="purchase")
+
+    # 借调入库：挂借调往来（类其他应付，不涉税，SPEC §4.1）
+    if purchase_type == PurchaseInbound.PurchaseType.BORROW:
+        from apps.finance.models import BorrowTransaction
+        BorrowTransaction.objects.create(
+            company=company, created_by=user,
+            counterparty=borrow_counterparty or (str(supplier) if supplier else ""),
+            direction=BorrowTransaction.Direction.IN, amount=total_amount, date=doc_date,
+            source_type="PurchaseInbound", source_id=str(doc.pk), source_no=doc.doc_no,
+        )
 
     doc.total_quantity = total_qty
     doc.total_amount = total_amount
@@ -112,6 +125,10 @@ def void_purchase_inbound(doc, user=None, *, _from_source=False):
         if line.stock_move_id:
             reverse_move(line.stock_move, source_type="PurchaseInboundVoid",
                          source_id=doc.pk, source_no=f"作废{doc.doc_no}")
+    # 借调入库作废：撤销借调往来
+    from apps.finance.models import BorrowTransaction
+    BorrowTransaction.objects.filter(
+        company=doc.company, source_type="PurchaseInbound", source_id=str(doc.pk)).delete()
     doc.status = PurchaseInbound.Status.VOID
     doc.save(update_fields=["status"])
     AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.VOID, target=doc,

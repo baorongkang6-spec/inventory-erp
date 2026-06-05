@@ -832,3 +832,17 @@ def notes_balance_report(request):
     return render(request, "finance/notes_balance_report.html", {
         "ar": ar, "ap": ap, "ar_total": ar_total, "ap_total": ap_total,
     })
+
+
+# ============================= 借调往来余额表（M6-2）==========================
+@login_required
+@permission_required("finance.view_borrowtransaction", raise_exception=True)
+def borrow_report(request):
+    from .models import BorrowTransaction
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    agg = {}
+    for t in BorrowTransaction.objects.filter(company=company):
+        agg[t.counterparty] = agg.get(t.counterparty, Decimal("0.00")) + t.signed_amount
+    rows = [{"counterparty": k or "（未指定）", "balance": v} for k, v in sorted(agg.items())]
+    total = sum((r["balance"] for r in rows), start=Decimal("0.00"))
+    return render(request, "finance/borrow_report.html", {"rows": rows, "total": total})

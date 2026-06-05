@@ -46,4 +46,5 @@ urlpatterns = [
     path("notes-payable/export/", views.note_payable_export, name="note_payable_export"),
     path("notes-payable/import/", views.note_payable_import, name="note_payable_import"),
     path("reports/notes-balance/", views.notes_balance_report, name="notes_balance_report"),
+    path("reports/borrow/", views.borrow_report, name="borrow_report"),
 ]
