@@ -44,3 +44,13 @@
 - **作废 ≠ 删除**：移动加权下「真正撤销」很难；采用记 `status=void` + 反向补偿流水（reverse_move）而非物理删除/重算历史；反冲若致负库存则拒绝（提示先冲后续业务）。
 - **流水缺业务日期**：`StockMove` 只有 `created_at`（时间戳）无 doc_date，做**按业务月份**的报表会不准。本期用「期初标记区分」规避；将来要做多期间报表/结账，需给流水加 `date` 字段（从单据 doc_date 带入）。
 - **get_or_create 不更新已存在行**：seed 里改 `defaults`（如给已建的银行账户加 opening_balance）对**已存在**记录无效，只影响新建。改既有数据要显式 update 或重建库。
+
+## 四、安全加固（上线前）
+
+- **生产开关与测试解耦**：用显式 `DJANGO_PRODUCTION` env 控制 HTTPS/安全 Cookie/HSTS，**不要用 `not DEBUG`**——Django 跑测试时默认 `DEBUG=False`，`SECURE_SSL_REDIRECT` 会把测试请求 301 到 https 致全部失败。
+- **生产 fail-fast**：`PRODUCTION` 下若 SECRET_KEY 仍是开发默认 / `DEBUG=1` / 缺 `CSRF_TRUSTED_ORIGINS` → 启动即 `ImproperlyConfigured`，避免裸奔上线。
+- **反向代理 HTTPS**：花生壳等终止 HTTPS 后转发 http，须设 `SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO","https")`，否则 `SECURE_SSL_REDIRECT` 死循环。
+- **登录防爆破（自实现）**：用户名+IP 用 Django 缓存计数，达限锁定；`user_login_failed/user_logged_in` 信号计数+清零+写 `AuditLog`。比 django-axes 轻、无额外 auth 后端坑（axes 的 AxesStandaloneBackend 会干扰 `force_login` 测试）。⚠️ LocMemCache 是**单进程**的，多进程/多机部署需换共享缓存（Redis）。代理后取真实 IP 用 `X-Forwarded-For` 首段。
+- **静态文件**：纯 WSGI（Waitress）不会自动服务 static，用 **WhiteNoise**（中间件紧跟 SecurityMiddleware）+ 生产 `CompressedManifestStaticFilesStorage`（须先 `collectstatic`）；开发不启用 manifest，否则未 collect 时 `{% static %}` 报错。
+- **.env 要真正加载**：写了 `.env.example` 不等于生效——`settings` 里 `load_dotenv(BASE_DIR/'.env')` 才会读。
+- **校验**：`manage.py check --deploy`（带生产 env）应零告警；`SECRET_KEY` 须 50+ 位随机（否则 W009）。
