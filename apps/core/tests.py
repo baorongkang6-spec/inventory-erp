@@ -36,6 +36,11 @@ class SeedInitTests(TestCase):
         npay = NotePayable.objects.get(company__code="C1")
         self.assertEqual(npay.unused, Decimal("0.00"))
         self.assertEqual(npay.status, "settled")
+        # M6：C2 借调入库挂借调往来 50
+        from apps.finance.models import BorrowTransaction
+        bt = BorrowTransaction.objects.get(company__code="C2")
+        self.assertEqual(bt.amount, Decimal("50.00"))
+        self.assertEqual(bt.direction, "in")
         # 销售发票含税 4520，收款全额核销 → 应收余额 0
         sinv = SalesInvoice.objects.get(company__code="C1")
         self.assertEqual(sinv.amount_taxed, Decimal("4520.00"))

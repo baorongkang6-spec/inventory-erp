@@ -308,3 +308,14 @@ class Command(BaseCommand):
         settle_payable_against_purchase(
             note=npay, allocations=[{"invoice": pinv, "amount": Decimal("864.50")}])
         self.stdout.write("  · 样例票据（应付票据抵采购发票剩余应付，发票应付清零）")
+
+        # --- M6 演示：C2 借调入库（暂估 5 元/袋 × 10）挂借调往来 50 ---
+        from apps.purchasing.models import PurchaseInbound
+        c2 = self.companies["C2"]
+        p001_c2 = Product.objects.get(company=c2, code="P001")
+        create_and_post_inbound(
+            company=c2, user=None, doc_date=d,
+            lines=[{"product": p001_c2, "quantity": Decimal("10"), "unit_price": Decimal("5")}],
+            purchase_type=PurchaseInbound.PurchaseType.BORROW, borrow_counterparty="外部出借方",
+        )
+        self.stdout.write("  · 样例借调（C2 借调入库 10@5，挂借调往来 50）")
