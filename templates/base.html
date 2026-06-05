@@ -17,6 +17,9 @@
     </button>
     <div class="collapse navbar-collapse" id="nav">
       <ul class="navbar-nav me-auto">
+        {% if is_overview %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'overview_report' %}">总览表</a></li>
+        {% endif %}
         {% if menu.products %}
         <li class="nav-item"><a class="nav-link" href="{% url 'product_list' %}">商品</a></li>
         {% endif %}

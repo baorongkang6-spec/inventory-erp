@@ -60,3 +60,56 @@ class OpeningImportTests(TestCase):
         created, skipped, errors = imports.import_stock(self.c1, None, f)
         self.assertEqual(created, 0)
         self.assertEqual(len(errors), 1)
+
+
+class OverviewReportTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from datetime import date
+        from apps.inventory.services import post_inbound
+        from apps.purchasing.services import create_and_post_inbound
+        from apps.sales.services import create_and_post_outbound
+        from apps.finance.services import (
+            create_opening_payable, create_payment, create_purchase_invoice,
+        )
+        from apps.masterdata.models import Customer
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("1000"))
+        d = date(2026, 6, 1)
+        # 期初库存 50@10=500
+        post_inbound(cls.c1, cls.p, Decimal("50"), Decimal("10"),
+                     source_type="Opening", source_no="期初")
+        # 本期入库 100@10=1000，出库 30（成本 10 → 300）
+        create_and_post_inbound(company=cls.c1, user=None, doc_date=d,
+            lines=[{"product": cls.p, "quantity": Decimal("100"), "unit_price": Decimal("10")}])
+        create_and_post_outbound(company=cls.c1, user=None, doc_date=d,
+            lines=[{"product": cls.p, "quantity": Decimal("30")}])
+        # 期初应付 2000；本期采购发票 1130；付款 500 核销
+        create_opening_payable(company=cls.c1, user=None, supplier=cls.sup,
+                               amount=Decimal("2000"), doc_date=d)
+        inv = create_purchase_invoice(company=cls.c1, user=None, doc_date=d, supplier=cls.sup,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0.13")}])
+        pay = create_payment(company=cls.c1, user=None, doc_date=d, bank_account=cls.acc,
+                             supplier=cls.sup, amount=Decimal("500"))
+        from apps.finance.services import allocate_payment
+        allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("500")}])
+
+    def test_overview_reconciles(self):
+        from apps.opening.reports import company_overview
+        ov = company_overview(self.c1)
+        for key in ("bank", "stock", "payable", "receivable", "note_recv"):
+            r = ov[key]
+            self.assertEqual(r["opening"] + r["income"] - r["outgo"], r["ending"],
+                             f"{key} 四列不勾稽")
+        # 库存：期初500 + 入1000 - 出300 = 期末1200
+        self.assertEqual(ov["stock"]["opening"], Decimal("500.00"))
+        self.assertEqual(ov["stock"]["ending"], Decimal("1200.00"))
+        # 银行：期初1000 - 付款500 = 期末500
+        self.assertEqual(ov["bank"]["ending"], Decimal("500.00"))
+        # 应付：期初2000 + 1130 - 500核销 = 期末2630
+        self.assertEqual(ov["payable"]["opening"], Decimal("2000.00"))
+        self.assertEqual(ov["payable"]["ending"], Decimal("2630.00"))

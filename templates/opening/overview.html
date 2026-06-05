@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}跨公司总览表 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-1">跨公司总览表</h4>
+<p class="text-muted">口径：期初（启用日）+ 本期收入 − 本期发出 = 期末结存；金额单位元。</p>
+
+{% for b in blocks %}
+<div class="card mb-4">
+  <div class="card-header fw-semibold">{{ b.label }}</div>
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">公司</th><th>期初</th><th>本期收入</th><th>本期发出</th><th>期末结存</th></tr>
+      </thead>
+      <tbody>
+        {% for r in b.rows %}
+        <tr>
+          <td class="text-start">{{ r.company }}</td>
+          <td>{{ r.opening }}</td>
+          <td>{{ r.income }}</td>
+          <td>{{ r.outgo }}</td>
+          <td class="fw-semibold">{{ r.ending }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th class="text-start">合计</th><th>{{ b.totals.opening }}</th><th>{{ b.totals.income }}</th>
+            <th>{{ b.totals.outgo }}</th><th>{{ b.totals.ending }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

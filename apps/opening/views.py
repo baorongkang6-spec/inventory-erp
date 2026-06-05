@@ -2,12 +2,15 @@
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
+from apps.accounts import roles
 from apps.core.scope import get_active_company, get_visible_companies
 
 from .imports import IMPORTERS, TEMPLATES, build_template
+from .reports import overview_table
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -52,3 +55,18 @@ def opening_import(request):
     from django.conf import settings
     return render(request, "opening/opening_import.html",
                   {"cards": cards, "opening_date": settings.OPENING_DATE})
+
+
+def _is_overview(user):
+    return user.is_superuser or bool(set(user.role_names) & roles.OVERVIEW_ROLES)
+
+
+@login_required
+def overview(request):
+    """总经理/出纳跨公司总览表（SPEC §9.1）。"""
+    if not _is_overview(request.user):
+        raise PermissionDenied("仅总经理/出纳可查看跨公司总览表")
+    companies = list(get_visible_companies(request.user))
+    blocks = overview_table(companies)
+    return render(request, "opening/overview.html",
+                  {"companies": companies, "blocks": blocks})
