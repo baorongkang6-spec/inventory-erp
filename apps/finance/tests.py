@@ -189,3 +189,87 @@ class SalesSideTests(TestCase):
             allocate_receipt(receipt=rec, allocations=[{"invoice": inv, "amount": Decimal("200")}])
         inv.refresh_from_db()
         self.assertEqual(inv.settled_amount, Decimal("0.00"))
+
+
+class BankJournalExcelTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("1000"))
+
+    def test_export_then_parse_roundtrip(self):
+        from apps.finance.excel import export_bank_journal, parse_bank_journal_xlsx
+        from apps.finance.views import _journal_rows
+        from io import BytesIO
+        create_payment(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+                       bank_account=self.acc, supplier=self.sup, amount=Decimal("300"), summary="付款A")
+        _, rows, closing = _journal_rows(self.c1, self.acc)
+        self.assertEqual(closing, Decimal("700.00"))  # 1000 - 300
+        content = export_bank_journal(self.acc, rows)
+        parsed, errors = parse_bank_journal_xlsx(BytesIO(content))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["direction"], "out")
+        self.assertEqual(parsed[0]["amount"], Decimal("300"))
+
+    def test_parse_skips_header_and_blank(self):
+        from openpyxl import Workbook
+        from io import BytesIO
+        from apps.finance.excel import parse_bank_journal_xlsx
+        wb = Workbook(); ws = wb.active
+        ws.append(["账户：基本户"])
+        ws.append(["日期", "摘要", "对方单位", "收入", "支出"])
+        ws.append(["2026-06-05", "收货款", "客户甲", 500, None])
+        ws.append([None, None, None, None, None])
+        ws.append(["2026/06/06", "付款", "供应商甲", None, 200])
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        parsed, errors = parse_bank_journal_xlsx(buf)
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(parsed[0]["direction"], "in")
+        self.assertEqual(parsed[1]["direction"], "out")
+        self.assertEqual(parsed[1]["date"], date(2026, 6, 6))
+
+
+class BankJournalImportViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        for code in ("add_bankjournal", "view_bankjournal"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _xlsx(self):
+        from openpyxl import Workbook
+        from io import BytesIO
+        wb = Workbook(); ws = wb.active
+        ws.append(["日期", "摘要", "对方单位", "收入", "支出"])
+        ws.append(["2026-06-05", "收货款", "客户甲", 500, None])
+        ws.append(["2026-06-06", "付电费", "电力公司", None, 80])
+        buf = BytesIO(); wb.save(buf); return buf.getvalue()
+
+    def test_import_creates_then_dedups(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.finance.models import BankJournal
+        self.client.force_login(self.user)
+        data = self._xlsx()
+
+        def upload():
+            return self.client.post(
+                "/finance/reports/bank-journal/import/",
+                {"account": self.acc.pk,
+                 "file": SimpleUploadedFile("流水.xlsx", data,
+                     content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                SERVER_NAME="localhost", follow=True,
+            )
+
+        upload()
+        self.assertEqual(BankJournal.objects.filter(company=self.c1, is_imported=True).count(), 2)
+        upload()  # 第二次全部重复
+        self.assertEqual(BankJournal.objects.filter(company=self.c1, is_imported=True).count(), 2)

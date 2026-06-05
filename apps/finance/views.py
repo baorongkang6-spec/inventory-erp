@@ -29,7 +29,14 @@ from .forms import (
     SalesInvoiceHeaderForm,
     SalesInvoiceLineFormSet,
 )
-from .models import BankAccount, Payment, PurchaseInvoice, Receipt, SalesInvoice
+from .models import (
+    BankAccount,
+    BankJournal,
+    Payment,
+    PurchaseInvoice,
+    Receipt,
+    SalesInvoice,
+)
 from .services import (
     SettlementError,
     allocate_payment,
@@ -398,3 +405,176 @@ def receipt_allocate(request, pk):
 
     return render(request, "finance/receipt_allocate.html",
                   {"receipt": receipt, "open_invoices": open_invoices})
+
+
+# ============================= 报表（M2-6）====================================
+def _parse_date(s):
+    from datetime import datetime
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _journal_rows(company, account, date_from=None, date_to=None):
+    """返回 (期初余额, 明细行[带逐笔余额], 期末余额)。"""
+    qs = BankJournal.objects.filter(company=company, bank_account=account)
+    period_opening = account.opening_balance
+    if date_from:
+        before = qs.filter(date__lt=date_from)
+        period_opening += sum((j.signed_amount for j in before), start=Decimal("0.00"))
+    period = qs
+    if date_from:
+        period = period.filter(date__gte=date_from)
+    if date_to:
+        period = period.filter(date__lte=date_to)
+    period = period.order_by("date", "id")
+
+    rows = []
+    balance = period_opening
+    for j in period:
+        balance += j.signed_amount
+        rows.append({"j": j, "balance": balance})
+    return period_opening, rows, balance
+
+
+@login_required
+@permission_required("finance.view_bankjournal", raise_exception=True)
+def bank_journal_report(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    accounts = list(BankAccount.objects.filter(company=company).order_by("name"))
+    account = None
+    acc_id = request.GET.get("account")
+    if acc_id:
+        account = next((a for a in accounts if str(a.pk) == acc_id), None)
+    elif accounts:
+        account = accounts[0]
+
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+
+    opening = closing = Decimal("0.00")
+    rows = []
+    if account:
+        opening, rows, closing = _journal_rows(company, account, date_from, date_to)
+
+    return render(request, "finance/bank_journal_report.html", {
+        "accounts": accounts, "account": account, "rows": rows,
+        "opening": opening, "closing": closing,
+        "date_from": request.GET.get("from", ""), "date_to": request.GET.get("to", ""),
+    })
+
+
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def payables_report(request):
+    """应付余额表：按供应商汇总未核销的采购发票。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    invoices = (PurchaseInvoice.objects
+                .filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
+                .select_related("supplier").order_by("supplier__code", "doc_date"))
+    groups = {}
+    for inv in invoices:
+        if inv.outstanding <= 0:
+            continue
+        g = groups.setdefault(inv.supplier, {"partner": inv.supplier, "items": [], "total": Decimal("0.00")})
+        g["items"].append(inv)
+        g["total"] += inv.outstanding
+    groups = sorted(groups.values(), key=lambda g: g["partner"].code)
+    grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
+    return render(request, "finance/balance_report.html", {
+        "title": "应付账款余额表", "kind": "应付", "groups": groups, "grand": grand,
+    })
+
+
+@login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
+def receivables_report(request):
+    """应收余额表：按客户汇总未核销的销售发票。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    invoices = (SalesInvoice.objects
+                .filter(company=company, status=SalesInvoice.Status.REGISTERED)
+                .select_related("customer").order_by("customer__code", "doc_date"))
+    groups = {}
+    for inv in invoices:
+        if inv.outstanding <= 0:
+            continue
+        g = groups.setdefault(inv.customer, {"partner": inv.customer, "items": [], "total": Decimal("0.00")})
+        g["items"].append(inv)
+        g["total"] += inv.outstanding
+    groups = sorted(groups.values(), key=lambda g: g["partner"].code)
+    grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
+    return render(request, "finance/balance_report.html", {
+        "title": "应收账款余额表", "kind": "应收", "groups": groups, "grand": grand,
+    })
+
+
+@login_required
+@permission_required("finance.view_bankjournal", raise_exception=True)
+def bank_journal_export(request):
+    """导出当前账户/期间的银行存款日记账为 Excel。"""
+    from django.http import HttpResponse
+
+    from .excel import export_bank_journal
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    account = get_object_or_404(BankAccount, pk=request.GET.get("account"), company=company)
+    date_from = _parse_date(request.GET.get("from"))
+    date_to = _parse_date(request.GET.get("to"))
+    _, rows, _ = _journal_rows(company, account, date_from, date_to)
+
+    content = export_bank_journal(account, rows)
+    resp = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = f'attachment; filename="bank_journal_{account.pk}.xlsx"'
+    return resp
+
+
+@login_required
+@permission_required("finance.add_bankjournal", raise_exception=True)
+def bank_journal_import(request):
+    """从 Excel 增量导入银行流水（按 账户+日期+方向+金额+摘要 去重）。"""
+    from .excel import parse_bank_journal_xlsx
+    from .models import BankJournal
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    accounts = list(BankAccount.objects.filter(company=company).order_by("name"))
+
+    if request.method == "POST":
+        account = next((a for a in accounts if str(a.pk) == request.POST.get("account")), None)
+        upload = request.FILES.get("file")
+        if not account or not upload:
+            messages.error(request, "请选择银行账户并上传 Excel 文件")
+        else:
+            try:
+                parsed, errors = parse_bank_journal_xlsx(upload)
+            except Exception as e:  # 解析失败（非 xlsx 等）
+                messages.error(request, f"文件解析失败：{e}")
+            else:
+                created = skipped = 0
+                for r in parsed:
+                    exists = BankJournal.objects.filter(
+                        company=company, bank_account=account, date=r["date"],
+                        direction=r["direction"], amount=r["amount"],
+                        summary=r["summary"], counterparty=r["counterparty"],
+                    ).exists()
+                    if exists:
+                        skipped += 1
+                        continue
+                    BankJournal.objects.create(
+                        company=company, created_by=request.user, bank_account=account,
+                        date=r["date"], direction=r["direction"], amount=r["amount"],
+                        summary=r["summary"], counterparty=r["counterparty"], is_imported=True,
+                    )
+                    created += 1
+                msg = f"导入完成：新增 {created} 条，跳过重复 {skipped} 条"
+                if errors:
+                    msg += f"；{len(errors)} 行有问题"
+                messages.success(request, msg)
+                for e in errors[:10]:
+                    messages.warning(request, e)
+                return redirect("bank_journal_report")
+
+    return render(request, "finance/bank_journal_import.html", {"accounts": accounts})

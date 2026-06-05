@@ -27,4 +27,10 @@ urlpatterns = [
     path("receipts/new/", views.receipt_create, name="receipt_create"),
     path("receipts/<int:pk>/", views.ReceiptDetailView.as_view(), name="receipt_detail"),
     path("receipts/<int:pk>/allocate/", views.receipt_allocate, name="receipt_allocate"),
+    # 报表（M2-6）
+    path("reports/bank-journal/", views.bank_journal_report, name="bank_journal_report"),
+    path("reports/bank-journal/export/", views.bank_journal_export, name="bank_journal_export"),
+    path("reports/bank-journal/import/", views.bank_journal_import, name="bank_journal_import"),
+    path("reports/payables/", views.payables_report, name="payables_report"),
+    path("reports/receivables/", views.receivables_report, name="receivables_report"),
 ]

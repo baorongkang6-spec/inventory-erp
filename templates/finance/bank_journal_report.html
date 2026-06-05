@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}银行存款日记账 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">银行存款日记账<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <div class="d-flex gap-2">
+    {% if account %}
+    <a class="btn btn-outline-success btn-sm"
+       href="{% url 'bank_journal_export' %}?account={{ account.pk }}&from={{ date_from }}&to={{ date_to }}">导出 Excel</a>
+    {% endif %}
+    {% if perms.finance.add_bankjournal %}
+    <a class="btn btn-outline-primary btn-sm" href="{% url 'bank_journal_import' %}">导入流水</a>
+    {% endif %}
+  </div>
+</div>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-md-4">
+    <label class="form-label">银行账户</label>
+    <select name="account" class="form-select" onchange="this.form.submit()">
+      {% for a in accounts %}
+      <option value="{{ a.pk }}" {% if account and a.pk == account.pk %}selected{% endif %}>{{ a.name }} {{ a.account_no }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3"><label class="form-label">起始日期</label>
+    <input type="date" name="from" value="{{ date_from }}" class="form-control"></div>
+  <div class="col-md-3"><label class="form-label">截止日期</label>
+    <input type="date" name="to" value="{{ date_to }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+
+{% if account %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>日期</th><th>摘要</th><th>对方单位</th><th>来源</th>
+            <th class="text-end">收入</th><th class="text-end">支出</th><th class="text-end">余额</th></tr>
+      </thead>
+      <tbody>
+        <tr class="table-secondary"><td colspan="6">期初余额</td><td class="text-end">{{ opening }}</td></tr>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.j.date }}</td>
+          <td>{{ r.j.summary|default:"—" }}{% if r.j.is_imported %} <span class="badge text-bg-light">导入</span>{% endif %}</td>
+          <td>{{ r.j.counterparty|default:"—" }}</td>
+          <td>{{ r.j.source_no|default:"—" }}</td>
+          <td class="text-end">{% if r.j.direction == 'in' %}{{ r.j.amount }}{% endif %}</td>
+          <td class="text-end">{% if r.j.direction == 'out' %}{{ r.j.amount }}{% endif %}</td>
+          <td class="text-end">{{ r.balance }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">该期间无日记账</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light">
+        <tr><th colspan="6" class="text-end">期末余额</th><th class="text-end">{{ closing }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% else %}
+<p class="text-muted">请先在「银行账户」建立账户。</p>
+{% endif %}
+{% endblock %}

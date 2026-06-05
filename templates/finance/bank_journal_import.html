@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}导入银行流水 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <h4 class="mb-3">导入银行流水（Excel）<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+    <div class="card">
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">银行账户</label>
+            <select name="account" class="form-select" required>
+              {% for a in accounts %}<option value="{{ a.pk }}">{{ a.name }} {{ a.account_no }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Excel 文件（.xlsx）</label>
+            <input type="file" name="file" accept=".xlsx" class="form-control" required>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">导入</button>
+            <a href="{% url 'bank_journal_report' %}" class="btn btn-outline-secondary">返回</a>
+          </div>
+        </form>
+        <hr>
+        <p class="text-muted small mb-1">列格式（首行表头）：<code>日期 | 摘要 | 对方单位 | 收入 | 支出</code></p>
+        <p class="text-muted small mb-0">按「账户+日期+方向+金额+摘要+对方」去重，重复行自动跳过；适合增量导入网银流水。</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
