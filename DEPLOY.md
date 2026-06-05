@@ -50,12 +50,27 @@
 
 1. Windows 装 Python 3.13、PostgreSQL、uv。
 2. 拉取代码，`uv sync` 装依赖。
-3. 配 `.env`：`DB_ENGINE=postgres`、`DEBUG=False`、`SECRET_KEY=…`、`ALLOWED_HOSTS=花生壳域名`、`CSRF_TRUSTED_ORIGINS=https://花生壳域名`。
-4. `migrate` 建表、`collectstatic` 收集静态文件、导入三家公司期初（Excel）。
-5. Waitress 启动 → NSSM 注册成服务。
-6. 花生壳映射内网 IP+端口 → 绑域名 + 开 HTTPS。
-7. **每日自动备份脚本**（pg_dump 定时任务 + 异地拷贝）。
-8. 内外网各测一遍（含手机），改全部强密码 → 交付。
+3. 复制 `.env.example` 为 `.env` 并改值（关键：`DJANGO_PRODUCTION=1`、`DJANGO_DEBUG=0`、
+   `DJANGO_SECRET_KEY=`<50+位随机串>、`DJANGO_ALLOWED_HOSTS=`花生壳域名,内网IP、
+   `DJANGO_CSRF_TRUSTED_ORIGINS=https://`花生壳域名、`DB_ENGINE=postgres` 及 DB_* 账号）。
+   - 缺密钥/域名或 DEBUG 没关时程序会**启动即报错**（fail-fast），按提示补。
+4. 初始化：
+   ```
+   uv run python manage.py migrate
+   uv run python manage.py collectstatic --noinput
+   uv run python manage.py seed_init           # 建三公司+角色（不带 --demo）
+   uv run python manage.py createsuperuser      # 建管理员
+   # 期初：登录后「报表▸期初导入」按模板上传，或交付时协助
+   ```
+5. 启动（Waitress，gunicorn 在 Windows 不可用）：
+   ```
+   uv run waitress-serve --listen=0.0.0.0:8000 config.wsgi:application
+   ```
+   用 **NSSM** 把上面这条注册为 Windows 服务（开机自启、崩溃重启），并在服务里注入 .env 环境变量。
+6. 花生壳映射内网 IP:8000 → 绑域名 + 开 HTTPS（HTTPS 由花生壳终止，X-Forwarded-Proto 已在 settings 处理）。
+7. **每日自动备份**：`pg_dump` 定时任务 + 异地拷贝（见 §5）。
+8. 自检：`uv run python manage.py check --deploy` 应无高危告警；内外网各测一遍（含手机）；
+   把演示/弱密码账号全部改强密码或删除 → 交付。
 
 ---
 

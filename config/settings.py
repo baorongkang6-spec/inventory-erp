@@ -11,7 +11,12 @@ import datetime
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 加载项目根 .env（存在则用；开发期可不建，走安全默认值）。生产由 .env 提供配置。
+load_dotenv(BASE_DIR / ".env")
 
 # 启用日（期初基准日）。SPEC §8.1：2026-06-01，可经环境变量覆盖。
 OPENING_DATE = datetime.date.fromisoformat(os.environ.get("ERP_OPENING_DATE", "2026-06-01"))
@@ -74,6 +79,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise：生产由 Waitress 直接服务静态文件（紧跟 SecurityMiddleware）
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -154,6 +161,14 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# 生产用 WhiteNoise 压缩 + 带 hash 的 manifest 存储（须先 collectstatic）。
+# 开发不启用 manifest，避免未 collect 时 {% static %} 报错。
+if PRODUCTION:
+    STORAGES = {
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+    }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
