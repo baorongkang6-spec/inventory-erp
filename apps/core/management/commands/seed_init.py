@@ -253,8 +253,9 @@ class Command(BaseCommand):
         # --- M2 资金往来演示 ---
         from apps.finance.models import BankAccount
         from apps.finance.services import (
-            allocate_payment, allocate_receipt, create_payment,
+            allocate_payment, allocate_receipt, create_note_payable, create_payment,
             create_purchase_invoice, create_receipt, create_sales_invoice,
+            settle_payable_against_purchase,
         )
         from apps.masterdata.models import Customer, Supplier
 
@@ -280,3 +281,10 @@ class Command(BaseCommand):
                              customer=cust, amount=Decimal("4520"), summary="收货款")
         allocate_receipt(receipt=rec, allocations=[{"invoice": sinv, "amount": Decimal("4520")}])
         self.stdout.write("  · 样例资金往来（采购发票+部分付款核销、销售发票+全额收款核销）")
+
+        # --- M3 票据演示：开应付票据抵掉采购发票剩余应付 864.50 ---
+        npay = create_note_payable(company=c1, user=None, draw_date=d, supplier=sup,
+                                   amount=Decimal("864.50"), note_no="BACK20260601")
+        settle_payable_against_purchase(
+            note=npay, allocations=[{"invoice": pinv, "amount": Decimal("864.50")}])
+        self.stdout.write("  · 样例票据（应付票据抵采购发票剩余应付，发票应付清零）")

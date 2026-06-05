@@ -73,6 +73,10 @@ class PurchaseInvoice(CompanyScopedModel):
         """未核销（应付余额）。"""
         return self.amount_taxed - self.settled_amount
 
+    @property
+    def party(self):
+        return self.supplier
+
 
 class PurchaseInvoiceLine(models.Model):
     invoice = models.ForeignKey(
@@ -227,6 +231,10 @@ class SalesInvoice(CompanyScopedModel):
     def outstanding(self):
         """未核销（应收余额）。"""
         return self.amount_taxed - self.settled_amount
+
+    @property
+    def party(self):
+        return self.customer
 
 
 class SalesInvoiceLine(models.Model):

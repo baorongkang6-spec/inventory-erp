@@ -25,7 +25,7 @@
           <tr>
             <td>{{ inv.doc_no }}</td>
             <td>{{ inv.doc_date }}</td>
-            <td>{{ inv.supplier|default:inv.customer }}</td>
+            <td>{{ inv.party }}</td>
             <td class="text-end">{{ inv.amount_taxed }}</td>
             <td class="text-end">{{ inv.outstanding }}</td>
             <td><input type="number" step="0.01" min="0" max="{{ inv.outstanding }}"
