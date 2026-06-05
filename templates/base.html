@@ -35,6 +35,9 @@
         {% if perms.inventory.view_stockbalance %}
         <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
         {% endif %}
+        {% if perms.finance.view_purchaseinvoice %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'purchase_invoice_list' %}">采购发票</a></li>
+        {% endif %}
         {% if perms.finance.view_bankaccount %}
         <li class="nav-item"><a class="nav-link" href="{% url 'bankaccount_list' %}">银行账户</a></li>
         {% endif %}

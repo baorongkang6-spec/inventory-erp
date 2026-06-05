@@ -11,6 +11,8 @@ QUANTITY_DP = 3
 PRICE_DP = 2
 AMOUNT_DP = 2
 
+DEFAULT_TAX_RATE = Decimal("0.13")  # SPEC §6.1 默认增值税率，可按行改
+
 QUANTITY_QUANT = Decimal("0.001")
 MONEY_QUANT = Decimal("0.01")
 ZERO_QTY = Decimal("0.000")
