@@ -30,14 +30,18 @@ COMPANIES = [
 #       inventory.view_amount = 可看库存金额（采购/销售无 → 只看数量，SPEC §9.2）。
 _VIEW_MASTERDATA = ["masterdata.view_product", "masterdata.view_customer", "masterdata.view_supplier"]
 ROLE_PERMS = {
-    # 总经理/出纳：跨公司只读总览，可看金额（SPEC §9.1）
+    # 总经理：跨公司只读总览，可看金额（SPEC §9.1）
     roles.GM: _VIEW_MASTERDATA + [
         "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
         "inventory.view_stockbalance", "inventory.view_amount",
+        "finance.view_bankaccount",
     ],
+    # 出纳：只读总览 + 资金录入（管理银行账户）
     roles.CASHIER: _VIEW_MASTERDATA + [
         "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
         "inventory.view_stockbalance", "inventory.view_amount",
+        "finance.add_bankaccount", "finance.change_bankaccount",
+        "finance.view_bankaccount", "finance.delete_bankaccount",
     ],
     # 采购：管供应商、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
@@ -55,11 +59,13 @@ ROLE_PERMS = {
         "sales.add_salesoutbound", "sales.view_salesoutbound",
         "inventory.view_stockbalance",
     ],
-    # 财务：看全部往来、看单据、看库存含金额
+    # 财务：看全部往来、看单据、看库存含金额、管理银行账户
     roles.FINANCE: _VIEW_MASTERDATA + [
         "masterdata.change_customer", "masterdata.change_supplier",
         "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
         "inventory.view_stockbalance", "inventory.view_amount",
+        "finance.add_bankaccount", "finance.change_bankaccount",
+        "finance.view_bankaccount", "finance.delete_bankaccount",
     ],
 }
 
@@ -182,7 +188,14 @@ class Command(BaseCommand):
             company=c1, code="SUP-EXT01",
             defaults={"name": "上海外购化工有限公司"},
         )
-        self.stdout.write("  · 样例商品/客户/供应商")
+        # 每公司一个基本户
+        from apps.finance.models import BankAccount
+        for code in ("C1", "C2", "C3"):
+            BankAccount.objects.get_or_create(
+                company=self.companies[code], name="基本户",
+                defaults={"bank_name": "中国银行", "account_no": f"6217-{code}-0001"},
+            )
+        self.stdout.write("  · 样例商品/客户/供应商/银行账户")
 
     # --- 样例单据（演示移动加权全流程）---------------------------------------
     def _seed_demo_documents(self):

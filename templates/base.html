@@ -35,6 +35,9 @@
         {% if perms.inventory.view_stockbalance %}
         <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
         {% endif %}
+        {% if perms.finance.view_bankaccount %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'bankaccount_list' %}">银行账户</a></li>
+        {% endif %}
       </ul>
 
       {# 当前账套切换器：仅在可见公司 >1 时显示下拉，否则显示静态标签 #}
