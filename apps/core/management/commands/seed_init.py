@@ -38,6 +38,7 @@ ROLE_PERMS = {
         "finance.view_payment", "finance.view_bankjournal",
         "finance.view_salesinvoice", "finance.view_receipt",
         "finance.view_notereceivable", "finance.view_notepayable",
+        "masterdata.view_expensecategory", "finance.view_expenseentry",
     ],
     # 出纳：只读总览 + 资金录入（管理银行账户、登记付款/收款及核销）
     roles.CASHIER: _VIEW_MASTERDATA + [
@@ -55,6 +56,7 @@ ROLE_PERMS = {
         "finance.add_notereceivable", "finance.view_notereceivable",
         "finance.add_notepayable", "finance.view_notepayable",
         "finance.add_notesettlement", "finance.view_notesettlement",
+        "masterdata.view_expensecategory", "finance.view_expenseentry",
     ],
     # 采购：管供应商、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
@@ -64,6 +66,9 @@ ROLE_PERMS = {
         "purchasing.add_purchaseinbound", "purchasing.view_purchaseinbound",
         "purchasing.void_purchaseinbound",
         "inventory.view_stockbalance",
+        "masterdata.add_expensecategory", "masterdata.change_expensecategory",
+        "masterdata.view_expensecategory", "masterdata.delete_expensecategory",
+        "finance.view_expenseentry",
     ],
     # 销售：管客户、建销售出库、看库存（仅数量）
     roles.SALES: [
@@ -73,6 +78,7 @@ ROLE_PERMS = {
         "sales.add_salesoutbound", "sales.view_salesoutbound",
         "sales.void_salesoutbound",
         "inventory.view_stockbalance",
+        "masterdata.view_expensecategory", "finance.view_expenseentry",
     ],
     # 财务：看全部往来、看单据、看库存含金额、管理银行账户与发票/应付
     roles.FINANCE: _VIEW_MASTERDATA + [
@@ -91,6 +97,9 @@ ROLE_PERMS = {
         "finance.add_notereceivable", "finance.view_notereceivable",
         "finance.add_notepayable", "finance.view_notepayable",
         "finance.add_notesettlement", "finance.view_notesettlement",
+        "masterdata.add_expensecategory", "masterdata.change_expensecategory",
+        "masterdata.view_expensecategory", "masterdata.delete_expensecategory",
+        "finance.view_expenseentry",
     ],
 }
 
@@ -221,7 +230,15 @@ class Command(BaseCommand):
                 defaults={"bank_name": "中国银行", "account_no": f"6217-{code}-0001",
                           "opening_balance": Decimal("100000.00")},  # 期初银行存款演示
             )
-        self.stdout.write("  · 样例商品/客户/供应商/银行账户")
+        # 费用类别（运费计入成本、差旅费期间费用）
+        from apps.masterdata.models import ExpenseCategory
+        for code in ("C1", "C2", "C3"):
+            comp = self.companies[code]
+            ExpenseCategory.objects.get_or_create(
+                company=comp, name="运费", defaults={"include_in_cost": True})
+            ExpenseCategory.objects.get_or_create(
+                company=comp, name="差旅费", defaults={"include_in_cost": False})
+        self.stdout.write("  · 样例商品/客户/供应商/银行账户/费用类别")
 
     # --- 样例单据（演示移动加权全流程）---------------------------------------
     def _seed_demo_documents(self):

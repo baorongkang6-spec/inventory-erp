@@ -29,6 +29,9 @@
         {% if menu.suppliers %}
         <li class="nav-item"><a class="nav-link" href="{% url 'supplier_list' %}">供应商</a></li>
         {% endif %}
+        {% if perms.masterdata.view_expensecategory %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'expensecategory_list' %}">费用类别</a></li>
+        {% endif %}
         {% if perms.purchasing.view_purchaseinbound %}
         <li class="nav-item"><a class="nav-link" href="{% url 'inbound_list' %}">采购入库</a></li>
         {% endif %}

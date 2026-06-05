@@ -44,14 +44,22 @@ def _get_balance_for_update(company, product) -> StockBalance:
 
 
 @transaction.atomic
-def post_inbound(company, product, quantity, unit_price, *,
+def post_inbound(company, product, quantity, unit_price, *, amount=None,
                  source_type="", source_id="", source_no="") -> StockMove:
-    """入库过账：数量、金额累加并重算移动加权均价，返回流水记录。"""
+    """入库过账：数量、金额累加并重算移动加权均价，返回流水记录。
+
+    amount 可显式给定入库总成本（用于其他费用计入成本后抬高入库成本，SPEC §6.2）；
+    给定时记录单价按 amount/数量 反算，保证「单价×数量=金额」一致。
+    """
     quantity = round_qty(quantity)
     unit_price = round_money(unit_price)
     if quantity <= 0:
         raise InventoryError("入库数量必须大于 0")
-    amount = round_money(quantity * unit_price)
+    if amount is None:
+        amount = round_money(quantity * unit_price)
+    else:
+        amount = round_money(amount)
+        unit_price = round_money(amount / quantity) if quantity > 0 else unit_price
 
     bal = _get_balance_for_update(company, product)
     bal.quantity = round_qty(bal.quantity + quantity)

@@ -11,6 +11,8 @@ from apps.core.mixins import CompanyScopedMixin
 from apps.core.scope import get_active_company, get_visible_companies
 from apps.inventory.services import InsufficientStockError, InventoryError
 
+from apps.masterdata.forms import ExpenseFormSet
+
 from .forms import OutboundHeaderForm, OutboundLineFormSet
 from .models import SalesOutbound
 from .services import create_and_post_outbound, void_sales_outbound
@@ -60,18 +62,21 @@ def outbound_create(request):
     if request.method == "POST":
         header = OutboundHeaderForm(request.POST, company=company)
         formset = OutboundLineFormSet(request.POST, company=company)
-        if header.is_valid() and formset.is_valid():
+        expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
+        if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [
                 {"product": cd["product"], "quantity": cd["quantity"]}
                 for cd in formset.valid_lines
             ]
+            expenses = [{"category": e["category"], "amount": e["amount"]}
+                        for e in expenses_fs.expense_lines]
             try:
                 doc = create_and_post_outbound(
                     company=company, user=request.user,
                     doc_date=header.cleaned_data["doc_date"],
                     customer=header.cleaned_data.get("customer"),
                     remark=header.cleaned_data.get("remark", ""),
-                    lines=lines,
+                    lines=lines, expenses=expenses,
                 )
             except InsufficientStockError as e:
                 messages.error(request, f"库存不足，整单未保存：{e}")
@@ -83,6 +88,7 @@ def outbound_create(request):
     else:
         header = OutboundHeaderForm(company=company, initial={"doc_date": timezone.localdate()})
         formset = OutboundLineFormSet(company=company)
+        expenses_fs = ExpenseFormSet(prefix="exp", company=company)
 
     return render(request, "sales/outbound_form.html",
-                  {"header": header, "formset": formset, "title": "销售出库"})
+                  {"header": header, "formset": formset, "expenses_fs": expenses_fs, "title": "销售出库"})

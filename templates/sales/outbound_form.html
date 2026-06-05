@@ -50,6 +50,24 @@
     </div>
   </div>
 
+  {{ expenses_fs.management_form }}
+  <div class="card mb-3">
+    <div class="card-header">其他费用（销售出库的费用作期间费用，不计入存货成本）</div>
+    <div class="table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead class="table-light"><tr><th style="width:50%">费用类别</th><th>金额</th></tr></thead>
+        <tbody>
+          {% for ef in expenses_fs %}
+          <tr>
+            <td>{{ ef.category }}{% for e in ef.category.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ ef.amount }}{% for e in ef.amount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="d-flex gap-2">
     <button type="submit" class="btn btn-primary">保存并过账</button>
     <a href="{% url 'outbound_list' %}" class="btn btn-outline-secondary">取消</a>

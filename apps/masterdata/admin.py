@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Customer, Product, Supplier
+from .models import Customer, ExpenseCategory, Product, Supplier
 
 
 @admin.register(Product)
@@ -24,3 +24,10 @@ class CustomerAdmin(PartnerAdmin):
 @admin.register(Supplier)
 class SupplierAdmin(PartnerAdmin):
     pass
+
+
+@admin.register(ExpenseCategory)
+class ExpenseCategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "company", "include_in_cost", "is_active")
+    list_filter = ("company", "include_in_cost", "is_active")
+    search_fields = ("name",)

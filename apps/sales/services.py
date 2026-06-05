@@ -16,10 +16,11 @@ from .models import SalesOutbound, SalesOutboundLine
 
 @transaction.atomic
 def create_and_post_outbound(*, company, user, doc_date, lines,
-                             customer=None, remark="") -> SalesOutbound:
+                             customer=None, remark="", expenses=None) -> SalesOutbound:
     """创建销售出库单并逐行过账减少库存（结转移动加权成本）。
 
     lines: [{"product": Product, "quantity": Decimal}, ...]
+    expenses: 其他费用（销售出库的费用一律作期间费用，不改库存成本，SPEC §6.2）。
     """
     doc = SalesOutbound.objects.create(
         company=company,
@@ -48,6 +49,10 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
     doc.total_quantity = total_qty
     doc.total_cost = total_cost
     doc.save(update_fields=["total_quantity", "total_cost"])
+
+    # 其他费用（期间费用，不计入存货成本）
+    from apps.purchasing.services import _record_expenses
+    _record_expenses(company, user, doc, doc_date, expenses, kind="sales")
 
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,

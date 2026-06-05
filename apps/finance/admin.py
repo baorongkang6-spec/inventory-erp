@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     BankAccount,
     BankJournal,
+    ExpenseEntry,
     NotePayable,
     NoteReceivable,
     NoteSettlement,
@@ -141,3 +142,11 @@ class NoteSettlementAdmin(admin.ModelAdmin):
                     "invoice_kind", "invoice_no", "amount", "is_endorsement")
     list_filter = ("company", "note_kind", "invoice_kind", "is_endorsement")
     search_fields = ("note_no", "invoice_no")
+
+
+@admin.register(ExpenseEntry)
+class ExpenseEntryAdmin(admin.ModelAdmin):
+    list_display = ("date", "company", "kind", "category", "amount", "included_in_cost", "source_no")
+    list_filter = ("company", "kind", "included_in_cost", "category")
+    search_fields = ("source_no",)
+    date_hierarchy = "date"

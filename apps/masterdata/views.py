@@ -9,8 +9,8 @@ from apps.core.crud import (
     ScopedUpdateView,
 )
 
-from .forms import CustomerForm, ProductForm, SupplierForm
-from .models import Customer, Product, Supplier
+from .forms import CustomerForm, ExpenseCategoryForm, ProductForm, SupplierForm
+from .models import Customer, ExpenseCategory, Product, Supplier
 
 
 # --- 商品 ---------------------------------------------------------------------
@@ -104,3 +104,33 @@ class SupplierDeleteView(ScopedDeleteView):
     model = Supplier
     title = "供应商"
     success_url = reverse_lazy("supplier_list")
+
+
+# --- 费用类别（M6 其他费用）---------------------------------------------------
+class ExpenseCategoryListView(ScopedListView):
+    model = ExpenseCategory
+    title = "费用类别"
+    columns = [("费用类别", "name"), ("计入存货成本", "include_in_cost"), ("启用", "is_active")]
+    create_url_name = "expensecategory_create"
+    update_url_name = "expensecategory_update"
+    delete_url_name = "expensecategory_delete"
+
+
+class ExpenseCategoryCreateView(ScopedCreateView):
+    model = ExpenseCategory
+    form_class = ExpenseCategoryForm
+    title = "费用类别"
+    success_url = reverse_lazy("expensecategory_list")
+
+
+class ExpenseCategoryUpdateView(ScopedUpdateView):
+    model = ExpenseCategory
+    form_class = ExpenseCategoryForm
+    title = "费用类别"
+    success_url = reverse_lazy("expensecategory_list")
+
+
+class ExpenseCategoryDeleteView(ScopedDeleteView):
+    model = ExpenseCategory
+    title = "费用类别"
+    success_url = reverse_lazy("expensecategory_list")

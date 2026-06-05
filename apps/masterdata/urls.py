@@ -20,4 +20,9 @@ urlpatterns = [
     path("suppliers/new/", views.SupplierCreateView.as_view(), name="supplier_create"),
     path("suppliers/<int:pk>/edit/", views.SupplierUpdateView.as_view(), name="supplier_update"),
     path("suppliers/<int:pk>/delete/", views.SupplierDeleteView.as_view(), name="supplier_delete"),
+    # 费用类别
+    path("expense-categories/", views.ExpenseCategoryListView.as_view(), name="expensecategory_list"),
+    path("expense-categories/new/", views.ExpenseCategoryCreateView.as_view(), name="expensecategory_create"),
+    path("expense-categories/<int:pk>/edit/", views.ExpenseCategoryUpdateView.as_view(), name="expensecategory_update"),
+    path("expense-categories/<int:pk>/delete/", views.ExpenseCategoryDeleteView.as_view(), name="expensecategory_delete"),
 ]

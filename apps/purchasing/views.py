@@ -11,6 +11,8 @@ from apps.core.mixins import CompanyScopedMixin
 from apps.core.scope import get_active_company, get_visible_companies
 from apps.inventory.services import InventoryError
 
+from apps.masterdata.forms import ExpenseFormSet
+
 from .forms import InboundHeaderForm, InboundLineFormSet
 from .models import PurchaseInbound
 from .services import create_and_post_inbound, void_purchase_inbound
@@ -45,18 +47,21 @@ def inbound_create(request):
     if request.method == "POST":
         header = InboundHeaderForm(request.POST, company=company)
         formset = InboundLineFormSet(request.POST, company=company)
-        if header.is_valid() and formset.is_valid():
+        expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
+        if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [
                 {"product": cd["product"], "quantity": cd["quantity"], "unit_price": cd["unit_price"]}
                 for cd in formset.valid_lines
             ]
+            expenses = [{"category": e["category"], "amount": e["amount"]}
+                        for e in expenses_fs.expense_lines]
             try:
                 doc = create_and_post_inbound(
                     company=company, user=request.user,
                     doc_date=header.cleaned_data["doc_date"],
                     supplier=header.cleaned_data.get("supplier"),
                     remark=header.cleaned_data.get("remark", ""),
-                    lines=lines,
+                    lines=lines, expenses=expenses,
                 )
             except InventoryError as e:
                 messages.error(request, f"过账失败：{e}")
@@ -66,9 +71,10 @@ def inbound_create(request):
     else:
         header = InboundHeaderForm(company=company, initial={"doc_date": timezone.localdate()})
         formset = InboundLineFormSet(company=company)
+        expenses_fs = ExpenseFormSet(prefix="exp", company=company)
 
     return render(request, "purchasing/inbound_form.html",
-                  {"header": header, "formset": formset, "title": "采购入库"})
+                  {"header": header, "formset": formset, "expenses_fs": expenses_fs, "title": "采购入库"})
 
 
 def _active_company(request):

@@ -94,3 +94,27 @@ class Supplier(Partner):
                 fields=["company", "code"], name="uniq_supplier_company_code"
             )
         ]
+
+
+class ExpenseCategory(CompanyScopedModel):
+    """其他费用类别（SPEC §6.2）。可自行增加；「是否计入存货成本」开关。
+
+    计入成本（如运费）→ 采购入库时按行分摊抬高入库成本（影响移动加权）；
+    不计入（如差旅费）→ 作期间费用单列。
+    """
+
+    name = models.CharField("费用类别", max_length=64)
+    include_in_cost = models.BooleanField("计入存货成本", default=False)
+    is_active = models.BooleanField("启用", default=True)
+    remark = models.CharField("备注", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "费用类别"
+        verbose_name_plural = "费用类别"
+        ordering = ["company", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "name"], name="uniq_expcat_company_name")
+        ]
+
+    def __str__(self) -> str:
+        return self.name

@@ -437,3 +437,35 @@ class NoteSettlement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.note_no} → {self.invoice_no} {self.amount}"
+
+
+class ExpenseEntry(CompanyScopedModel):
+    """其他费用记录（SPEC §6.2）。来自采购入库/销售出库录入的费用行。
+
+    included_in_cost=True 表示该笔已分摊进存货成本（采购入库）；
+    False 为期间费用（单列统计）。
+    """
+
+    class Kind(models.TextChoices):
+        PURCHASE = "purchase", "采购入库"
+        SALES = "sales", "销售出库"
+
+    date = models.DateField("日期")
+    kind = models.CharField("来源类型", max_length=12, choices=Kind.choices)
+    category = models.ForeignKey(
+        "masterdata.ExpenseCategory", on_delete=models.PROTECT, verbose_name="费用类别"
+    )
+    amount = models.DecimalField("金额", max_digits=18, decimal_places=2)
+    included_in_cost = models.BooleanField("计入存货成本", default=False)
+    source_no = models.CharField("来源单号", max_length=64, blank=True)
+    source_type = models.CharField("来源单类型", max_length=32, blank=True)
+    source_id = models.CharField("来源单ID", max_length=32, blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "其他费用"
+        verbose_name_plural = "其他费用"
+        ordering = ["-date", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.category} {self.amount}"
