@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Django
+*.sqlite3
+/media/
+/staticfiles/
+
+# 环境变量 / 密钥（不要上传）
+.env
+
+# 编辑器
+.idea/
+.vscode/
