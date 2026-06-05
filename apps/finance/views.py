@@ -1,8 +1,10 @@
-"""资金往来视图：银行账户（M2-1）、采购发票→应付（M2-2）。"""
+"""资金往来视图：银行账户（M2-1）、采购发票→应付（M2-2）、付款与核销（M2-3/4）。"""
+
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
 from django.utils import timezone
 from django.views.generic import DetailView, ListView
@@ -24,7 +26,12 @@ from .forms import (
     PurchaseInvoiceLineFormSet,
 )
 from .models import BankAccount, Payment, PurchaseInvoice
-from .services import create_payment, create_purchase_invoice
+from .services import (
+    SettlementError,
+    allocate_payment,
+    create_payment,
+    create_purchase_invoice,
+)
 
 
 class BankAccountListView(ScopedListView):
@@ -185,3 +192,42 @@ def payment_create(request):
         form = PaymentForm(company=company, initial={"doc_date": timezone.localdate()})
 
     return render(request, "finance/payment_form.html", {"form": form, "title": "付款登记"})
+
+
+@login_required
+@permission_required("finance.add_paymentallocation", raise_exception=True)
+def payment_allocate(request, pk):
+    """应付核销：把一笔付款核销到该供应商的若干采购发票（支持部分核销）。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    payment = get_object_or_404(Payment, pk=pk, company=company)
+
+    open_invoices = list(
+        PurchaseInvoice.objects.filter(
+            company=company, supplier=payment.supplier,
+            status=PurchaseInvoice.Status.REGISTERED,
+        ).order_by("doc_date", "id")
+    )
+    open_invoices = [inv for inv in open_invoices if inv.outstanding > 0]
+
+    if request.method == "POST":
+        allocations = []
+        for inv in open_invoices:
+            raw = (request.POST.get(f"alloc-{inv.pk}") or "").strip()
+            if raw:
+                try:
+                    amt = Decimal(raw)
+                except (InvalidOperation, ValueError):
+                    messages.error(request, f"发票 {inv.doc_no} 的核销金额无效")
+                    break
+                allocations.append({"invoice": inv, "amount": amt})
+        else:
+            try:
+                allocate_payment(payment=payment, allocations=allocations, user=request.user)
+            except SettlementError as e:
+                messages.error(request, f"核销失败：{e}")
+            else:
+                messages.success(request, "核销完成")
+                return redirect("payment_detail", pk=payment.pk)
+
+    return render(request, "finance/payment_allocate.html",
+                  {"payment": payment, "open_invoices": open_invoices})

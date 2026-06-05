@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}应付核销 · {{ payment.doc_no }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">应付核销 {{ payment.doc_no }}</h4>
+  <a href="{% url 'payment_detail' payment.pk %}" class="btn btn-outline-secondary btn-sm">返回付款</a>
+</div>
+
+<div class="alert alert-secondary">
+  供应商：<strong>{{ payment.supplier }}</strong>　付款金额：{{ payment.amount }}
+  已核销：{{ payment.settled_amount }}　可核销余额：<strong>{{ payment.unallocated }}</strong>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="card">
+    <div class="card-header">该供应商未核销的采购发票（填写本次核销金额）</div>
+    <div class="table-responsive">
+      <table class="table table-striped mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th>发票单号</th><th>日期</th><th>发票号码</th>
+              <th class="text-end">含税</th><th class="text-end">已核销</th>
+              <th class="text-end">未核销</th><th style="width:18%">本次核销</th></tr>
+        </thead>
+        <tbody>
+          {% for inv in open_invoices %}
+          <tr>
+            <td>{{ inv.doc_no }}</td>
+            <td>{{ inv.doc_date }}</td>
+            <td>{{ inv.invoice_no|default:"—" }}</td>
+            <td class="text-end">{{ inv.amount_taxed }}</td>
+            <td class="text-end">{{ inv.settled_amount }}</td>
+            <td class="text-end">{{ inv.outstanding }}</td>
+            <td><input type="number" step="0.01" min="0" max="{{ inv.outstanding }}"
+                       name="alloc-{{ inv.pk }}" class="form-control form-control-sm" placeholder="0.00"></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">该供应商暂无未核销发票</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if open_invoices %}
+  <div class="d-flex gap-2 mt-3">
+    <button type="submit" class="btn btn-primary">确认核销</button>
+    <a href="{% url 'payment_detail' payment.pk %}" class="btn btn-outline-secondary">取消</a>
+  </div>
+  <p class="text-muted small mt-2">可只核销部分；本次核销合计不得超过付款可核销余额，单张不得超过该发票未核销额。</p>
+  {% endif %}
+</form>
+{% endblock %}

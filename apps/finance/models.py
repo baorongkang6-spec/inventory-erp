@@ -170,3 +170,24 @@ class Payment(CompanyScopedModel):
     def unallocated(self):
         """未核销（可用于核销应付的剩余款）。"""
         return self.amount - self.settled_amount
+
+
+class PaymentAllocation(models.Model):
+    """付款 ↔ 采购发票 的核销记录（支持部分核销、一款多票、一票多款）。SPEC §7.1。"""
+
+    payment = models.ForeignKey(
+        Payment, on_delete=models.CASCADE, related_name="allocations", verbose_name="付款"
+    )
+    invoice = models.ForeignKey(
+        PurchaseInvoice, on_delete=models.PROTECT, related_name="allocations", verbose_name="采购发票"
+    )
+    amount = models.DecimalField("核销金额", max_digits=18, decimal_places=2)
+    created_at = models.DateTimeField("核销时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "应付核销"
+        verbose_name_plural = "应付核销"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.payment.doc_no} ↔ {self.invoice.doc_no} {self.amount}"

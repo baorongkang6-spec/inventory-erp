@@ -4,6 +4,7 @@ from .models import (
     BankAccount,
     BankJournal,
     Payment,
+    PaymentAllocation,
     PurchaseInvoice,
     PurchaseInvoiceLine,
 )
@@ -47,6 +48,12 @@ class PaymentAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(PaymentAllocation)
+class PaymentAllocationAdmin(admin.ModelAdmin):
+    list_display = ("payment", "invoice", "amount", "created_at")
+    search_fields = ("payment__doc_no", "invoice__doc_no")
 
 
 @admin.register(BankJournal)

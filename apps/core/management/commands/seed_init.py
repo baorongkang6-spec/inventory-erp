@@ -46,6 +46,7 @@ ROLE_PERMS = {
         "finance.view_purchaseinvoice",
         "finance.add_payment", "finance.view_payment",
         "finance.view_bankjournal",
+        "finance.add_paymentallocation", "finance.view_paymentallocation",
     ],
     # 采购：管供应商、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
@@ -73,6 +74,7 @@ ROLE_PERMS = {
         "finance.add_purchaseinvoice", "finance.view_purchaseinvoice",
         "finance.add_payment", "finance.view_payment",
         "finance.view_bankjournal",
+        "finance.add_paymentallocation", "finance.view_paymentallocation",
     ],
 }
 

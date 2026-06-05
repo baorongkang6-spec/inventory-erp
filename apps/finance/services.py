@@ -6,7 +6,17 @@ from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import ZERO_MONEY, round_money
 
-from .models import BankJournal, Payment, PurchaseInvoice, PurchaseInvoiceLine
+from .models import (
+    BankJournal,
+    Payment,
+    PaymentAllocation,
+    PurchaseInvoice,
+    PurchaseInvoiceLine,
+)
+
+
+class SettlementError(Exception):
+    """核销业务错误（超额等）。"""
 
 
 def compute_tax(amount_untaxed, tax_rate):
@@ -86,3 +96,47 @@ def create_payment(*, company, user, doc_date, bank_account, supplier, amount, s
         summary=f"付款 {pay.doc_no} 付 {supplier} {amount}（{bank_account}）",
     )
     return pay
+
+
+@transaction.atomic
+def allocate_payment(*, payment, allocations, user=None):
+    """把付款核销到若干采购发票。SPEC §7.1。
+
+    allocations: [{"invoice": PurchaseInvoice, "amount": Decimal}, ...]
+    校验：金额>0、不超过付款未核销额、不超过各发票未核销额。任一违反整体回滚。
+    """
+    payment = Payment.objects.select_for_update().get(pk=payment.pk)
+    total = ZERO_MONEY
+    cleaned = []
+    for a in allocations:
+        amount = round_money(a["amount"])
+        if amount <= 0:
+            continue
+        invoice = PurchaseInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
+        if invoice.company_id != payment.company_id or invoice.supplier_id != payment.supplier_id:
+            raise SettlementError("发票与付款的公司/供应商不一致")
+        if amount > invoice.outstanding:
+            raise SettlementError(
+                f"核销额 {amount} 超过发票 {invoice.doc_no} 未核销 {invoice.outstanding}"
+            )
+        total += amount
+        cleaned.append((invoice, amount))
+
+    if not cleaned:
+        raise SettlementError("请填写有效的核销金额")
+    if total > payment.unallocated:
+        raise SettlementError(f"核销合计 {total} 超过付款未核销 {payment.unallocated}")
+
+    for invoice, amount in cleaned:
+        PaymentAllocation.objects.create(payment=payment, invoice=invoice, amount=amount)
+        invoice.settled_amount += amount
+        invoice.save(update_fields=["settled_amount"])
+
+    payment.settled_amount += total
+    payment.save(update_fields=["settled_amount"])
+
+    AuditLog.record(
+        actor=user, company=payment.company, action=AuditLog.Action.OFFSET, target=payment,
+        summary=f"应付核销 {payment.doc_no} 核销 {total}（{len(cleaned)} 张发票）",
+    )
+    return payment

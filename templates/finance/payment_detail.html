@@ -3,7 +3,12 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">付款单 {{ pay.doc_no }}</h4>
-  <a href="{% url 'payment_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  <div class="d-flex gap-2">
+    {% if pay.unallocated > 0 and perms.finance.add_paymentallocation %}
+    <a href="{% url 'payment_allocate' pay.pk %}" class="btn btn-success btn-sm">核销应付</a>
+    {% endif %}
+    <a href="{% url 'payment_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
 </div>
 
 <div class="card mb-3">
@@ -27,4 +32,27 @@
   {{ pay.bank_journal.summary }}
 </div>
 {% endif %}
+
+<div class="card">
+  <div class="card-header">核销明细</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>采购发票</th><th>开票日期</th><th class="text-end">核销金额</th><th>核销时间</th></tr>
+      </thead>
+      <tbody>
+        {% for a in pay.allocations.all %}
+        <tr>
+          <td><a href="{% url 'purchase_invoice_detail' a.invoice.pk %}">{{ a.invoice.doc_no }}</a></td>
+          <td>{{ a.invoice.doc_date }}</td>
+          <td class="text-end">{{ a.amount }}</td>
+          <td>{{ a.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="text-center text-muted py-3">尚未核销</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}
