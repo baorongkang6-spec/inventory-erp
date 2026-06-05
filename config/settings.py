@@ -80,8 +80,9 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 
 # --- 数据库 -------------------------------------------------------------------
-# 默认 SQLite（开发）。设置 DB_ENGINE=postgresql 时切到 PostgreSQL（生产）。
-if os.environ.get("DB_ENGINE", "sqlite") == "postgresql":
+# 默认 SQLite（开发）。DB_ENGINE 设为 postgres/postgresql 时切到 PostgreSQL（生产）。
+# 同时接受两种写法，避免「配了 postgres 却静默回退 SQLite」的上线事故（见 DEPLOY.md §4）。
+if os.environ.get("DB_ENGINE", "sqlite").lower() in {"postgres", "postgresql"}:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
