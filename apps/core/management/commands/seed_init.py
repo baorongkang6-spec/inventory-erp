@@ -5,6 +5,8 @@
   --demo 时额外建演示用户与样例商品/客户/供应商，并设统一密钥便于联调。
 """
 
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.core.management.base import BaseCommand
@@ -22,18 +24,43 @@ COMPANIES = [
     ("C3", "鸿威达新材料科技（上海）有限公司", "鸿威达"),
 ]
 
-# 各角色默认拥有的 masterdata 权限点（RBAC：角色 → 权限）。
-# 菜单可见性另由 roles.menu_flags 控制；这里让 Django 权限与角色保持一致。
+# 各角色权限点（RBAC：角色 → 权限），格式 "app_label.codename"，跨应用。
+# 菜单可见性另由 roles.menu_flags / 模板 perms 控制；这里让 Django 权限与角色一致。
+# 说明：商品主数据仅超管维护（业务角色只读，已与客户确认）；
+#       inventory.view_amount = 可看库存金额（采购/销售无 → 只看数量，SPEC §9.2）。
+_VIEW_MASTERDATA = ["masterdata.view_product", "masterdata.view_customer", "masterdata.view_supplier"]
 ROLE_PERMS = {
-    roles.GM: ["view_product", "view_customer", "view_supplier"],
-    roles.CASHIER: ["view_product", "view_customer", "view_supplier"],
-    roles.PURCHASER: ["view_product",
-                      "add_supplier", "change_supplier", "view_supplier", "delete_supplier"],
-    roles.SALES: ["view_product",
-                  "add_customer", "change_customer", "view_customer", "delete_customer"],
-    roles.FINANCE: ["view_product",
-                    "view_customer", "change_customer",
-                    "view_supplier", "change_supplier"],
+    # 总经理/出纳：跨公司只读总览，可看金额（SPEC §9.1）
+    roles.GM: _VIEW_MASTERDATA + [
+        "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
+        "inventory.view_stockbalance", "inventory.view_amount",
+    ],
+    roles.CASHIER: _VIEW_MASTERDATA + [
+        "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
+        "inventory.view_stockbalance", "inventory.view_amount",
+    ],
+    # 采购：管供应商、建采购入库、看库存（仅数量）
+    roles.PURCHASER: [
+        "masterdata.view_product",
+        "masterdata.add_supplier", "masterdata.change_supplier",
+        "masterdata.view_supplier", "masterdata.delete_supplier",
+        "purchasing.add_purchaseinbound", "purchasing.view_purchaseinbound",
+        "inventory.view_stockbalance",
+    ],
+    # 销售：管客户、建销售出库、看库存（仅数量）
+    roles.SALES: [
+        "masterdata.view_product",
+        "masterdata.add_customer", "masterdata.change_customer",
+        "masterdata.view_customer", "masterdata.delete_customer",
+        "sales.add_salesoutbound", "sales.view_salesoutbound",
+        "inventory.view_stockbalance",
+    ],
+    # 财务：看全部往来、看单据、看库存含金额
+    roles.FINANCE: _VIEW_MASTERDATA + [
+        "masterdata.change_customer", "masterdata.change_supplier",
+        "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
+        "inventory.view_stockbalance", "inventory.view_amount",
+    ],
 }
 
 DEMO_PASSWORD = "erp12345"
@@ -52,6 +79,7 @@ class Command(BaseCommand):
         if options["demo"]:
             self._seed_demo_users()
             self._seed_demo_masterdata()
+            self._seed_demo_documents()
         self.stdout.write(self.style.SUCCESS("种子数据初始化完成。"))
 
     # --- 公司 -----------------------------------------------------------------
@@ -65,17 +93,31 @@ class Command(BaseCommand):
             self.stdout.write(("  + " if created else "  · ") + f"公司 {code} {short}")
 
     # --- 角色（Group + 权限点）------------------------------------------------
+    def _resolve_perms(self, dotted_list):
+        """把 ["app.codename", ...] 解析成 Permission 列表（跨应用）。
+
+        未建应用的权限（如 sales 在 M1-3 前）会被静默跳过并提示。
+        """
+        found = []
+        for dotted in dotted_list:
+            app_label, codename = dotted.split(".")
+            perm = Permission.objects.filter(
+                content_type__app_label=app_label, codename=codename
+            ).first()
+            if perm:
+                found.append(perm)
+            else:
+                self.stdout.write(f"    （跳过未就绪权限 {dotted}）")
+        return found
+
     def _seed_roles(self):
         self.groups = {}
         for role in roles.ALL_ROLES:
             group, _ = Group.objects.get_or_create(name=role)
-            perms = Permission.objects.filter(
-                content_type__app_label="masterdata",
-                codename__in=ROLE_PERMS.get(role, []),
-            )
+            perms = self._resolve_perms(ROLE_PERMS.get(role, []))
             group.permissions.set(perms)
             self.groups[role] = group
-            self.stdout.write(f"  · 角色 {role}（{perms.count()} 权限点）")
+            self.stdout.write(f"  · 角色 {role}（{len(perms)} 权限点）")
 
     # --- 演示用户 -------------------------------------------------------------
     def _seed_demo_users(self):
@@ -141,3 +183,33 @@ class Command(BaseCommand):
             defaults={"name": "上海外购化工有限公司"},
         )
         self.stdout.write("  · 样例商品/客户/供应商")
+
+    # --- 样例单据（演示移动加权全流程）---------------------------------------
+    def _seed_demo_documents(self):
+        from datetime import date
+
+        from apps.purchasing.models import PurchaseInbound
+        from apps.purchasing.services import create_and_post_inbound
+        from apps.sales.services import create_and_post_outbound
+
+        c1 = self.companies["C1"]
+        if PurchaseInbound.objects.filter(company=c1).exists():
+            self.stdout.write("  · 样例单据已存在，跳过")
+            return
+
+        p001 = Product.objects.get(company=c1, code="P001")
+        p002 = Product.objects.get(company=c1, code="P002")
+        d = date(2026, 6, 1)
+        # 两次入库演示移动加权：100@10 + 50@13 → 均价 11.00
+        create_and_post_inbound(company=c1, user=None, doc_date=d, lines=[
+            {"product": p001, "quantity": Decimal("100"), "unit_price": Decimal("10")},
+            {"product": p002, "quantity": Decimal("20"), "unit_price": Decimal("8")},
+        ])
+        create_and_post_inbound(company=c1, user=None, doc_date=d, lines=[
+            {"product": p001, "quantity": Decimal("50"), "unit_price": Decimal("13")},
+        ])
+        # 出库 60 → 按均价 11.00 结转成本 660，结存 90@11
+        create_and_post_outbound(company=c1, user=None, doc_date=d, lines=[
+            {"product": p001, "quantity": Decimal("60")},
+        ])
+        self.stdout.write("  · 样例单据（入库×2 + 出库×1，演示移动加权）")

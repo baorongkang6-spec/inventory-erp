@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.doc_no }} · 销售出库{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">销售出库单 {{ doc.doc_no }}</h4>
+  <a href="{% url 'outbound_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body row g-2">
+    <div class="col-md-3"><span class="text-muted">公司：</span>{{ doc.company }}</div>
+    <div class="col-md-3"><span class="text-muted">日期：</span>{{ doc.doc_date }}</div>
+    <div class="col-md-3"><span class="text-muted">客户：</span>{{ doc.customer|default:"—" }}</div>
+    <div class="col-md-3"><span class="text-muted">方式：</span>{{ doc.get_sales_type_display }}</div>
+    <div class="col-md-3"><span class="text-muted">状态：</span>{{ doc.get_status_display }}</div>
+    <div class="col-md-9"><span class="text-muted">备注：</span>{{ doc.remark|default:"—" }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>商品</th><th class="text-end">数量</th>
+            {% if perms.inventory.view_amount %}<th class="text-end">结转单位成本</th><th class="text-end">结转成本</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in doc.lines.all %}
+        <tr>
+          <td>{{ line.product }}</td>
+          <td class="text-end">{{ line.quantity }}</td>
+          {% if perms.inventory.view_amount %}<td class="text-end">{{ line.unit_cost }}</td><td class="text-end">{{ line.amount }}</td>{% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light">
+        <tr><th>合计</th><th class="text-end">{{ doc.total_quantity }}</th>
+            {% if perms.inventory.view_amount %}<th></th><th class="text-end">{{ doc.total_cost }}</th>{% endif %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

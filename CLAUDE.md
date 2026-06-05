@@ -6,6 +6,12 @@
 
 ## 第一信息源
 **`SPEC.md` 是唯一需求来源。动手前必读。** 需求变更先改 SPEC，再改代码。
+部署/上线/安全见 **`DEPLOY.md`**。
+
+## ⚠️ 生产将暴露公网（影响设计，开发期就要内置）
+生产 = Windows 主机 + **花生壳内网穿透**（手机/电脑外网可访问）+ PostgreSQL + Waitress（gunicorn 在 Windows 不可用）。
+因此从一开始就要：`ALLOWED_HOSTS`/`CSRF_TRUSTED_ORIGINS`/`SECRET_KEY`/`DEBUG`/`DB_ENGINE` **全走环境变量**；
+生产强制 HTTPS（`SECURE_SSL_REDIRECT`、`*_COOKIE_SECURE`、HSTS）；登录加防爆破锁定；弱密码仅限开发。详见 DEPLOY.md §2。
 
 ## 关键约束（最容易出错的地方）
 - 涉及金额/库存的操作必须在**数据库事务**内完成。

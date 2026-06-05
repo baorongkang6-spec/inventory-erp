@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}采购入库 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">采购入库<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  {% if perms.purchasing.add_purchaseinbound %}
+  <a href="{% url 'inbound_create' %}" class="btn btn-primary btn-sm">新建入库单</a>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>入库单号</th><th>日期</th><th>供应商</th><th>方式</th>
+            <th class="text-end">总数量</th><th class="text-end">总金额</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        {% for doc in docs %}
+        <tr>
+          <td><a href="{% url 'inbound_detail' doc.pk %}">{{ doc.doc_no }}</a></td>
+          <td>{{ doc.doc_date }}</td>
+          <td>{{ doc.supplier|default:"—" }}</td>
+          <td>{{ doc.get_purchase_type_display }}</td>
+          <td class="text-end">{{ doc.total_quantity }}</td>
+          <td class="text-end">{{ doc.total_amount }}</td>
+          <td>{{ doc.get_status_display }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-4">当前账套暂无入库单</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}销售出库 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-3">新建销售出库单<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+
+<form method="post">
+  {% csrf_token %}
+  {% if formset.non_form_errors %}
+  <div class="alert alert-danger">{{ formset.non_form_errors }}</div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">{{ header.doc_date.label }}</label>
+          {{ header.doc_date }}
+          {% for e in header.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ header.customer.label }}</label>
+          {{ header.customer }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ header.remark.label }}</label>
+          {{ header.remark }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {{ formset.management_form }}
+  <div class="card mb-3">
+    <div class="card-header">出库明细（成本由系统按移动加权结转）</div>
+    <div class="table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th style="width:55%">商品</th><th style="width:35%">数量</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for form in formset %}
+          <tr>
+            <td>{{ form.product }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td class="text-muted small">第 {{ forloop.counter }} 行</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">保存并过账</button>
+    <a href="{% url 'outbound_list' %}" class="btn btn-outline-secondary">取消</a>
+  </div>
+  <p class="text-muted small mt-2">未填商品的行将被忽略；库存不足将整单拒绝（不允许负库存）。保存后立即减少库存，不可修改。</p>
+</form>
+{% endblock %}

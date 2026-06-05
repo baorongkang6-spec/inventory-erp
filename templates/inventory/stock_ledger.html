@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}商品流水台账 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">商品流水台账<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a href="{% url 'stock_report' %}" class="btn btn-outline-secondary btn-sm">库存数量金额表</a>
+</div>
+
+<form method="get" class="row g-2 mb-3">
+  <div class="col-auto">
+    <select name="product" class="form-select" onchange="this.form.submit()">
+      <option value="">— 选择商品 —</option>
+      {% for p in products %}
+      <option value="{{ p.pk }}" {% if selected_product and p.pk == selected_product.pk %}selected{% endif %}>{{ p.code }} {{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+
+{% if selected_product %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped table-sm mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr>
+          <th class="text-start">日期</th><th class="text-start">单据</th><th class="text-start">摘要</th>
+          <th colspan="{% if can_view_amount %}2{% else %}1{% endif %}">收入</th>
+          <th colspan="{% if can_view_amount %}2{% else %}1{% endif %}">发出</th>
+          <th colspan="{% if can_view_amount %}3{% else %}1{% endif %}">结存</th>
+        </tr>
+        <tr>
+          <th colspan="3"></th>
+          <th>数量</th>{% if can_view_amount %}<th>金额</th>{% endif %}
+          <th>数量</th>{% if can_view_amount %}<th>金额</th>{% endif %}
+          <th>数量</th>{% if can_view_amount %}<th>均价</th><th>金额</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="text-start">{{ r.move.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="text-start">{{ r.move.source_no|default:"—" }}</td>
+          <td class="text-start">{{ r.move.get_direction_display }}</td>
+          <td>{{ r.in_qty|default:"" }}</td>{% if can_view_amount %}<td>{{ r.in_amount|default:"" }}</td>{% endif %}
+          <td>{{ r.out_qty|default:"" }}</td>{% if can_view_amount %}<td>{{ r.out_amount|default:"" }}</td>{% endif %}
+          <td>{{ r.move.balance_quantity }}</td>
+          {% if can_view_amount %}<td>{{ r.move.balance_price }}</td><td>{{ r.move.balance_amount }}</td>{% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="text-center text-muted py-4">该商品暂无流水</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<p class="text-muted">请选择商品查看流水。</p>
+{% endif %}
+{% endblock %}

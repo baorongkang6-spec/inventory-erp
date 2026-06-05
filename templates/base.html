@@ -26,6 +26,15 @@
         {% if menu.suppliers %}
         <li class="nav-item"><a class="nav-link" href="{% url 'supplier_list' %}">供应商</a></li>
         {% endif %}
+        {% if perms.purchasing.view_purchaseinbound %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'inbound_list' %}">采购入库</a></li>
+        {% endif %}
+        {% if perms.sales.view_salesoutbound %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'outbound_list' %}">销售出库</a></li>
+        {% endif %}
+        {% if perms.inventory.view_stockbalance %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
+        {% endif %}
       </ul>
 
       {# 当前账套切换器：仅在可见公司 >1 时显示下拉，否则显示静态标签 #}

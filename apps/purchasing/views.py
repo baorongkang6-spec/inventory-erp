@@ -1,0 +1,74 @@
+"""采购入库：列表 / 详情 / 录入（录入即过账增加库存）。"""
+
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required, permission_required
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
+from django.views.generic import DetailView, ListView
+
+from apps.core.mixins import CompanyScopedMixin
+from apps.inventory.services import InventoryError
+
+from .forms import InboundHeaderForm, InboundLineFormSet
+from .models import PurchaseInbound
+from .services import create_and_post_inbound
+
+
+class InboundListView(CompanyScopedMixin, ListView):
+    model = PurchaseInbound
+    template_name = "purchasing/inbound_list.html"
+    context_object_name = "docs"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("supplier")
+
+
+class InboundDetailView(CompanyScopedMixin, DetailView):
+    model = PurchaseInbound
+    template_name = "purchasing/inbound_detail.html"
+    context_object_name = "doc"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("supplier")
+
+
+@login_required
+@permission_required("purchasing.add_purchaseinbound", raise_exception=True)
+def inbound_create(request):
+    company = _active_company(request)
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+
+    if request.method == "POST":
+        header = InboundHeaderForm(request.POST, company=company)
+        formset = InboundLineFormSet(request.POST, company=company)
+        if header.is_valid() and formset.is_valid():
+            lines = [
+                {"product": cd["product"], "quantity": cd["quantity"], "unit_price": cd["unit_price"]}
+                for cd in formset.valid_lines
+            ]
+            try:
+                doc = create_and_post_inbound(
+                    company=company, user=request.user,
+                    doc_date=header.cleaned_data["doc_date"],
+                    supplier=header.cleaned_data.get("supplier"),
+                    remark=header.cleaned_data.get("remark", ""),
+                    lines=lines,
+                )
+            except InventoryError as e:
+                messages.error(request, f"过账失败：{e}")
+            else:
+                messages.success(request, f"采购入库已过账：{doc.doc_no}")
+                return redirect("inbound_detail", pk=doc.pk)
+    else:
+        header = InboundHeaderForm(company=company, initial={"doc_date": timezone.localdate()})
+        formset = InboundLineFormSet(company=company)
+
+    return render(request, "purchasing/inbound_form.html",
+                  {"header": header, "formset": formset, "title": "采购入库"})
+
+
+def _active_company(request):
+    from apps.core.scope import get_active_company, get_visible_companies
+    return get_active_company(request, list(get_visible_companies(request.user)))

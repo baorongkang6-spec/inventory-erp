@@ -34,9 +34,14 @@
       <div class="card-body">
         <h5 class="card-title">商品库存</h5>
         <p class="card-text text-muted">
-          {% if is_inventory_only %}查看当前账套的库存商品数量。{% else %}维护商品主数据；M1 起含数量金额与移动加权单价。{% endif %}
+          {% if is_inventory_only %}查看当前账套的库存商品数量。{% else %}商品主数据 + 库存数量金额（移动加权）。{% endif %}
         </p>
-        <a href="{% url 'product_list' %}" class="btn btn-sm btn-outline-primary">进入商品</a>
+        <div class="d-flex gap-2 flex-wrap">
+          {% if perms.inventory.view_stockbalance %}<a href="{% url 'stock_report' %}" class="btn btn-sm btn-primary">库存报表</a>{% endif %}
+          <a href="{% url 'product_list' %}" class="btn btn-sm btn-outline-primary">商品主数据</a>
+          {% if perms.purchasing.add_purchaseinbound %}<a href="{% url 'inbound_create' %}" class="btn btn-sm btn-outline-success">采购入库</a>{% endif %}
+          {% if perms.sales.add_salesoutbound %}<a href="{% url 'outbound_create' %}" class="btn btn-sm btn-outline-warning">销售出库</a>{% endif %}
+        </div>
       </div>
     </div>
   </div>
