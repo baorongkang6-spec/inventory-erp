@@ -725,3 +725,110 @@ def note_payable_settle(request, pk):
                         title=f"应付票据抵应付 · {note.doc_no}",
                         hint="用开出的应付票据抵减下列采购发票（应付账款）。",
                         redirect_to="note_payable_list")
+
+
+# ============================= 票据 Excel / 报表（M3-3）=======================
+@login_required
+@permission_required("finance.view_notereceivable", raise_exception=True)
+def note_receivable_export(request):
+    from django.http import HttpResponse
+    from .excel import export_notes
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    notes = list(NoteReceivable.objects.filter(company=company).select_related("customer"))
+    resp = HttpResponse(export_notes(notes, "来源客户"),
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = 'attachment; filename="notes_receivable.xlsx"'
+    return resp
+
+
+@login_required
+@permission_required("finance.view_notepayable", raise_exception=True)
+def note_payable_export(request):
+    from django.http import HttpResponse
+    from .excel import export_notes
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    notes = list(NotePayable.objects.filter(company=company).select_related("supplier"))
+    resp = HttpResponse(export_notes(notes, "收票供应商"),
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = 'attachment; filename="notes_payable.xlsx"'
+    return resp
+
+
+def _import_notes(request, *, kind, model, create_fn, list_url, party_label):
+    """票据 Excel 导入通用：按票据号去重；对方按名称在账套内匹配。"""
+    from apps.masterdata.models import Customer, Supplier
+    from .excel import parse_notes_xlsx
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+
+    if request.method == "POST":
+        upload = request.FILES.get("file")
+        if not upload:
+            messages.error(request, "请上传 Excel 文件")
+        else:
+            try:
+                parsed, errors = parse_notes_xlsx(upload)
+            except Exception as e:
+                messages.error(request, f"文件解析失败：{e}")
+                return render(request, "finance/note_import.html",
+                              {"kind": kind, "party_label": party_label})
+            created = skipped = 0
+            for r in parsed:
+                if r["note_no"] and model.objects.filter(
+                        company=company, note_no=r["note_no"]).exists():
+                    skipped += 1
+                    continue
+                party = None
+                if r["party_name"]:
+                    pm = Customer if kind == "receivable" else Supplier
+                    party = pm.objects.filter(company=company, name=r["party_name"]).first()
+                if kind == "payable" and party is None:
+                    errors.append(f"票据 {r['note_no'] or r['draw_date']}：找不到供应商「{r['party_name']}」，已跳过")
+                    continue
+                kwargs = dict(company=company, user=request.user, draw_date=r["draw_date"],
+                              amount=r["amount"], note_no=r["note_no"], due_date=r["due_date"])
+                if kind == "receivable":
+                    kwargs["customer"] = party
+                else:
+                    kwargs["supplier"] = party
+                note = create_fn(**kwargs)
+                note.is_imported = True
+                note.save(update_fields=["is_imported"])
+                created += 1
+            messages.success(request, f"导入完成：新增 {created} 张，跳过重复 {skipped} 张")
+            for e in errors[:10]:
+                messages.warning(request, e)
+            return redirect(list_url)
+
+    return render(request, "finance/note_import.html", {"kind": kind, "party_label": party_label})
+
+
+@login_required
+@permission_required("finance.add_notereceivable", raise_exception=True)
+def note_receivable_import(request):
+    return _import_notes(request, kind="receivable", model=NoteReceivable,
+                         create_fn=create_note_receivable, list_url="note_receivable_list",
+                         party_label="来源客户")
+
+
+@login_required
+@permission_required("finance.add_notepayable", raise_exception=True)
+def note_payable_import(request):
+    return _import_notes(request, kind="payable", model=NotePayable,
+                         create_fn=create_note_payable, list_url="note_payable_list",
+                         party_label="收票供应商")
+
+
+@login_required
+@permission_required("finance.view_notereceivable", raise_exception=True)
+def notes_balance_report(request):
+    """票据余额表：在手/已开未用的应收、应付票据。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    ar = [n for n in NoteReceivable.objects.filter(company=company).select_related("customer")
+          if n.unused > 0 and n.status != NoteReceivable.Status.VOID]
+    ap = [n for n in NotePayable.objects.filter(company=company).select_related("supplier")
+          if n.unused > 0 and n.status != NotePayable.Status.VOID]
+    ar_total = sum((n.unused for n in ar), start=Decimal("0.00"))
+    ap_total = sum((n.unused for n in ap), start=Decimal("0.00"))
+    return render(request, "finance/notes_balance_report.html", {
+        "ar": ar, "ap": ap, "ar_total": ar_total, "ap_total": ap_total,
+    })

@@ -100,3 +100,66 @@ def parse_bank_journal_xlsx(file):
             "amount": amount,
         })
     return parsed, errors
+
+
+# 前 5 列与导入格式一致（票据号/出票日/到期日/对方/票面），其后为只读统计列，
+# 便于「导出→编辑→再导入」往返；导入只读前 5 列。
+NOTE_HEADERS = ["票据号", "出票日", "到期日", "对方单位", "票面金额", "已用", "未用", "状态", "单号"]
+NOTE_IMPORT_HINT = ["票据号", "出票日", "到期日", "对方单位", "票面金额"]
+
+
+def export_notes(notes, party_label="对方单位") -> bytes:
+    """导出票据台账（应收/应付通用）。notes 为 NoteReceivable/NotePayable 列表。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "票据台账"
+    headers = NOTE_HEADERS.copy()
+    headers[3] = party_label
+    ws.append(headers)
+    for n in notes:
+        party = getattr(n, "customer", None) or getattr(n, "supplier", None)
+        ws.append([
+            n.note_no,
+            n.draw_date.strftime("%Y-%m-%d") if n.draw_date else "",
+            n.due_date.strftime("%Y-%m-%d") if n.due_date else "",
+            str(party) if party else "",
+            float(n.amount), float(n.settled_amount), float(n.unused),
+            n.get_status_display(), n.doc_no,
+        ])
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def parse_notes_xlsx(file):
+    """解析票据导入 xlsx，列：票据号 | 出票日 | 到期日 | 对方单位 | 票面金额。
+
+    返回 (有效行, 错误)。每行 dict：{note_no, draw_date, due_date, party_name, amount}。
+    """
+    wb = load_workbook(file, read_only=True, data_only=True)
+    ws = wb.active
+    parsed, errors = [], []
+    for idx, values in enumerate(ws.iter_rows(values_only=True), start=1):
+        values = list(values)
+        if not any(v not in (None, "") for v in values):
+            continue
+        first = str(values[0]).strip() if values and values[0] is not None else ""
+        if first in ("票据号", "单号") or first.startswith("账户"):
+            continue
+        cells = (values + [None] * 5)[:5]
+        draw = _to_date(cells[1])
+        if draw is None:
+            errors.append(f"第 {idx} 行：出票日无法识别（{cells[1]!r}）")
+            continue
+        amount = _to_decimal(cells[4])
+        if amount <= 0:
+            errors.append(f"第 {idx} 行：票面金额无效，已跳过")
+            continue
+        parsed.append({
+            "note_no": str(cells[0] or "").strip(),
+            "draw_date": draw,
+            "due_date": _to_date(cells[2]),
+            "party_name": str(cells[3] or "").strip(),
+            "amount": amount,
+        })
+    return parsed, errors

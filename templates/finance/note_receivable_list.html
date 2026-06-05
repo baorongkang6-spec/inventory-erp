@@ -4,6 +4,8 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">应收票据<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
   <div class="d-flex gap-2">
+    <a href="{% url 'note_receivable_export' %}" class="btn btn-outline-success btn-sm">导出 Excel</a>
+    {% if perms.finance.add_notereceivable %}<a href="{% url 'note_receivable_import' %}" class="btn btn-outline-primary btn-sm">导入</a>{% endif %}
     {% if perms.finance.add_notereceivable %}<a href="{% url 'note_receivable_create' %}" class="btn btn-primary btn-sm">登记应收票据</a>{% endif %}
   </div>
 </div>

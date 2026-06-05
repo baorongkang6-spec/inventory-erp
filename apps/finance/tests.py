@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.test import TestCase
 
 from apps.core.models import Company
-from apps.finance.models import BankAccount, BankJournal
+from apps.finance.models import BankAccount, BankJournal, NotePayable, NoteReceivable  # noqa: F401
 from apps.finance.services import (
     SettlementError,
     allocate_payment,
@@ -358,3 +358,25 @@ class NoteSettlementTests(TestCase):
         inv.refresh_from_db(); note.refresh_from_db()
         self.assertEqual(note.settled_amount, Decimal("0.00"))
         self.assertEqual(inv.settled_amount, Decimal("0.00"))
+
+
+class NoteExcelTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+
+    def test_export_then_parse_notes(self):
+        from io import BytesIO
+        from apps.finance.services import create_note_receivable
+        from apps.finance.excel import export_notes, parse_notes_xlsx
+        create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 5),
+                               amount=Decimal("2260"), customer=self.cust, note_no="BA1")
+        notes = list(NoteReceivable.objects.filter(company=self.c1).select_related("customer"))
+        content = export_notes(notes, "来源客户")
+        parsed, errors = parse_notes_xlsx(BytesIO(content))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["note_no"], "BA1")
+        self.assertEqual(parsed[0]["amount"], Decimal("2260"))
+        self.assertEqual(parsed[0]["party_name"], "K1 客户甲")

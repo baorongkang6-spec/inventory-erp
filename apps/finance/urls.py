@@ -38,7 +38,12 @@ urlpatterns = [
     path("notes-receivable/new/", views.note_receivable_create, name="note_receivable_create"),
     path("notes-receivable/<int:pk>/settle/", views.note_receivable_settle, name="note_receivable_settle"),
     path("notes-receivable/<int:pk>/endorse/", views.note_receivable_endorse, name="note_receivable_endorse"),
+    path("notes-receivable/export/", views.note_receivable_export, name="note_receivable_export"),
+    path("notes-receivable/import/", views.note_receivable_import, name="note_receivable_import"),
     path("notes-payable/", views.NotePayableListView.as_view(), name="note_payable_list"),
     path("notes-payable/new/", views.note_payable_create, name="note_payable_create"),
     path("notes-payable/<int:pk>/settle/", views.note_payable_settle, name="note_payable_settle"),
+    path("notes-payable/export/", views.note_payable_export, name="note_payable_export"),
+    path("notes-payable/import/", views.note_payable_import, name="note_payable_import"),
+    path("reports/notes-balance/", views.notes_balance_report, name="notes_balance_report"),
 ]

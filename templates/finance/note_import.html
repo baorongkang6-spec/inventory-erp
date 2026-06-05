@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}导入票据 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <h4 class="mb-3">导入{% if kind == 'receivable' %}应收{% else %}应付{% endif %}票据（Excel）<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+    <div class="card">
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">Excel 文件（.xlsx）</label>
+            <input type="file" name="file" accept=".xlsx" class="form-control" required>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">导入</button>
+            <a href="javascript:history.back()" class="btn btn-outline-secondary">返回</a>
+          </div>
+        </form>
+        <hr>
+        <p class="text-muted small mb-1">列格式（首行表头）：<code>票据号 | 出票日 | 到期日 | {{ party_label }} | 票面金额</code></p>
+        <p class="text-muted small mb-0">按票据号去重，重复跳过；{{ party_label }}按名称在当前账套匹配{% if kind == 'payable' %}，匹配不到则跳过该行{% endif %}。</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
