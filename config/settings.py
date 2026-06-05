@@ -25,12 +25,32 @@ def env_bool(key: str, default: bool) -> bool:
 
 
 # --- 安全与调试 ---------------------------------------------------------------
+# PRODUCTION：生产开关（生产 .env 置 1）。控制 HTTPS/安全 Cookie/HSTS 等加固，
+# 与 DEBUG 解耦——因为 Django 跑测试时默认 DEBUG=False，若用 not DEBUG 当开关会把
+# 测试请求 301 到 https 而全部失败。详见 docs/DEV_NOTES.md。
+PRODUCTION = env_bool("DJANGO_PRODUCTION", False)
+
 SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
     "django-insecure-dev-only-change-me-in-production-0_+swf7@id^$zd",
 )
 DEBUG = env_bool("DJANGO_DEBUG", True)
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
+# CSRF 受信任来源（花生壳域名等），生产经 env 注入，含协议：https://xxx.example.com
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get(
+    "DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+
+# 生产 fail-fast：禁止用开发默认密钥 / 关 DEBUG
+if PRODUCTION:
+    from django.core.exceptions import ImproperlyConfigured
+
+    if SECRET_KEY.startswith("django-insecure"):
+        raise ImproperlyConfigured("生产环境必须设置 DJANGO_SECRET_KEY（不能用开发默认值）")
+    if DEBUG:
+        raise ImproperlyConfigured("生产环境必须 DJANGO_DEBUG=0")
+    if not CSRF_TRUSTED_ORIGINS:
+        raise ImproperlyConfigured("生产环境必须设置 DJANGO_CSRF_TRUSTED_ORIGINS（花生壳域名）")
 
 
 # --- 应用 ---------------------------------------------------------------------
@@ -136,3 +156,28 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# --- 登录防爆破（自实现，SEC-2）----------------------------------------------
+# 同一用户名+IP 连续失败达上限即锁定一段时间。用 Django 缓存计数（单机部署足够）。
+LOGIN_FAILURE_LIMIT = int(os.environ.get("LOGIN_FAILURE_LIMIT", "5"))
+LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "900"))  # 15 分钟
+
+
+# --- 生产安全加固（仅 PRODUCTION 生效，SEC-1）--------------------------------
+# 经花生壳/反向代理暴露公网 + 财务数据，硬性要求（DEPLOY §2）。
+if PRODUCTION:
+    SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", True)
+    # 反向代理（花生壳）转发时用此头识别原始 https，避免重定向死循环
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", "2592000"))  # 30 天
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    SESSION_COOKIE_HTTPONLY = True
+    X_FRAME_OPTIONS = "DENY"
+    # 会话与 CSRF 失败更严格
+    SESSION_EXPIRE_AT_BROWSER_CLOSE = env_bool("DJANGO_SESSION_EXPIRE_ON_CLOSE", False)
