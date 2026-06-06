@@ -457,8 +457,12 @@ def _parse_date(s):
         return None
 
 
-def _journal_rows(company, account, date_from=None, date_to=None):
-    """返回 (期初余额, 明细行[带逐笔余额], 期末余额)。"""
+def _journal_rows(company, account, date_from=None, date_to=None, entry_type=None):
+    """返回 (期初余额, 明细行[带逐笔余额], 期末余额)。
+
+    entry_type 仅作显示过滤：逐笔余额按**全部**流水累计（保持账户真实余额），
+    再隐去非该类型的行；期初/期末仍为账户真实余额。
+    """
     qs = BankJournal.objects.filter(company=company, bank_account=account)
     period_opening = account.opening_balance
     if date_from:
@@ -475,6 +479,8 @@ def _journal_rows(company, account, date_from=None, date_to=None):
     balance = period_opening
     for j in period:
         balance += j.signed_amount
+        if entry_type and j.entry_type != entry_type:
+            continue  # 余额已累计，仅不显示该行
         rows.append({"j": j, "balance": balance})
     return period_opening, rows, balance
 
@@ -517,15 +523,21 @@ def bank_journal_report(request):
 
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
+    entry_type = request.GET.get("entry_type") or ""
 
     opening = closing = Decimal("0.00")
     rows = []
     if account:
-        opening, rows, closing = _journal_rows(company, account, date_from, date_to)
+        opening, rows, closing = _journal_rows(company, account, date_from, date_to,
+                                               entry_type or None)
+    income_total = sum((r["j"].amount for r in rows if r["j"].direction == "in"), Decimal("0.00"))
+    outgo_total = sum((r["j"].amount for r in rows if r["j"].direction == "out"), Decimal("0.00"))
 
     return render(request, "finance/bank_journal_report.html", {
         "accounts": accounts, "account": account, "rows": rows,
         "opening": opening, "closing": closing,
+        "income_total": income_total, "outgo_total": outgo_total,
+        "entry_type": entry_type, "entry_types": BankJournal.EntryType.choices,
         "date_from": request.GET.get("from", ""), "date_to": request.GET.get("to", ""),
         "active_company": company,
     })
@@ -605,7 +617,8 @@ def bank_journal_export(request):
     account = get_object_or_404(BankAccount, pk=request.GET.get("account"), company=company)
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
-    opening, rows, closing = _journal_rows(company, account, date_from, date_to)
+    entry_type = request.GET.get("entry_type") or None
+    opening, rows, closing = _journal_rows(company, account, date_from, date_to, entry_type)
 
     content = export_bank_journal(account, rows, opening=opening, closing=closing,
                                   date_from=date_from, date_to=date_to)

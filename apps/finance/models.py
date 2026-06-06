@@ -112,11 +112,21 @@ class BankJournal(CompanyScopedModel):
         IN = "in", "收入"
         OUT = "out", "支出"
 
+    class EntryType(models.TextChoices):
+        SETTLEMENT = "settlement", "往来结算"
+        EXPENSE = "expense", "费用"
+        TAX = "tax", "税费"
+        PAYROLL = "payroll", "工资"
+        TRANSFER = "transfer", "内部划转"
+        OTHER = "other", "其他"
+
     bank_account = models.ForeignKey(
         BankAccount, on_delete=models.PROTECT, verbose_name="银行账户", related_name="journals"
     )
     date = models.DateField("日期")
     direction = models.CharField("方向", max_length=4, choices=Direction.choices)
+    entry_type = models.CharField("业务类型", max_length=12, choices=EntryType.choices,
+                                  default=EntryType.OTHER)
     amount = models.DecimalField("金额", max_digits=18, decimal_places=2)
     counterparty = models.CharField("对方单位", max_length=128, blank=True)
     summary = models.CharField("摘要", max_length=255, blank=True)

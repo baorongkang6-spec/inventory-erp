@@ -92,6 +92,7 @@ def create_payment(*, company, user, doc_date, bank_account, supplier, amount, s
     journal = BankJournal.objects.create(
         company=company, created_by=user, bank_account=bank_account, date=doc_date,
         direction=BankJournal.Direction.OUT, amount=amount,
+        entry_type=BankJournal.EntryType.SETTLEMENT,
         counterparty=str(supplier), summary=summary or f"付款 {pay.doc_no}",
         source_type="Payment", source_id=str(pay.pk), source_no=pay.doc_no,
     )
@@ -201,6 +202,7 @@ def create_receipt(*, company, user, doc_date, bank_account, customer, amount, s
     journal = BankJournal.objects.create(
         company=company, created_by=user, bank_account=bank_account, date=doc_date,
         direction=BankJournal.Direction.IN, amount=amount,
+        entry_type=BankJournal.EntryType.SETTLEMENT,
         counterparty=str(customer), summary=summary or f"收款 {rec.doc_no}",
         source_type="Receipt", source_id=str(rec.pk), source_no=rec.doc_no,
     )
