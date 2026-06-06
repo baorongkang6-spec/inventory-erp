@@ -168,6 +168,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                 period = period.filter(date__gte=date_from)
             if date_to:
                 period = period.filter(date__lte=date_to)
+            from apps.core.docrefs import doc_url
             bal_qty, bal_amount = open_qty, open_amount
             for m in period.order_by("date", "id"):
                 is_in = m.direction == StockMove.Direction.IN
@@ -181,6 +182,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                     "out_amount": None if is_in else m.amount,
                     "bal_qty": bal_qty,
                     "bal_amount": bal_amount,
+                    "ref_url": doc_url(m.source_type, m.source_id),
                 })
             close_qty, close_amount = bal_qty, bal_amount
 

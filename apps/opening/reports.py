@@ -345,12 +345,15 @@ def partner_ledger(company, partner, kind, dfrom, dto):
 
     返回 {opening, rows:[{date,kind,doc_no,inc,dec,balance}], income, outgo, ending}。
     """
+    from apps.core.docrefs import doc_url, invoice_url
     if kind == "payable":
         invoices = PurchaseInvoice.objects.filter(
             company=company, supplier=partner, status=PurchaseInvoice.Status.REGISTERED)
         allocs = PaymentAllocation.objects.filter(
             payment__company=company, invoice__supplier=partner).select_related("payment")
         alloc_label, alloc_doc = "付款核销", lambda a: a.payment.doc_no
+        alloc_url = lambda a: doc_url("Payment", a.payment_id)
+        inv_url = lambda inv: doc_url("PurchaseInvoice", inv.pk)
         notes = NoteSettlement.objects.filter(
             company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
         inv_ids = set(PurchaseInvoice.objects.filter(
@@ -362,6 +365,8 @@ def partner_ledger(company, partner, kind, dfrom, dto):
         allocs = ReceiptAllocation.objects.filter(
             receipt__company=company, invoice__customer=partner).select_related("receipt")
         alloc_label, alloc_doc = "收款核销", lambda a: a.receipt.doc_no
+        alloc_url = lambda a: doc_url("Receipt", a.receipt_id)
+        inv_url = lambda inv: doc_url("SalesInvoice", inv.pk)
         notes = NoteSettlement.objects.filter(
             company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES, is_endorsement=False)
         inv_ids = set(SalesInvoice.objects.filter(
@@ -371,13 +376,14 @@ def partner_ledger(company, partner, kind, dfrom, dto):
     events = []
     for inv in invoices:
         events.append({"date": inv.doc_date, "kind": inv_label, "doc_no": inv.doc_no,
-                       "inc": inv.amount_taxed, "dec": Z})
+                       "inc": inv.amount_taxed, "dec": Z, "ref_url": inv_url(inv)})
     for a in allocs:
         events.append({"date": a.created_at.date(), "kind": alloc_label, "doc_no": alloc_doc(a),
-                       "inc": Z, "dec": a.amount})
+                       "inc": Z, "dec": a.amount, "ref_url": alloc_url(a)})
     for ns in notes.filter(invoice_id__in=inv_ids):
         events.append({"date": ns.created_at.date(), "kind": "票据抵付", "doc_no": ns.note_no,
-                       "inc": Z, "dec": ns.amount})
+                       "inc": Z, "dec": ns.amount,
+                       "ref_url": invoice_url(ns.invoice_kind, ns.invoice_id)})
 
     opening = Z
     period = []
@@ -427,13 +433,15 @@ def receivable_notes_balance(company, dfrom, dto):
 
 def note_ledger(company, note, dfrom, dto):
     """应收票据使用明细：出票(增) + 使用(冲应收/背书抵应付，减) 按时间滚动未用额。"""
+    from apps.core.docrefs import invoice_url
     events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
-               "inc": note.amount, "dec": Z}]
+               "inc": note.amount, "dec": Z, "ref_url": ""}]
     for s in NoteSettlement.objects.filter(company=company, note_id=note.pk,
                                            note_kind=NoteSettlement.NoteKind.RECEIVABLE):
         events.append({"date": s.created_at.date(),
                        "kind": "背书抵应付" if s.is_endorsement else "冲应收",
-                       "doc_no": s.invoice_no, "inc": Z, "dec": s.amount})
+                       "doc_no": s.invoice_no, "inc": Z, "dec": s.amount,
+                       "ref_url": invoice_url(s.invoice_kind, s.invoice_id)})
     opening = Z
     period = []
     for e in events:

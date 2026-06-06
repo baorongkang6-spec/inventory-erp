@@ -93,6 +93,6 @@ class InboundListFilterTests(TestCase):
         wb = load_workbook(BytesIO(resp.content))
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
-        self.assertEqual(rows[0][0], "入库单号")          # 表头
+        self.assertEqual(rows[0][0], "单据编号")          # 表头
         self.assertEqual(len(rows), 2)                     # 表头 + 1 行（筛选后）
         self.assertEqual(rows[1][0], "RK-C1-20260620-001")

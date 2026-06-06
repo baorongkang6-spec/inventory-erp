@@ -23,7 +23,7 @@ class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "doc_date"
     q_placeholder = "单号/供应商"
     export_filename = "采购入库"
-    export_columns = [("入库单号","doc_no"),("日期","doc_date"),("供应商","supplier__name"),
+    export_columns = [("单据编号","doc_no"),("日期","doc_date"),("供应商","supplier__name"),
                       ("方式","get_purchase_type_display"),("总数量","total_quantity"),
                       ("入库成本","total_amount"),("含税合计","total_taxed"),("状态","get_status_display")]
     model = PurchaseInbound

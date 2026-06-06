@@ -36,7 +36,7 @@
         <tr>
           <td class="text-start">{{ e.date|date:"Y-m-d" }}</td>
           <td class="text-start">{{ e.kind }}</td>
-          <td class="text-start">{{ e.doc_no|default:"—" }}</td>
+          <td class="text-start">{% if e.ref_url %}<a href="{{ e.ref_url }}">{{ e.doc_no }}</a>{% else %}{{ e.doc_no|default:"—" }}{% endif %}</td>
           <td>{% if e.inc %}{{ e.inc }}{% endif %}</td>
           <td>{% if e.dec %}{{ e.dec }}{% endif %}</td>
           <td>{{ e.balance }}</td>

@@ -79,3 +79,10 @@
 - **明细账滚动余额口径**：增=发票/出票，减=核销/票据抵付/使用；期初=区间前净额，逐笔累计；票据明细的「余额」是未用额。事件按 (日期, 增在前) 排序。
 - **库存明细账**：逐行结存直接用 StockMove 存的 `balance_quantity/price/amount`(过账时快照、含均价)；期初=区间前 signed 累计、期末=末笔结存，二者与快照一致。
 - **plain `manage.py shell` 验证陷阱**：非 TestCase 的 `Client()` 不挂 `store_rendered_templates` 信号 → `response.context` 为 None。冒烟脚本要么断言 `response.content` 文本，要么写进 TestCase 用 `resp.context`。
+
+## 八、M10 单据可点击 + 术语统一
+
+- **来源单据跳转**：`core/docrefs.py` 集中维护 `source_type → 详情路由名` 映射（PurchaseInbound/SalesOutbound/Payment/Receipt/Purchase·SalesInvoice），`doc_url(type,id)`/`invoice_url(kind,id)` 无对应详情(期初/作废反冲/其他收支)返回空串。库存明细账、银行日记账、往来明细账、票据使用明细的单据号都据此渲染成链接(无则纯文本)。
+- **明细账事件带 ref_url**：`partner_ledger`/`note_ledger` 在生成事件时就算好 `ref_url`(发票→发票详情、核销→付/收款详情、票据抵付→被冲发票)，模板只判空显示链接，避免模板里塞映射逻辑。
+- **术语两类统一**：单据**自身编号**列头统一「单据编号」(各列表+导出表头)；**引用来源单据**的列统一「来源单据」(台账「单据」、日记账「来源」改名并可点)。语义不混。
+- 改列头后注意同步**导出表头**(export_columns 第一元素)和断言旧表头的测试。

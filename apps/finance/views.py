@@ -95,7 +95,7 @@ class PurchaseInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "doc_date"
     q_placeholder = "单号/发票号/供应商"
     export_filename = "采购发票"
-    export_columns = [("登记单号","doc_no"),("开票日期","doc_date"),("发票号码","invoice_no"),
+    export_columns = [("单据编号","doc_no"),("开票日期","doc_date"),("发票号码","invoice_no"),
                       ("供应商","supplier__name"),("不含税","amount_untaxed"),("税额","tax_amount"),
                       ("含税(应付)","amount_taxed"),("已核销","settled_amount"),("未核销","outstanding"),
                       ("状态","get_status_display")]
@@ -189,7 +189,7 @@ class PaymentListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "doc_date"
     q_placeholder = "单号/供应商"
     export_filename = "付款登记"
-    export_columns = [("付款单号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
+    export_columns = [("单据编号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
                       ("供应商","supplier__name"),("付款金额","amount"),("已核销","settled_amount"),
                       ("未核销","unallocated"),("状态","get_status_display")]
     model = Payment
@@ -279,7 +279,7 @@ class SalesInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "doc_date"
     q_placeholder = "单号/发票号/客户"
     export_filename = "销售发票"
-    export_columns = [("登记单号","doc_no"),("开票日期","doc_date"),("发票号码","invoice_no"),
+    export_columns = [("单据编号","doc_no"),("开票日期","doc_date"),("发票号码","invoice_no"),
                       ("客户","customer__name"),("不含税","amount_untaxed"),("税额","tax_amount"),
                       ("含税(应收)","amount_taxed"),("已核销","settled_amount"),("未核销","outstanding"),
                       ("状态","get_status_display")]
@@ -365,7 +365,7 @@ class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "doc_date"
     q_placeholder = "单号/客户"
     export_filename = "收款登记"
-    export_columns = [("收款单号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
+    export_columns = [("单据编号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
                       ("客户","customer__name"),("收款金额","amount"),("已核销","settled_amount"),
                       ("未核销","unallocated"),("状态","get_status_display")]
     model = Receipt
@@ -475,13 +475,14 @@ def _journal_rows(company, account, date_from=None, date_to=None, entry_type=Non
         period = period.filter(date__lte=date_to)
     period = period.order_by("date", "id")
 
+    from apps.core.docrefs import doc_url
     rows = []
     balance = period_opening
     for j in period:
         balance += j.signed_amount
         if entry_type and j.entry_type != entry_type:
             continue  # 余额已累计，仅不显示该行
-        rows.append({"j": j, "balance": balance})
+        rows.append({"j": j, "balance": balance, "ref_url": doc_url(j.source_type, j.source_id)})
     return period_opening, rows, balance
 
 
@@ -929,7 +930,7 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "draw_date"
     q_placeholder = "单号/票号/客户"
     export_filename = "应收票据"
-    export_columns = [("单号","doc_no"),("票据号","note_no"),("出票日","draw_date"),("到期日","due_date"),
+    export_columns = [("单据编号","doc_no"),("票据号","note_no"),("出票日","draw_date"),("到期日","due_date"),
                       ("来源客户","customer__name"),("票面","amount"),("已用","settled_amount"),
                       ("未用","unused"),("状态","get_status_display")]
     model = NoteReceivable
@@ -945,7 +946,7 @@ class NotePayableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     date_filter_field = "draw_date"
     q_placeholder = "单号/票号/供应商"
     export_filename = "应付票据"
-    export_columns = [("单号","doc_no"),("票据号","note_no"),("开票日","draw_date"),("到期日","due_date"),
+    export_columns = [("单据编号","doc_no"),("票据号","note_no"),("开票日","draw_date"),("到期日","due_date"),
                       ("收票供应商","supplier__name"),("票面","amount"),("已用","settled_amount"),
                       ("未用","unused"),("状态","get_status_display")]
     model = NotePayable

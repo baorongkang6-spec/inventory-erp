@@ -54,3 +54,21 @@ class SeedInitTests(TestCase):
             StockBalance.objects.get(company__code="C1", product__code="P001").quantity,
             Decimal("90.000"),
         )
+
+
+class DocRefsTests(TestCase):
+    """单据来源跳转映射（M10）。"""
+
+    def test_doc_url_maps_known_types(self):
+        from apps.core.docrefs import doc_url, invoice_url
+        self.assertEqual(doc_url("PurchaseInbound", 5), "/purchasing/inbound/5/")
+        self.assertEqual(doc_url("SalesOutbound", 7), "/sales/outbound/7/")
+        self.assertEqual(doc_url("Payment", 3), "/finance/payments/3/")
+        self.assertEqual(doc_url("Receipt", 4), "/finance/receipts/4/")
+        # 无对应详情/缺参 → 空串
+        self.assertEqual(doc_url("Opening", 1), "")
+        self.assertEqual(doc_url("Other", 1), "")
+        self.assertEqual(doc_url("PurchaseInbound", ""), "")
+        self.assertEqual(invoice_url("purchase", 2), "/finance/purchase-invoices/2/")
+        self.assertEqual(invoice_url("sales", 9), "/finance/sales-invoices/9/")
+        self.assertEqual(invoice_url("", 9), "")

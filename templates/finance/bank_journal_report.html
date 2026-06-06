@@ -44,7 +44,7 @@
   <div class="table-responsive">
     <table class="table table-sm table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>日期</th><th>业务类型</th><th>摘要</th><th>对方单位</th><th>来源</th>
+        <tr><th>日期</th><th>业务类型</th><th>摘要</th><th>对方单位</th><th>来源单据</th>
             <th class="text-end">收入</th><th class="text-end">支出</th><th class="text-end">余额</th>
             <th class="text-end">操作</th></tr>
       </thead>
@@ -56,7 +56,7 @@
           <td><span class="badge text-bg-light">{{ r.j.get_entry_type_display }}</span></td>
           <td>{{ r.j.summary|default:"—" }}{% if r.j.is_imported %} <span class="badge text-bg-secondary">导入</span>{% endif %}</td>
           <td>{{ r.j.counterparty|default:"—" }}</td>
-          <td>{{ r.j.source_no|default:"—" }}</td>
+          <td>{% if r.ref_url %}<a href="{{ r.ref_url }}">{{ r.j.source_no }}</a>{% else %}{{ r.j.source_no|default:"—" }}{% endif %}</td>
           <td class="text-end">{% if r.j.direction == 'in' %}{{ r.j.amount }}{% endif %}</td>
           <td class="text-end">{% if r.j.direction == 'out' %}{{ r.j.amount }}{% endif %}</td>
           <td class="text-end">{{ r.balance }}</td>
