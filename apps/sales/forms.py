@@ -30,10 +30,13 @@ class OutboundLineForm(BootstrapForm):
         label="商品", queryset=Product.objects.none(), required=False, empty_label="—"
     )
     quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3, min_value=0)
-    sale_unit_price = forms.DecimalField(label="销售单价(不含税)", required=False,
-                                         max_digits=18, decimal_places=2, min_value=0)
+    tax_inclusive_price = forms.DecimalField(label="含税单价", required=False,
+                                             max_digits=18, decimal_places=2, min_value=0)
     tax_rate = forms.DecimalField(label="税率", required=False, max_digits=5, decimal_places=4,
                                   min_value=0, max_value=1, initial=DEFAULT_TAX_RATE)
+    amount_taxed = forms.DecimalField(label="含税金额", required=False, max_digits=18, decimal_places=2, min_value=0)
+    amount_untaxed = forms.DecimalField(label="不含税金额", required=False, max_digits=18, decimal_places=2, min_value=0)
+    tax_amount = forms.DecimalField(label="税额", required=False, max_digits=18, decimal_places=2, min_value=0)
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -46,7 +49,10 @@ class OutboundLineForm(BootstrapForm):
         cleaned = super().clean()
         product = cleaned.get("product")
         qty = cleaned.get("quantity")
-        if not product and not qty and not cleaned.get("sale_unit_price"):
+        tip = cleaned.get("tax_inclusive_price")
+        untaxed = cleaned.get("amount_untaxed")
+        taxed = cleaned.get("amount_taxed")
+        if not product and not qty and tip is None and untaxed is None and taxed is None:
             cleaned["_empty"] = True
             return cleaned
         cleaned["_empty"] = False
@@ -54,6 +60,8 @@ class OutboundLineForm(BootstrapForm):
             self.add_error("product", "请选择商品")
         if qty is None or qty <= 0:
             self.add_error("quantity", "数量必须大于 0")
+        if tip is None and untaxed is None and taxed is None:
+            self.add_error("tax_inclusive_price", "请填写含税单价（或金额）")
         if cleaned.get("tax_rate") is None:
             cleaned["tax_rate"] = DEFAULT_TAX_RATE
         return cleaned
@@ -83,5 +91,5 @@ class BaseOutboundLineFormSet(forms.BaseFormSet):
 
 
 OutboundLineFormSet = forms.formset_factory(
-    OutboundLineForm, formset=BaseOutboundLineFormSet, extra=8
+    OutboundLineForm, formset=BaseOutboundLineFormSet, extra=3
 )

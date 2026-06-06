@@ -46,6 +46,38 @@ class InboundPostingTests(TestCase):
         self.assertEqual(nos, ["RK-C1-20260605-001", "RK-C1-20260605-002"])
 
 
+class TaxInclusivePriceTests(TestCase):
+    """含税单价录入：自动反算不含税/税额（M15）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+
+    def test_inbound_from_tax_inclusive_price(self):
+        from apps.purchasing.services import create_and_post_inbound
+        doc = create_and_post_inbound(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[{"product": self.p, "quantity": Decimal("10"),
+                    "tax_inclusive_price": Decimal("113"), "tax_rate": Decimal("0.13")}])
+        ln = doc.lines.first()
+        self.assertEqual(ln.amount_taxed, Decimal("1130.00"))
+        self.assertEqual(ln.amount_untaxed, Decimal("1000.00"))   # 1130/1.13
+        self.assertEqual(ln.tax_amount, Decimal("130.00"))
+        self.assertEqual(ln.amount, Decimal("1000.00"))           # 入库成本=不含税
+
+    def test_explicit_amounts_win(self):
+        from apps.purchasing.services import create_and_post_inbound
+        # 手工改了金额（含税单价仅作参考）→ 用显式金额
+        doc = create_and_post_inbound(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[{"product": self.p, "quantity": Decimal("10"), "tax_rate": Decimal("0.13"),
+                    "tax_inclusive_price": Decimal("113"),
+                    "amount_untaxed": Decimal("990"), "tax_amount": Decimal("128.70"),
+                    "amount_taxed": Decimal("1118.70")}])
+        ln = doc.lines.first()
+        self.assertEqual(ln.amount_untaxed, Decimal("990.00"))
+        self.assertEqual(ln.amount_taxed, Decimal("1118.70"))
+
+
 class InboundEditTests(TestCase):
     """采购入库修改（M14）：冲正重过账、保留单号、可改性守卫。"""
 

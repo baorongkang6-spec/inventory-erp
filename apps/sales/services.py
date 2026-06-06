@@ -50,13 +50,16 @@ def _apply_outbound_lines(doc, user, doc_date, lines, expenses, sales_type,
     company = doc.company
     total_qty = ZERO_QTY
     total_cost = total_untaxed = total_tax = total_taxed = ZERO_MONEY
+    from apps.purchasing.services import _line_amounts
     for ln in lines:
         quantity = round_qty(ln["quantity"])
-        sale_price = round_money(ln.get("sale_unit_price") or ZERO_MONEY)
         rate = ln.get("tax_rate", DEFAULT_TAX_RATE)
-        untaxed = round_money(quantity * sale_price)
-        tax = round_money(untaxed * rate)
-        taxed = round_money(untaxed + tax)
+        # 兼容旧入参 sale_unit_price（不含税单价）：当含税/金额都没给时按它算
+        if (ln.get("amount_untaxed") is None and ln.get("tax_inclusive_price") is None
+                and ln.get("sale_unit_price") is not None):
+            ln = {**ln, "unit_price": ln.get("sale_unit_price")}
+        untaxed, tax, taxed = _line_amounts(quantity, rate, ln)
+        sale_price = round_money(untaxed / quantity) if quantity else ZERO_MONEY
         move = post_outbound(
             company, ln["product"], quantity, date=doc_date,
             source_type="SalesOutbound", source_id=doc.pk, source_no=doc.doc_no,

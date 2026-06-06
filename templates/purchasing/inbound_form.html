@@ -1,55 +1,44 @@
 {% extends "base.html" %}
 {% block title %}采购入库 · 库存 ERP{% endblock %}
 {% block content %}
-<h4 class="mb-3">新建采购入库单<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<h4 class="mb-3">{{ title|default:"新建采购入库单" }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
 
-<form method="post">
+<form method="post" id="docform">
   {% csrf_token %}
-  {% if formset.non_form_errors %}
-  <div class="alert alert-danger">{{ formset.non_form_errors }}</div>
-  {% endif %}
+  {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
 
-  <div class="card mb-3">
-    <div class="card-body">
-      <div class="row g-3">
-        <div class="col-md-3">
-          <label class="form-label">{{ header.doc_date.label }}</label>
-          {{ header.doc_date }}
-          {% for e in header.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
-        </div>
-        <div class="col-md-2">
-          <label class="form-label">{{ header.purchase_type.label }}</label>
-          {{ header.purchase_type }}
-        </div>
-        <div class="col-md-4">
-          <label class="form-label">{{ header.supplier.label }}</label>
-          {{ header.supplier }}
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">{{ header.remark.label }}</label>
-          {{ header.remark }}
-        </div>
+  <div class="card mb-2">
+    <div class="card-body py-2">
+      <div class="row g-2">
+        <div class="col-md-3"><label class="form-label mb-0 small">{{ header.doc_date.label }}</label>
+          {{ header.doc_date }}{% for e in header.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-2"><label class="form-label mb-0 small">{{ header.purchase_type.label }}</label>{{ header.purchase_type }}</div>
+        <div class="col-md-4"><label class="form-label mb-0 small">{{ header.supplier.label }}</label>{{ header.supplier }}</div>
+        <div class="col-md-3"><label class="form-label mb-0 small">{{ header.remark.label }}</label>{{ header.remark }}</div>
       </div>
     </div>
   </div>
 
   {{ formset.management_form }}
-  <div class="card mb-3">
-    <div class="card-header">入库明细</div>
+  <div class="card mb-2">
+    <div class="card-header py-1">入库明细</div>
     <div class="table-responsive">
-      <table class="table mb-0 align-middle">
+      <table class="table table-sm mb-0 align-middle">
         <thead class="table-light">
-          <tr><th style="width:34%">商品</th><th>数量</th>
-              <th>不含税单价</th><th>税率</th><th></th></tr>
+          <tr><th style="width:24%">商品</th><th>数量</th><th>含税单价</th><th>税率</th>
+              <th>含税金额</th><th>不含税金额</th><th>税额</th><th></th></tr>
         </thead>
         <tbody>
           {% for form in formset %}
-          <tr>
+          <tr class="line-row">
             <td>{{ form.product }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-            <td>{{ form.unit_price }}{% for e in form.unit_price.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-            <td>{{ form.tax_rate }}{% for e in form.tax_rate.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-            <td class="text-muted small">第 {{ forloop.counter }} 行</td>
+            <td>{{ form.tax_inclusive_price }}{% for e in form.tax_inclusive_price.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.tax_rate }}</td>
+            <td>{{ form.amount_taxed }}</td>
+            <td>{{ form.amount_untaxed }}</td>
+            <td>{{ form.tax_amount }}</td>
+            <td class="text-muted small text-nowrap">第{{ forloop.counter }}行</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -58,10 +47,10 @@
   </div>
 
   {{ expenses_fs.management_form }}
-  <div class="card mb-3">
-    <div class="card-header">其他费用（计入成本的类别会按行金额分摊抬高入库成本）</div>
+  <div class="card mb-2">
+    <div class="card-header py-1">其他费用（计入成本的类别会按行金额分摊抬高入库成本）</div>
     <div class="table-responsive">
-      <table class="table mb-0 align-middle">
+      <table class="table table-sm mb-0 align-middle">
         <thead class="table-light"><tr><th style="width:50%">费用类别</th><th>金额</th></tr></thead>
         <tbody>
           {% for ef in expenses_fs %}
@@ -79,6 +68,9 @@
     <button type="submit" class="btn btn-primary">保存并过账</button>
     <a href="{% url 'inbound_list' %}" class="btn btn-outline-secondary">取消</a>
   </div>
-  <p class="text-muted small mt-2">未填商品的行将被忽略；保存后立即增加库存（移动加权平均），不可修改。</p>
+  <p class="text-muted small mt-2">含税金额/不含税金额/税额按 数量×含税单价÷税率 自动算出，可手工改；未填商品的行忽略。
+    需手工点「保存并过账」（回车不会保存）。保存后立即增减库存（移动加权）。</p>
 </form>
+
+{% include "_doc_form_calc.html" %}
 {% endblock %}

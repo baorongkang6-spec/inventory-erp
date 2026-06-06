@@ -84,4 +84,4 @@ class BaseExpenseFormSet(forms.BaseFormSet):
                 if f.cleaned_data and not f.cleaned_data.get("_empty")]
 
 
-ExpenseFormSet = forms.formset_factory(ExpenseLineForm, formset=BaseExpenseFormSet, extra=3)
+ExpenseFormSet = forms.formset_factory(ExpenseLineForm, formset=BaseExpenseFormSet, extra=1)

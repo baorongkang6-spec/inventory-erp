@@ -1,0 +1,35 @@
+{# 单据明细行：含税单价/数量/税率 → 自动算含税金额/不含税金额/税额；并阻止回车直接提交 #}
+<script>
+(function () {
+  function num(el) { return el ? (parseFloat(el.value) || 0) : 0; }
+  function q(row, suffix) { return row.querySelector('[name$="' + suffix + '"]'); }
+  function recalc(row) {
+    var qty = num(q(row, "-quantity"));
+    var tip = num(q(row, "-tax_inclusive_price"));
+    var rate = num(q(row, "-tax_rate"));
+    var taxed = qty * tip;
+    var untaxed = (1 + rate) ? taxed / (1 + rate) : taxed;
+    var tax = taxed - untaxed;
+    var et = q(row, "-amount_taxed"), eu = q(row, "-amount_untaxed"), ea = q(row, "-tax_amount");
+    if (et) et.value = taxed.toFixed(2);
+    if (eu) eu.value = untaxed.toFixed(2);
+    if (ea) ea.value = tax.toFixed(2);
+  }
+  document.querySelectorAll("tr.line-row").forEach(function (row) {
+    ["-quantity", "-tax_inclusive_price", "-tax_rate"].forEach(function (suf) {
+      var el = q(row, suf);
+      if (el) el.addEventListener("input", function () { recalc(row); });
+    });
+  });
+  // 回车不提交（除非焦点在提交按钮上）
+  var form = document.getElementById("docform");
+  if (form) {
+    form.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA"
+          && !(e.target.type === "submit" || e.target.tagName === "BUTTON")) {
+        e.preventDefault();
+      }
+    });
+  }
+})();
+</script>

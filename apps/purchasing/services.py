@@ -1,5 +1,7 @@
 """采购入库的创建与过账（一个事务内完成）。"""
 
+from decimal import Decimal
+
 from django.db import transaction
 
 from apps.core.docnum import next_doc_no
@@ -41,14 +43,41 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
     return doc
 
 
+def _line_amounts(qty, rate, ln):
+    """求一行的 (不含税金额, 税额, 含税金额)。优先级：
+    显式金额(amount_untaxed) > 含税单价(tax_inclusive_price) > 不含税单价(unit_price，镜像用)。
+    任何缺失的项按税率换算补齐；含税单价路径下 不含税=含税/(1+税率)。"""
+    one = Decimal(1)
+    if ln.get("amount_untaxed") is not None:
+        untaxed = round_money(ln["amount_untaxed"])
+        tax = round_money(ln["tax_amount"]) if ln.get("tax_amount") is not None \
+            else round_money(untaxed * rate)
+        taxed = round_money(ln["amount_taxed"]) if ln.get("amount_taxed") is not None \
+            else round_money(untaxed + tax)
+    elif ln.get("tax_inclusive_price") is not None:
+        taxed = round_money(qty * round_money(ln["tax_inclusive_price"]))
+        untaxed = round_money(taxed / (one + rate)) if (one + rate) else taxed
+        tax = round_money(taxed - untaxed)
+    else:
+        up = round_money(ln.get("unit_price") or ZERO_MONEY)
+        untaxed = round_money(qty * up)
+        tax = round_money(untaxed * rate)
+        taxed = round_money(untaxed + tax)
+    return untaxed, tax, taxed
+
+
 def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
                          supplier, borrow_counterparty):
     """把明细行过账到已存在的入库单 doc 上（创建/修改共用）。返回 (总数量, 入库成本合计)。"""
     company = doc.company
-    norm = [{"product": ln["product"], "quantity": round_qty(ln["quantity"]),
-             "unit_price": round_money(ln["unit_price"]),
-             "tax_rate": ln.get("tax_rate", DEFAULT_TAX_RATE)} for ln in lines]
-    base = [round_money(x["quantity"] * x["unit_price"]) for x in norm]
+    norm = []
+    for ln in lines:
+        qty = round_qty(ln["quantity"])
+        rate = ln.get("tax_rate", DEFAULT_TAX_RATE)
+        untaxed, tax, taxed = _line_amounts(qty, rate, ln)
+        norm.append({"product": ln["product"], "quantity": qty, "tax_rate": rate,
+                     "untaxed": untaxed, "tax": tax, "taxed": taxed})
+    base = [x["untaxed"] for x in norm]
     base_total = sum(base, ZERO_MONEY)
 
     # 计入成本的费用合计 → 按行基础金额比例分摊
@@ -71,24 +100,22 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
     total_amount = total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for x, b, fee in zip(norm, base, alloc):
         line_amount = round_money(b + fee)  # 入库成本（不含税 + 计入成本的费用分摊）
-        tax = round_money(b * x["tax_rate"])
-        taxed = round_money(b + tax)
         move = post_inbound(
-            company, x["product"], x["quantity"], x["unit_price"], amount=line_amount,
+            company, x["product"], x["quantity"], ZERO_MONEY, amount=line_amount,
             date=doc_date,
             source_type="PurchaseInbound", source_id=doc.pk, source_no=doc.doc_no,
         )
         PurchaseInboundLine.objects.create(
             inbound=doc, product=x["product"], quantity=x["quantity"],
             unit_price=move.unit_price, tax_rate=x["tax_rate"],
-            amount_untaxed=b, tax_amount=tax, amount_taxed=taxed,
+            amount_untaxed=b, tax_amount=x["tax"], amount_taxed=x["taxed"],
             amount=move.amount, stock_move=move,
         )
         total_qty = round_qty(total_qty + x["quantity"])
         total_amount = round_money(total_amount + move.amount)
         total_untaxed = round_money(total_untaxed + b)
-        total_tax = round_money(total_tax + tax)
-        total_taxed = round_money(total_taxed + taxed)
+        total_tax = round_money(total_tax + x["tax"])
+        total_taxed = round_money(total_taxed + x["taxed"])
 
     # 记录其他费用（含计入成本与期间费用）
     _record_expenses(company, user, doc, doc_date, expenses, kind="purchase")

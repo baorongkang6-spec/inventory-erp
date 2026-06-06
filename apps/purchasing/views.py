@@ -70,7 +70,7 @@ def inbound_create(request):
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [
                 {"product": cd["product"], "quantity": cd["quantity"],
-                 "unit_price": cd["unit_price"], "tax_rate": cd["tax_rate"]}
+                 "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"), "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed")}
                 for cd in formset.valid_lines
             ]
             expenses = [{"category": e["category"], "amount": e["amount"]}
@@ -126,7 +126,7 @@ def inbound_edit(request, pk):
         expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [{"product": cd["product"], "quantity": cd["quantity"],
-                      "unit_price": cd["unit_price"], "tax_rate": cd["tax_rate"]}
+                      "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"), "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed")}
                      for cd in formset.valid_lines]
             expenses = [{"category": e["category"], "amount": e["amount"]}
                         for e in expenses_fs.expense_lines]
@@ -146,9 +146,14 @@ def inbound_edit(request, pk):
         header = InboundHeaderForm(company=company, initial={
             "doc_date": doc.doc_date, "purchase_type": doc.purchase_type,
             "supplier": doc.supplier_id, "remark": doc.remark})
-        line_init = [{"product": ln.product_id, "quantity": ln.quantity,
-                      "unit_price": ln.unit_price, "tax_rate": ln.tax_rate}
-                     for ln in doc.lines.all()]
+        from decimal import Decimal
+        line_init = [{
+            "product": ln.product_id, "quantity": ln.quantity, "tax_rate": ln.tax_rate,
+            "tax_inclusive_price": (ln.amount_taxed / ln.quantity).quantize(Decimal("0.01"))
+                                   if ln.quantity else Decimal("0.00"),
+            "amount_untaxed": ln.amount_untaxed, "tax_amount": ln.tax_amount,
+            "amount_taxed": ln.amount_taxed,
+        } for ln in doc.lines.all()]
         formset = InboundLineFormSet(company=company, initial=line_init)
         from apps.finance.models import ExpenseEntry
         exp_init = [{"category": e.category_id, "amount": e.amount}
