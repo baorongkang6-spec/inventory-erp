@@ -107,7 +107,7 @@ def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
 # (key, 标签, 下钻报表 url 名)
 CATEGORIES = [
     ("bank", "银行存款", "bank_accounts_report"),
-    ("stock", "库存商品（金额）", "stock_report"),
+    ("stock", "库存商品（金额）", "stock_products_report"),
     ("payable", "供应商往来（应付）", "payables_report"),
     ("receivable", "客户往来（应收）", "receivables_report"),
     ("note_recv", "应收票据", "notes_balance_report"),
@@ -191,6 +191,39 @@ def bank_accounts_balance(company, dfrom, dto):
     return rows
 
 
+def stock_products_balance(company, dfrom, dto):
+    """某公司各库存商品在 [dfrom, dto] 的 期初/本期收入/本期发出/期末（金额+数量，带 product 对象）。
+
+    金额维度同总览（移动加权金额），同时给出数量便于下钻。当期无发生 期初=期末。
+    """
+    ZQ = Decimal("0.000")
+    moves = StockMove.objects.filter(company=company).select_related("product")
+    data = {}
+    for m in moves:
+        d = data.setdefault(m.product, {"opening": Z, "income": Z, "outgo": Z,
+                                        "open_qty": ZQ, "in_qty": ZQ, "out_qty": ZQ})
+        is_in = m.direction == StockMove.Direction.IN
+        if m.date < dfrom:
+            d["opening"] += m.amount if is_in else -m.amount
+            d["open_qty"] += m.quantity if is_in else -m.quantity
+        elif m.date <= dto:
+            if is_in:
+                d["income"] += m.amount
+                d["in_qty"] += m.quantity
+            else:
+                d["outgo"] += m.amount
+                d["out_qty"] += m.quantity
+    rows = []
+    for product, d in sorted(data.items(), key=lambda kv: kv[0].code):
+        rows.append({
+            "product": product,
+            "opening": d["opening"], "income": d["income"], "outgo": d["outgo"],
+            "ending": d["opening"] + d["income"] - d["outgo"],
+            "ending_qty": d["open_qty"] + d["in_qty"] - d["out_qty"],
+        })
+    return rows
+
+
 def account_balance_table(companies, dfrom, dto):
     """三公司明细账户余额：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
 
@@ -205,24 +238,11 @@ def account_balance_table(companies, dfrom, dto):
                               "outgo": r["outgo"], "ending": r["ending"]})
 
         # 库存：每商品（金额）
-        moves = StockMove.objects.filter(company=company).select_related("product")
-        prods = {}
-        for m in moves:
-            d = prods.setdefault(m.product, _pset())
-            amt = m.amount
-            signed_in = m.direction == StockMove.Direction.IN
-            if m.date < dfrom:
-                d["opening"] += amt if signed_in else -amt
-            elif m.date <= dto:
-                if signed_in:
-                    d["income"] += amt
-                else:
-                    d["outgo"] += amt
-        for prod, d in sorted(prods.items(), key=lambda kv: kv[0].code):
-            ending = d["opening"] + d["income"] - d["outgo"]
-            stock_rows.append({"company": company, "name": f"{prod.code} {prod.name}",
-                               "opening": d["opening"], "income": d["income"],
-                               "outgo": d["outgo"], "ending": ending})
+        for r in stock_products_balance(company, dfrom, dto):
+            stock_rows.append({"company": company,
+                               "name": f"{r['product'].code} {r['product'].name}",
+                               "opening": r["opening"], "income": r["income"],
+                               "outgo": r["outgo"], "ending": r["ending"]})
 
         # 应付：每供应商
         ap_rows += _partner_rows(

@@ -152,6 +152,53 @@ class MovingAverageTests(TestCase):
         )
 
 
+class StockDrilldownTests(TestCase):
+    """库存两级下钻（M9-1）：商品余额表 + 商品明细账（带日期区间与期初/期末）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from datetime import date
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        post_inbound(cls.c1, cls.p, D("100"), D("10"), date=date(2026, 5, 20))  # 期初前
+        post_inbound(cls.c1, cls.p, D("50"), D("10"), date=date(2026, 6, 10))   # 本期入 500
+        post_outbound(cls.c1, cls.p, D("30"), date=date(2026, 6, 15))           # 本期出 300
+
+    def test_products_balance(self):
+        from datetime import date
+        from apps.opening.reports import stock_products_balance
+        rows = stock_products_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        r = rows[0]
+        self.assertEqual(r["opening"], D("1000.00"))   # 100@10
+        self.assertEqual(r["income"], D("500.00"))     # 50@10
+        self.assertEqual(r["outgo"], D("300.00"))      # 30@10
+        self.assertEqual(r["ending"], D("1200.00"))
+        self.assertEqual(r["ending_qty"], D("120.000"))
+
+    def test_ledger_opening_closing_and_empty_period(self):
+        from datetime import date
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        u = U.objects.create_user(username="v", password="x", can_view_all_companies=True)
+        for code in ("view_stockbalance", "view_amount"):
+            u.user_permissions.add(Permission.objects.get(
+                content_type__app_label="inventory", codename=code))
+        self.client.force_login(u)
+        # 本期：期初结存 100/1000，期末 120/1200
+        r = self.client.get(f"/inventory/ledger/?product={self.p.pk}&from=2026-06-01&to=2026-06-30",
+                            SERVER_NAME="localhost")
+        self.assertEqual(r.context["open_qty"], D("100.000"))
+        self.assertEqual(r.context["close_qty"], D("120.000"))
+        self.assertEqual(r.context["close_amount"], D("1200.00"))
+        # 未来空区间：无流水，期初=期末=120/1200
+        r2 = self.client.get(f"/inventory/ledger/?product={self.p.pk}&from=2099-01-01&to=2099-12-31",
+                            SERVER_NAME="localhost")
+        self.assertEqual(len(r2.context["rows"]), 0)
+        self.assertEqual(r2.context["open_qty"], r2.context["close_qty"])
+        self.assertEqual(r2.context["close_qty"], D("120.000"))
+
+
 class StockMoveDateTests(TestCase):
     @classmethod
     def setUpTestData(cls):
