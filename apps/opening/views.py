@@ -13,6 +13,14 @@ from .imports import IMPORTERS, TEMPLATES, build_template
 from .models import ReconciliationLine, ReconciliationRun
 from .reports import overview_table, recon_lines
 
+
+def _parse_date(s):
+    from datetime import datetime
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -64,13 +72,19 @@ def _is_overview(user):
 
 @login_required
 def overview(request):
-    """总经理/出纳跨公司总览表（SPEC §9.1）。"""
+    """总经理/出纳跨公司总览表（SPEC §9.1 / M7-4：可选日期区间，默认月初~今天）。"""
     if not _is_overview(request.user):
         raise PermissionDenied("仅总经理/出纳可查看跨公司总览表")
+    from django.utils import timezone
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
     companies = list(get_visible_companies(request.user))
-    blocks = overview_table(companies)
-    return render(request, "opening/overview.html",
-                  {"companies": companies, "blocks": blocks})
+    blocks = overview_table(companies, dfrom, dto)
+    return render(request, "opening/overview.html", {
+        "companies": companies, "blocks": blocks,
+        "date_from": dfrom, "date_to": dto,
+    })
 
 
 # ============================= 月底对账（M5-3）================================

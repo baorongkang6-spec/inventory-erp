@@ -2,7 +2,15 @@
 {% block title %}跨公司总览表 · 库存 ERP{% endblock %}
 {% block content %}
 <h4 class="mb-1">跨公司总览表</h4>
-<p class="text-muted">口径：期初（启用日）+ 本期收入 − 本期发出 = 期末结存；金额单位元。</p>
+<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末结存；金额单位元。默认月初~今天。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-auto"><label class="form-label">期初日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">期末日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
 
 {% for b in blocks %}
 <div class="card mb-4">

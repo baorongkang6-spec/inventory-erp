@@ -98,21 +98,27 @@ class OverviewReportTests(TestCase):
         from apps.finance.services import allocate_payment
         allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("500")}])
 
-    def test_overview_reconciles(self):
+    def test_overview_reconciles_full_range(self):
+        from datetime import date
         from apps.opening.reports import company_overview
-        ov = company_overview(self.c1)
+        ov = company_overview(self.c1, date(2026, 1, 1), date(2030, 1, 1))  # 覆盖全部
         for key in ("bank", "stock", "payable", "receivable", "note_recv"):
             r = ov[key]
             self.assertEqual(r["opening"] + r["income"] - r["outgo"], r["ending"],
                              f"{key} 四列不勾稽")
-        # 库存：期初500 + 入1000 - 出300 = 期末1200
-        self.assertEqual(ov["stock"]["opening"], Decimal("500.00"))
+        # 期末与区间无关：库存1200、银行500、应付2630
         self.assertEqual(ov["stock"]["ending"], Decimal("1200.00"))
-        # 银行：期初1000 - 付款500 = 期末500
         self.assertEqual(ov["bank"]["ending"], Decimal("500.00"))
-        # 应付：期初2000 + 1130 - 500核销 = 期末2630
-        self.assertEqual(ov["payable"]["opening"], Decimal("2000.00"))
         self.assertEqual(ov["payable"]["ending"], Decimal("2630.00"))
+
+    def test_future_range_moves_all_to_opening(self):
+        from datetime import date
+        from apps.opening.reports import company_overview
+        ov = company_overview(self.c1, date(2030, 1, 1), date(2030, 12, 31))  # 全在区间前
+        # 区间内无活动 → 收入/发出为0，期初=期末
+        self.assertEqual(ov["stock"]["income"], Decimal("0.00"))
+        self.assertEqual(ov["stock"]["outgo"], Decimal("0.00"))
+        self.assertEqual(ov["stock"]["opening"], ov["stock"]["ending"])
 
 
 class ReconciliationTests(TestCase):

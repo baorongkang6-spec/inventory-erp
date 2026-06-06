@@ -1,9 +1,11 @@
-"""总经理跨公司总览表聚合（M5-2，SPEC §9.1）。
+"""总经理跨公司总览表聚合（M5-2 / M7-4，SPEC §9.1）。
 
-每项含 期初 / 本期收入 / 本期发出 / 期末结存。
-口径：期初 = 期初标记数据（is_opening / source=Opening）；本期 = 全部非期初活动
-（系统自启用日起仅一个区间）；期末 = 当前余额。四列满足 期初+收入-发出=期末。
-金额维度汇总（库存数量异构不跨商品相加，明细见库存报表）。
+每项含 期初 / 本期收入 / 本期发出 / 期末结存，按业务日期区间 [dfrom, dto] 统计：
+- 期初 = 区间起始日之前的累计净额（含期初导入数据，它们日期=启用日）；
+- 本期收入/发出 = 区间内的增减；
+- 期末 = 期初 + 本期收入 − 本期发出。
+全按业务日期口径（银行日记账 date、库存流水 date、发票 doc_date、票据 draw_date、
+核销按 created_at 日期）。金额维度汇总（库存数量异构不跨商品相加）。
 """
 
 from decimal import Decimal
@@ -13,8 +15,12 @@ from django.db.models import Sum
 from apps.finance.models import (
     BankAccount,
     BankJournal,
+    NotePayable,
     NoteReceivable,
+    NoteSettlement,
+    PaymentAllocation,
     PurchaseInvoice,
+    ReceiptAllocation,
     SalesInvoice,
 )
 from apps.inventory.models import StockBalance, StockMove
@@ -26,51 +32,76 @@ def _s(qs, field="amount"):
     return qs.aggregate(v=Sum(field))["v"] or Z
 
 
+def _before(qs, dfield, dfrom, field="amount"):
+    return _s(qs.filter(**{f"{dfield}__lt": dfrom}), field)
+
+
+def _in(qs, dfield, dfrom, dto, field="amount"):
+    return _s(qs.filter(**{f"{dfield}__gte": dfrom, f"{dfield}__lte": dto}), field)
+
+
 def _row(opening, income, outgo, ending):
     return {"opening": opening, "income": income, "outgo": outgo, "ending": ending}
 
 
-def company_overview(company):
-    """返回 dict：5 类各自 {opening, income, outgo, ending}。"""
-    # 银行存款
-    bank_open = BankAccount.objects.filter(company=company).aggregate(v=Sum("opening_balance"))["v"] or Z
-    bank_in = _s(BankJournal.objects.filter(company=company, direction=BankJournal.Direction.IN))
-    bank_out = _s(BankJournal.objects.filter(company=company, direction=BankJournal.Direction.OUT))
-    bank = _row(bank_open, bank_in, bank_out, bank_open + bank_in - bank_out)
+def _period(inc_qs, dec_qs, inc_dfield, dec_dfield, dfrom, dto, inc_field="amount", dec_field="amount"):
+    """通用：按日期把增/减拆成 期初(区间前净)/本期增/本期减/期末。"""
+    opening = _before(inc_qs, inc_dfield, dfrom, inc_field) - _before(dec_qs, dec_dfield, dfrom, dec_field)
+    income = _in(inc_qs, inc_dfield, dfrom, dto, inc_field)
+    outgo = _in(dec_qs, dec_dfield, dfrom, dto, dec_field)
+    return _row(opening, income, outgo, opening + income - outgo)
 
-    # 库存商品（金额）
+
+def company_overview(company, dfrom, dto):
+    """返回 dict：5 类各自 {opening, income, outgo, ending}，按 [dfrom,dto] 统计。"""
+    # 银行存款（期初余额 + 区间前日记账净额 = 期初）
+    bank_open0 = BankAccount.objects.filter(company=company).aggregate(v=Sum("opening_balance"))["v"] or Z
+    bj = BankJournal.objects.filter(company=company)
+    bj_in, bj_out = bj.filter(direction=BankJournal.Direction.IN), bj.filter(direction=BankJournal.Direction.OUT)
+    b = _period(bj_in, bj_out, "date", "date", dfrom, dto)
+    b["opening"] += bank_open0
+    b["ending"] += bank_open0
+    bank = b
+
+    # 库存商品（金额）：IN/OUT 流水按 date
     moves = StockMove.objects.filter(company=company)
-    st_open = _s(moves.filter(direction=StockMove.Direction.IN, source_type="Opening"))
-    st_in = _s(moves.filter(direction=StockMove.Direction.IN).exclude(source_type="Opening"))
-    st_out = _s(moves.filter(direction=StockMove.Direction.OUT))
-    st_end = StockBalance.objects.filter(company=company).aggregate(v=Sum("amount"))["v"] or Z
-    stock = _row(st_open, st_in, st_out, st_end)
+    stock = _period(moves.filter(direction=StockMove.Direction.IN),
+                    moves.filter(direction=StockMove.Direction.OUT), "date", "date", dfrom, dto)
 
-    # 供应商往来（应付）
-    ap = PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
-    ap_open = _s(ap.filter(is_opening=True), "amount_taxed")
-    ap_add = _s(ap.filter(is_opening=False), "amount_taxed")
-    ap_reduce = _s(ap, "settled_amount")
-    payable = _row(ap_open, ap_add, ap_reduce, ap_open + ap_add - ap_reduce)
+    # 供应商往来（应付）：增=采购发票(doc_date,含税)；减=付款核销+票据抵付(created_at)
+    ap_inv = PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
+    ap_pay = PaymentAllocation.objects.filter(payment__company=company)
+    ap_note = NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
+    payable = _merge_period(ap_inv, "doc_date", "amount_taxed",
+                            [(ap_pay, "created_at__date"), (ap_note, "created_at__date")], dfrom, dto)
 
-    # 客户往来（应收）
-    ar = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
-    ar_open = _s(ar.filter(is_opening=True), "amount_taxed")
-    ar_add = _s(ar.filter(is_opening=False), "amount_taxed")
-    ar_reduce = _s(ar, "settled_amount")
-    receivable = _row(ar_open, ar_add, ar_reduce, ar_open + ar_add - ar_reduce)
+    # 客户往来（应收）：增=销售发票；减=收款核销+应收票据冲应收
+    ar_inv = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
+    ar_rec = ReceiptAllocation.objects.filter(receipt__company=company)
+    ar_note = NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES,
+                                            is_endorsement=False)
+    receivable = _merge_period(ar_inv, "doc_date", "amount_taxed",
+                               [(ar_rec, "created_at__date"), (ar_note, "created_at__date")], dfrom, dto)
 
-    # 应收票据
+    # 应收票据：增=票据(draw_date)；减=票据使用(冲应收/背书，note_kind=ar_note)
     nr = NoteReceivable.objects.filter(company=company).exclude(status=NoteReceivable.Status.VOID)
-    nr_open = _s(nr.filter(is_opening=True))
-    nr_add = _s(nr.filter(is_opening=False))
-    nr_reduce = _s(nr, "settled_amount")
-    note_recv = _row(nr_open, nr_add, nr_reduce, nr_open + nr_add - nr_reduce)
+    nr_use = NoteSettlement.objects.filter(company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE)
+    note_recv = _merge_period(nr, "draw_date", "amount",
+                              [(nr_use, "created_at__date")], dfrom, dto)
 
-    return {
-        "bank": bank, "stock": stock, "payable": payable,
-        "receivable": receivable, "note_recv": note_recv,
-    }
+    return {"bank": bank, "stock": stock, "payable": payable,
+            "receivable": receivable, "note_recv": note_recv}
+
+
+def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
+    """增项一个 qs，减项可多个 (qs, dfield) 求和。"""
+    opening = _before(inc_qs, inc_dfield, dfrom, inc_field)
+    income = _in(inc_qs, inc_dfield, dfrom, dto, inc_field)
+    outgo = Z
+    for qs, dfield in dec_specs:
+        opening -= _before(qs, dfield, dfrom)
+        outgo += _in(qs, dfield, dfrom, dto)
+    return _row(opening, income, outgo, opening + income - outgo)
 
 
 CATEGORIES = [
@@ -82,9 +113,9 @@ CATEGORIES = [
 ]
 
 
-def overview_table(companies):
+def overview_table(companies, dfrom, dto):
     """组织成模板友好结构：每类一张表，行=各公司+合计。"""
-    per = {c.pk: company_overview(c) for c in companies}
+    per = {c.pk: company_overview(c, dfrom, dto) for c in companies}
     blocks = []
     for key, label in CATEGORIES:
         rows = []
