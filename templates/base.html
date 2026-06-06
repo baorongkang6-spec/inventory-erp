@@ -20,51 +20,64 @@
         {% if is_overview %}
         <li class="nav-item"><a class="nav-link" href="{% url 'overview_report' %}">总览表</a></li>
         {% endif %}
-        {% if menu.products %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'product_list' %}">商品</a></li>
-        {% endif %}
-        {% if menu.customers %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'customer_list' %}">客户</a></li>
-        {% endif %}
-        {% if menu.suppliers %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'supplier_list' %}">供应商</a></li>
-        {% endif %}
-        {% if perms.masterdata.view_expensecategory %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'expensecategory_list' %}">费用类别</a></li>
-        {% endif %}
-        {% if perms.purchasing.view_purchaseinbound %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'inbound_list' %}">采购入库</a></li>
-        {% endif %}
-        {% if perms.sales.view_salesoutbound %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'outbound_list' %}">销售出库</a></li>
-        {% endif %}
-        {% if perms.inventory.view_stockbalance %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
-        {% endif %}
-        {% if perms.finance.view_purchaseinvoice %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'purchase_invoice_list' %}">采购发票</a></li>
-        {% endif %}
-        {% if perms.finance.view_payment %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'payment_list' %}">付款</a></li>
-        {% endif %}
-        {% if perms.finance.view_salesinvoice %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'sales_invoice_list' %}">销售发票</a></li>
-        {% endif %}
-        {% if perms.finance.view_receipt %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'receipt_list' %}">收款</a></li>
-        {% endif %}
-        {% if perms.finance.view_notereceivable or perms.finance.view_notepayable %}
+
+        {# 基础资料：商品/客户/供应商/费用类别/银行账户（都是维护型增删改）#}
+        {% if menu.products or menu.customers or menu.suppliers or perms.masterdata.view_expensecategory or perms.finance.view_bankaccount %}
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">票据</a>
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">基础资料</a>
           <ul class="dropdown-menu">
-            {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'note_receivable_list' %}">应收票据</a></li>{% endif %}
-            {% if perms.finance.view_notepayable %}<li><a class="dropdown-item" href="{% url 'note_payable_list' %}">应付票据</a></li>{% endif %}
+            {% if menu.products %}<li><a class="dropdown-item" href="{% url 'product_list' %}">商品</a></li>{% endif %}
+            {% if menu.customers %}<li><a class="dropdown-item" href="{% url 'customer_list' %}">客户</a></li>{% endif %}
+            {% if menu.suppliers %}<li><a class="dropdown-item" href="{% url 'supplier_list' %}">供应商</a></li>{% endif %}
+            {% if perms.masterdata.view_expensecategory %}<li><a class="dropdown-item" href="{% url 'expensecategory_list' %}">费用类别</a></li>{% endif %}
+            {% if perms.finance.view_bankaccount %}<li><a class="dropdown-item" href="{% url 'bankaccount_list' %}">银行账户</a></li>{% endif %}
           </ul>
         </li>
         {% endif %}
-        {% if perms.finance.view_bankaccount %}
-        <li class="nav-item"><a class="nav-link" href="{% url 'bankaccount_list' %}">银行账户</a></li>
+
+        {# 采购：入库 → 发票 → 付款 #}
+        {% if perms.purchasing.view_purchaseinbound or perms.finance.view_purchaseinvoice or perms.finance.view_payment %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">采购</a>
+          <ul class="dropdown-menu">
+            {% if perms.purchasing.view_purchaseinbound %}<li><a class="dropdown-item" href="{% url 'inbound_list' %}">采购入库</a></li>{% endif %}
+            {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'purchase_invoice_list' %}">采购发票</a></li>{% endif %}
+            {% if perms.finance.view_payment %}<li><a class="dropdown-item" href="{% url 'payment_list' %}">付款</a></li>{% endif %}
+          </ul>
+        </li>
         {% endif %}
+
+        {# 销售：出库 → 发票 → 收款 #}
+        {% if perms.sales.view_salesoutbound or perms.finance.view_salesinvoice or perms.finance.view_receipt %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">销售</a>
+          <ul class="dropdown-menu">
+            {% if perms.sales.view_salesoutbound %}<li><a class="dropdown-item" href="{% url 'outbound_list' %}">销售出库</a></li>{% endif %}
+            {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_invoice_list' %}">销售发票</a></li>{% endif %}
+            {% if perms.finance.view_receipt %}<li><a class="dropdown-item" href="{% url 'receipt_list' %}">收款</a></li>{% endif %}
+          </ul>
+        </li>
+        {% endif %}
+
+        {% if perms.inventory.view_stockbalance %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
+        {% endif %}
+
+        {# 资金：其他收支登记 + 票据 #}
+        {% if perms.finance.add_bankjournal or perms.finance.view_notereceivable or perms.finance.view_notepayable %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">资金</a>
+          <ul class="dropdown-menu">
+            {% if perms.finance.add_bankjournal %}<li><a class="dropdown-item" href="{% url 'other_cashflow_create' %}">其他收支登记</a></li>{% endif %}
+            {% if perms.finance.view_notereceivable or perms.finance.view_notepayable %}
+            {% if perms.finance.add_bankjournal %}<li><hr class="dropdown-divider"></li>{% endif %}
+            {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'note_receivable_list' %}">应收票据</a></li>{% endif %}
+            {% if perms.finance.view_notepayable %}<li><a class="dropdown-item" href="{% url 'note_payable_list' %}">应付票据</a></li>{% endif %}
+            {% endif %}
+          </ul>
+        </li>
+        {% endif %}
+
         {% if perms.finance.view_bankjournal or perms.finance.view_purchaseinvoice or perms.finance.view_salesinvoice %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">报表</a>
