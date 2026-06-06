@@ -42,6 +42,8 @@ urlpatterns = [
     path("reports/payable-ledger/", views.payable_partner_ledger, name="payable_partner_ledger"),
     path("reports/receivable-partners/", views.receivable_partners_report, name="receivable_partners_report"),
     path("reports/receivable-ledger/", views.receivable_partner_ledger, name="receivable_partner_ledger"),
+    path("reports/receivable-notes/", views.receivable_notes_report, name="receivable_notes_report"),
+    path("reports/receivable-note-ledger/", views.receivable_note_ledger, name="receivable_note_ledger"),
     # 票据（M3）
     path("notes-receivable/", views.NoteReceivableListView.as_view(), name="note_receivable_list"),
     path("notes-receivable/new/", views.note_receivable_create, name="note_receivable_create"),

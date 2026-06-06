@@ -685,6 +685,55 @@ def receivable_partner_ledger(request):
     return _partner_ledger_page(request, "receivable")
 
 
+# ===== 应收票据余额表 + 票据使用明细（M9-4，总览应收票据两级下钻）==============
+@login_required
+@permission_required("finance.view_notereceivable", raise_exception=True)
+def receivable_notes_report(request):
+    """应收票据余额表：公司各票据 期初/本期出票/本期使用/期末（未用额），可下钻使用明细。"""
+    from apps.opening.reports import receivable_notes_balance
+    company = resolve_company(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    rows = receivable_notes_balance(company, dfrom, dto) if company else []
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("opening", "income", "outgo", "ending")}
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["票据单号", "票据号", "出票日", "期初未用", "本期出票", "本期使用", "期末未用"]
+        data = [[r["note"].doc_no, r["note"].note_no, r["note"].draw_date,
+                 r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
+        return xlsx_response(f"应收票据余额表_{dfrom}_{dto}", headers, data)
+    return render(request, "finance/receivable_notes_report.html", {
+        "rows": rows, "totals": totals, "active_company": company,
+        "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", "")})
+
+
+@login_required
+@permission_required("finance.view_notereceivable", raise_exception=True)
+def receivable_note_ledger(request):
+    """应收票据使用明细：出票(增) / 冲应收·背书抵应付(减) 滚动未用额。"""
+    from apps.opening.reports import note_ledger
+    from .models import NoteReceivable
+    company = resolve_company(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    note = get_object_or_404(NoteReceivable, pk=request.GET.get("note"), company=company)
+    data = note_ledger(company, note, dfrom, dto)
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["日期", "类型", "对应发票", "增加", "减少", "未用余额"]
+        rows = [["期初未用", "", "", "", "", data["opening"]]]
+        rows += [[e["date"], e["kind"], e["doc_no"], e["inc"] or "", e["dec"] or "", e["balance"]]
+                 for e in data["rows"]]
+        rows.append(["期末未用", "", "", data["income"], data["outgo"], data["ending"]])
+        return xlsx_response(f"应收票据使用明细_{note.doc_no}_{dfrom}_{dto}", headers, rows)
+    return render(request, "finance/receivable_note_ledger.html", {
+        "note": note, "data": data, "active_company": company,
+        "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", "")})
+
+
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_export(request):

@@ -523,6 +523,43 @@ class PartnerDrilldownTests(TestCase):
         self.assertEqual(d["ending"], Decimal("630.00"))
 
 
+class NoteDrilldownTests(TestCase):
+    """应收票据两级下钻（M9-4）：票据余额表 + 使用明细。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.finance.services import (
+            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+        )
+        from apps.masterdata.models import Customer
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="C9", name="客户甲")
+        # 6/5 出票 1000；6/20 用 600 冲一张销售发票
+        cls.note = create_note_receivable(company=cls.c1, user=None, draw_date=date(2026, 6, 5),
+                                          amount=Decimal("1000"), customer=cls.cust, note_no="BD001")
+        inv = create_sales_invoice(company=cls.c1, user=None, doc_date=date(2026, 6, 18),
+            customer=cls.cust, lines=[{"product": None, "description": "货",
+                                       "amount_untaxed": Decimal("600"), "tax_rate": Decimal("0")}])
+        settle_receivable_against_sales(note=cls.note,
+                                        allocations=[{"invoice": inv, "amount": Decimal("600")}])
+
+    def test_notes_balance(self):
+        from apps.opening.reports import receivable_notes_balance
+        rows = receivable_notes_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        r = rows[0]
+        self.assertEqual(r["opening"], Decimal("0.00"))
+        self.assertEqual(r["income"], Decimal("1000.00"))  # 本期出票
+        self.assertEqual(r["outgo"], Decimal("600.00"))    # 本期使用
+        self.assertEqual(r["ending"], Decimal("400.00"))   # 未用
+
+    def test_note_ledger(self):
+        from apps.opening.reports import note_ledger
+        d = note_ledger(self.c1, self.note, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(len(d["rows"]), 2)               # 出票 + 冲应收
+        self.assertEqual(d["ending"], Decimal("400.00"))
+        self.assertEqual(d["rows"][-1]["balance"], Decimal("400.00"))
+
+
 class BankAccountsReportTests(TestCase):
     """银行存款分户余额表（总览下钻第一层）。"""
 

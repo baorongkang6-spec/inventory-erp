@@ -110,7 +110,7 @@ CATEGORIES = [
     ("stock", "库存商品（金额）", "stock_products_report"),
     ("payable", "供应商往来（应付）", "payable_partners_report"),
     ("receivable", "客户往来（应收）", "receivable_partners_report"),
-    ("note_recv", "应收票据", "notes_balance_report"),
+    ("note_recv", "应收票据", "receivable_notes_report"),
 ]
 
 
@@ -379,6 +379,61 @@ def partner_ledger(company, partner, kind, dfrom, dto):
         events.append({"date": ns.created_at.date(), "kind": "票据抵付", "doc_no": ns.note_no,
                        "inc": Z, "dec": ns.amount})
 
+    opening = Z
+    period = []
+    for e in events:
+        if e["date"] < dfrom:
+            opening += e["inc"] - e["dec"]
+        elif e["date"] <= dto:
+            period.append(e)
+    period.sort(key=lambda e: (e["date"], 0 if e["inc"] else 1))
+    bal, income, outgo, rows = opening, Z, Z, []
+    for e in period:
+        bal += e["inc"] - e["dec"]
+        income += e["inc"]
+        outgo += e["dec"]
+        rows.append({**e, "balance": bal})
+    return {"opening": opening, "rows": rows, "income": income, "outgo": outgo,
+            "ending": opening + income - outgo}
+
+
+def receivable_notes_balance(company, dfrom, dto):
+    """某公司各应收票据 期初/本期增(出票)/本期减(使用)/期末（未用额，带 note 对象，供下钻）。"""
+    notes = NoteReceivable.objects.filter(company=company).exclude(
+        status=NoteReceivable.Status.VOID).order_by("doc_no")
+    sett = {}
+    for s in NoteSettlement.objects.filter(company=company,
+                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE):
+        sett.setdefault(s.note_id, []).append(s)
+    rows = []
+    for n in notes:
+        opening = income = outgo = Z
+        if n.draw_date < dfrom:
+            opening += n.amount
+        elif n.draw_date <= dto:
+            income += n.amount
+        for s in sett.get(n.pk, []):
+            sd = s.created_at.date()
+            if sd < dfrom:
+                opening -= s.amount
+            elif sd <= dto:
+                outgo += s.amount
+        ending = opening + income - outgo
+        if opening or income or outgo or ending:
+            rows.append({"note": n, "opening": opening, "income": income,
+                         "outgo": outgo, "ending": ending})
+    return rows
+
+
+def note_ledger(company, note, dfrom, dto):
+    """应收票据使用明细：出票(增) + 使用(冲应收/背书抵应付，减) 按时间滚动未用额。"""
+    events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
+               "inc": note.amount, "dec": Z}]
+    for s in NoteSettlement.objects.filter(company=company, note_id=note.pk,
+                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE):
+        events.append({"date": s.created_at.date(),
+                       "kind": "背书抵应付" if s.is_endorsement else "冲应收",
+                       "doc_no": s.invoice_no, "inc": Z, "dec": s.amount})
     opening = Z
     period = []
     for e in events:
