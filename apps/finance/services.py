@@ -415,3 +415,44 @@ def create_opening_receivable(*, company, user, customer, amount, doc_date) -> S
     AuditLog.record(actor=user, company=company, action=AuditLog.Action.CREATE, target=inv,
                     summary=f"期初应收 {customer} {amount}")
     return inv
+
+
+# ============================= 其他收支登记（M8-2）===========================
+@transaction.atomic
+def create_other_cashflow(*, company, user, doc_date, bank_account, direction, amount,
+                          entry_type, counterparty="", summary="", txn_no=""):
+    """手工登记非往来收支（费用/税费/工资/内部划转/其他），直接生成一条银行存款日记账。
+
+    与付款/收款不同：不挂应收/应付，不参与核销。entry_type 不允许「往来结算」
+    （那应走付款/收款登记）。
+    """
+    if amount is None or amount <= ZERO_MONEY:
+        raise SettlementError("金额必须大于 0")
+    if entry_type == BankJournal.EntryType.SETTLEMENT:
+        raise SettlementError("往来结算请走付款/收款登记")
+
+    journal = BankJournal.objects.create(
+        company=company, created_by=user, bank_account=bank_account, date=doc_date,
+        direction=direction, amount=round_money(amount), entry_type=entry_type,
+        counterparty=counterparty, summary=summary, txn_no=txn_no,
+        source_type="Other",
+    )
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.CREATE, target=journal,
+        summary=f"其他收支登记 {journal.get_entry_type_display()} "
+                f"{journal.get_direction_display()} {journal.amount}",
+    )
+    return journal
+
+
+@transaction.atomic
+def delete_other_cashflow(*, journal, user):
+    """删除手工登记的其他收支日记账（仅限 source_type=Other，往来/系统生成的不可删）。"""
+    if journal.source_type != "Other":
+        raise SettlementError("仅可删除手工登记的其他收支；往来收付请到对应单据作废")
+    company, summary = journal.company, str(journal)
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.DELETE, target=journal,
+        summary=f"删除其他收支 {summary}",
+    )
+    journal.delete()

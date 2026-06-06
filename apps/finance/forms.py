@@ -6,7 +6,40 @@ from apps.core.forms import BootstrapForm, CompanyScopedModelForm
 from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Customer, Product, Supplier
 
-from .models import BankAccount, NotePayable, NoteReceivable, Payment, Receipt
+from .models import BankAccount, BankJournal, NotePayable, NoteReceivable, Payment, Receipt
+
+
+class OtherCashflowForm(forms.Form):
+    """其他收支登记（M8-2）：非往来的银行收/支，直接成日记账。"""
+
+    doc_date = forms.DateField(label="日期",
+                               widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"))
+    bank_account = forms.ModelChoiceField(label="银行账户", queryset=BankAccount.objects.none())
+    direction = forms.ChoiceField(label="方向", choices=BankJournal.Direction.choices)
+    # 排除「往来结算」——那应走付款/收款登记
+    entry_type = forms.ChoiceField(
+        label="业务类型",
+        choices=[c for c in BankJournal.EntryType.choices
+                 if c[0] != BankJournal.EntryType.SETTLEMENT])
+    amount = forms.DecimalField(label="金额", max_digits=18, decimal_places=2, min_value=0)
+    counterparty = forms.CharField(label="对方单位", max_length=128, required=False)
+    summary = forms.CharField(label="摘要", max_length=255, required=False)
+    txn_no = forms.CharField(label="交易流水号", max_length=64, required=False)
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["bank_account"].queryset = BankAccount.objects.filter(
+                company=company, is_active=True)
+        for name, field in self.fields.items():
+            w = field.widget
+            w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount is None or amount <= 0:
+            raise forms.ValidationError("金额必须大于 0")
+        return amount
 
 
 class BankAccountForm(CompanyScopedModelForm):

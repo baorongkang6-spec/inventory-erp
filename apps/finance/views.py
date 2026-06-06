@@ -692,6 +692,60 @@ def bank_journal_import(request):
 
 @login_required
 @permission_required("finance.add_bankjournal", raise_exception=True)
+def other_cashflow_create(request):
+    """其他收支登记：手工录非往来银行收/支，生成日记账。"""
+    from .forms import OtherCashflowForm
+    from .services import SettlementError, create_other_cashflow
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+
+    if request.method == "POST":
+        form = OtherCashflowForm(request.POST, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            try:
+                j = create_other_cashflow(
+                    company=company, user=request.user, doc_date=cd["doc_date"],
+                    bank_account=cd["bank_account"], direction=cd["direction"],
+                    amount=cd["amount"], entry_type=cd["entry_type"],
+                    counterparty=cd.get("counterparty", ""), summary=cd.get("summary", ""),
+                    txn_no=cd.get("txn_no", ""))
+            except SettlementError as e:
+                messages.error(request, str(e))
+            else:
+                messages.success(request, f"其他收支已登记：{j.get_entry_type_display()} {j.amount}")
+                return redirect(f"{reverse_lazy('bank_journal_report')}?account={j.bank_account_id}")
+    else:
+        form = OtherCashflowForm(company=company, initial={"doc_date": timezone.localdate()})
+    return render(request, "finance/other_cashflow_form.html", {"form": form, "title": "其他收支登记"})
+
+
+@login_required
+@permission_required("finance.delete_bankjournal", raise_exception=True)
+def other_cashflow_delete(request, pk):
+    """删除手工登记的其他收支（仅 source_type=Other）。"""
+    from .services import SettlementError, delete_other_cashflow
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    journal = get_object_or_404(BankJournal, pk=pk, company=company)
+    acc_id = journal.bank_account_id
+    if request.method == "POST":
+        try:
+            delete_other_cashflow(journal=journal, user=request.user)
+        except SettlementError as e:
+            messages.error(request, str(e))
+        else:
+            messages.success(request, "已删除该其他收支记录")
+        return redirect(f"{reverse_lazy('bank_journal_report')}?account={acc_id}")
+    return render(request, "finance/other_cashflow_confirm_delete.html",
+                  {"journal": journal})
+
+
+@login_required
+@permission_required("finance.add_bankjournal", raise_exception=True)
 def bank_journal_template(request):
     """下载银行流水导入模板（含表头与示例行）。"""
     from django.http import HttpResponse

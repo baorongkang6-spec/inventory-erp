@@ -352,6 +352,70 @@ class BankJournalImportViewTests(TestCase):
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
 
 
+class OtherCashflowTests(TestCase):
+    """其他收支登记（M8-2）：非往来银行收支直接成日记账。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("1000"))
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        for code in ("add_bankjournal", "view_bankjournal", "delete_bankjournal"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def test_create_other_cashflow_makes_journal(self):
+        from apps.finance.services import create_other_cashflow
+        from apps.finance.models import BankJournal
+        j = create_other_cashflow(
+            company=self.c1, user=self.user, doc_date=date(2026, 6, 5),
+            bank_account=self.acc, direction=BankJournal.Direction.OUT,
+            amount=Decimal("88.50"), entry_type=BankJournal.EntryType.EXPENSE,
+            counterparty="电力公司", summary="电费", txn_no="SN9")
+        self.assertEqual(j.entry_type, "expense")
+        self.assertEqual(j.source_type, "Other")
+        self.assertEqual(j.amount, Decimal("88.50"))
+
+    def test_settlement_type_rejected(self):
+        from apps.finance.services import create_other_cashflow, SettlementError
+        from apps.finance.models import BankJournal
+        with self.assertRaises(SettlementError):
+            create_other_cashflow(
+                company=self.c1, user=self.user, doc_date=date(2026, 6, 5),
+                bank_account=self.acc, direction=BankJournal.Direction.IN,
+                amount=Decimal("100"), entry_type=BankJournal.EntryType.SETTLEMENT)
+
+    def test_create_view_and_delete(self):
+        from apps.finance.models import BankJournal
+        self.client.force_login(self.user)
+        r = self.client.post("/finance/other-cashflow/new/", {
+            "doc_date": "2026-06-05", "bank_account": self.acc.pk, "direction": "out",
+            "entry_type": "tax", "amount": "200", "counterparty": "税务局",
+            "summary": "增值税", "txn_no": "",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        j = BankJournal.objects.get(company=self.c1, entry_type="tax")
+        self.assertEqual(j.amount, Decimal("200.00"))
+        # 删除
+        r2 = self.client.post(f"/finance/other-cashflow/{j.pk}/delete/",
+                              SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r2.status_code, 200)
+        self.assertFalse(BankJournal.objects.filter(pk=j.pk).exists())
+
+    def test_cannot_delete_settlement_journal(self):
+        from apps.finance.services import delete_other_cashflow, SettlementError
+        pay = create_payment(company=self.c1, user=self.user, doc_date=date(2026, 6, 5),
+                             bank_account=self.acc, supplier=Supplier.objects.create(
+                                 company=self.c1, code="S9", name="供应商X"),
+                             amount=Decimal("300"))
+        with self.assertRaises(SettlementError):
+            delete_other_cashflow(journal=pay.bank_journal, user=self.user)
+
+
 class BankAccountsReportTests(TestCase):
     """银行存款分户余额表（总览下钻第一层）。"""
 

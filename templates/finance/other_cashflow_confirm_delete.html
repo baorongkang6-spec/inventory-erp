@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}删除其他收支 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-6">
+    <h4 class="mb-3">删除其他收支</h4>
+    <div class="card border-danger">
+      <div class="card-body">
+        <p>确认删除以下银行存款日记账记录？此操作不可恢复。</p>
+        <ul class="list-unstyled">
+          <li>日期：{{ journal.date }}</li>
+          <li>业务类型：{{ journal.get_entry_type_display }}</li>
+          <li>方向：{{ journal.get_direction_display }}　金额：{{ journal.amount }}</li>
+          <li>对方单位：{{ journal.counterparty|default:"—" }}</li>
+          <li>摘要：{{ journal.summary|default:"—" }}</li>
+        </ul>
+        <form method="post">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">确认删除</button>
+          <a href="{% url 'bank_journal_report' %}?account={{ journal.bank_account_id }}"
+             class="btn btn-outline-secondary">取消</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
