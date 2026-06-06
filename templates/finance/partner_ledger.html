@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">{{ title }}<small class="text-muted fs-6 ms-2">{{ active_company }} · {{ partner }}</small></h4>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary btn-sm"
+       href="{% url back_url %}{% if company_id %}?company={{ company_id }}{% endif %}">返回余额表</a>
+    <a class="btn btn-outline-success btn-sm"
+       href="?{% if company_id %}company={{ company_id }}&{% endif %}partner={{ partner.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+  </div>
+</div>
+<p class="text-muted">增=发票，减=核销/票据抵付；按业务日期滚动余额。当期无发生也显示期末余额。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  {% if company_id %}<input type="hidden" name="company" value="{{ company_id }}">{% endif %}
+  <input type="hidden" name="partner" value="{{ partner.pk }}">
+  <div class="col-auto"><label class="form-label">期初日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">期末日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped table-sm mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">日期</th><th class="text-start">类型</th><th class="text-start">单号</th>
+            <th>增加</th><th>减少</th><th>余额</th></tr>
+      </thead>
+      <tbody>
+        <tr class="table-secondary"><td class="text-start" colspan="5">期初余额</td>
+          <td class="fw-semibold">{{ data.opening }}</td></tr>
+        {% for e in data.rows %}
+        <tr>
+          <td class="text-start">{{ e.date|date:"Y-m-d" }}</td>
+          <td class="text-start">{{ e.kind }}</td>
+          <td class="text-start">{{ e.doc_no|default:"—" }}</td>
+          <td>{% if e.inc %}{{ e.inc }}{% endif %}</td>
+          <td>{% if e.dec %}{{ e.dec }}{% endif %}</td>
+          <td>{{ e.balance }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-3">该期间无往来发生</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light">
+        <tr><th class="text-start" colspan="3">本期合计 / 期末余额</th>
+            <th>{{ data.income }}</th><th>{{ data.outgo }}</th><th>{{ data.ending }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

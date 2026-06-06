@@ -605,6 +605,86 @@ def receivables_report(request):
     })
 
 
+# ===== 往来余额表 + 往来明细账（M9-2/M9-3，总览应付/应收两级下钻）=============
+def _partner_report(request, kind):
+    """往来余额表（公司→各往来对象 期初/本期增/本期减/期末），可下钻明细账。"""
+    from apps.opening.reports import payable_partners_balance, receivable_partners_balance
+    company = resolve_company(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    if kind == "payable":
+        rows = payable_partners_balance(company, dfrom, dto) if company else []
+        cfg = {"title": "应付账款余额表（按供应商）", "partner_label": "供应商",
+               "ledger_url": "payable_partner_ledger", "inc_label": "本期新增", "dec_label": "本期核销"}
+    else:
+        rows = receivable_partners_balance(company, dfrom, dto) if company else []
+        cfg = {"title": "应收账款余额表（按客户）", "partner_label": "客户",
+               "ledger_url": "receivable_partner_ledger", "inc_label": "本期新增", "dec_label": "本期收回"}
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("opening", "income", "outgo", "ending")}
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = [cfg["partner_label"], "期初", cfg["inc_label"], cfg["dec_label"], "期末"]
+        data = [[str(r["partner"]), r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
+        return xlsx_response(f"{cfg['title']}_{dfrom}_{dto}", headers, data)
+    return render(request, "finance/partner_balance_report.html", {
+        "rows": rows, "totals": totals, "active_company": company,
+        "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", ""),
+        **cfg})
+
+
+def _partner_ledger_page(request, kind):
+    """往来明细账（发票增 / 核销·票据减，滚动余额）。"""
+    from apps.masterdata.models import Customer, Supplier
+    from apps.opening.reports import partner_ledger
+    company = resolve_company(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    model = Supplier if kind == "payable" else Customer
+    partner = get_object_or_404(model, pk=request.GET.get("partner"), company=company)
+    data = partner_ledger(company, partner, kind, dfrom, dto)
+    cfg = ({"title": "供应商往来明细账", "back_url": "payable_partners_report"} if kind == "payable"
+           else {"title": "客户往来明细账", "back_url": "receivable_partners_report"})
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["日期", "类型", "单号", "增加", "减少", "余额"]
+        rows = [["期初余额", "", "", "", "", data["opening"]]]
+        rows += [[e["date"], e["kind"], e["doc_no"], e["inc"] or "", e["dec"] or "", e["balance"]]
+                 for e in data["rows"]]
+        rows.append(["期末余额", "", "", data["income"], data["outgo"], data["ending"]])
+        return xlsx_response(f"{cfg['title']}_{partner}_{dfrom}_{dto}", headers, rows)
+    return render(request, "finance/partner_ledger.html", {
+        "partner": partner, "data": data, "active_company": company,
+        "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", ""),
+        **cfg})
+
+
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def payable_partners_report(request):
+    return _partner_report(request, "payable")
+
+
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def payable_partner_ledger(request):
+    return _partner_ledger_page(request, "payable")
+
+
+@login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
+def receivable_partners_report(request):
+    return _partner_report(request, "receivable")
+
+
+@login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
+def receivable_partner_ledger(request):
+    return _partner_ledger_page(request, "receivable")
+
+
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_export(request):

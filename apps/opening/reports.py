@@ -108,8 +108,8 @@ def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
 CATEGORIES = [
     ("bank", "银行存款", "bank_accounts_report"),
     ("stock", "库存商品（金额）", "stock_products_report"),
-    ("payable", "供应商往来（应付）", "payables_report"),
-    ("receivable", "客户往来（应收）", "receivables_report"),
+    ("payable", "供应商往来（应付）", "payable_partners_report"),
+    ("receivable", "客户往来（应收）", "receivable_partners_report"),
     ("note_recv", "应收票据", "notes_balance_report"),
 ]
 
@@ -267,9 +267,9 @@ def account_balance_table(companies, dfrom, dto):
     return {"bank": bank_rows, "stock": stock_rows, "payable": ap_rows, "receivable": ar_rows}
 
 
-def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,
-                  invoice_model, dfrom, dto):
-    """按往来对象归并 期初/增/减。增=发票(doc_date)，减=核销分摊+票据冲销(created_at)。"""
+def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,
+                     invoice_model, dfrom, dto):
+    """按往来对象归并 期初/增/减，保留 partner 对象。增=发票(doc_date)，减=核销+票据(created_at)。"""
     data = {}
     for inv in invoices.select_related(partner_attr):
         partner = getattr(inv, partner_attr)
@@ -278,7 +278,6 @@ def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, n
             d["opening"] += inv.amount_taxed
         elif inv.doc_date <= dto:
             d["income"] += inv.amount_taxed
-    # 减项：核销分摊
     for a in allocations:
         partner = alloc_partner(a)
         d = data.setdefault(partner, _pset())
@@ -287,7 +286,6 @@ def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, n
             d["opening"] -= a.amount
         elif ad <= dto:
             d["outgo"] += a.amount
-    # 减项：票据冲销（按发票 id 找对手）
     inv_partner = {i.pk: getattr(i, partner_attr) for i in invoice_model.objects.filter(company=company)}
     for ns in note_settlements:
         partner = inv_partner.get(ns.invoice_id)
@@ -303,6 +301,97 @@ def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, n
     for partner, d in sorted(data.items(), key=lambda kv: kv[0].code):
         ending = d["opening"] + d["income"] - d["outgo"]
         if d["opening"] or d["income"] or d["outgo"] or ending:
-            rows.append({"company": company, "name": str(partner), "opening": d["opening"],
-                         "income": d["income"], "outgo": d["outgo"], "ending": ending})
+            rows.append({"partner": partner, "opening": d["opening"], "income": d["income"],
+                         "outgo": d["outgo"], "ending": ending})
     return rows
+
+
+def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,
+                  invoice_model, dfrom, dto):
+    """account_balance_table 用：在 _partner_balance 基础上加 company/name 字段。"""
+    return [{"company": company, "name": str(r["partner"]), "opening": r["opening"],
+             "income": r["income"], "outgo": r["outgo"], "ending": r["ending"]}
+            for r in _partner_balance(company, invoices, partner_attr, allocations, alloc_partner,
+                                      note_settlements, invoice_model, dfrom, dto)]
+
+
+def payable_partners_balance(company, dfrom, dto):
+    """某公司各供应商应付 期初/本期增/本期减/期末（带 partner 对象，供下钻）。"""
+    return _partner_balance(
+        company,
+        PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED),
+        "supplier",
+        PaymentAllocation.objects.filter(payment__company=company).select_related("invoice__supplier"),
+        lambda a: a.invoice.supplier,
+        NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE),
+        PurchaseInvoice, dfrom, dto)
+
+
+def receivable_partners_balance(company, dfrom, dto):
+    """某公司各客户应收 期初/本期增/本期减/期末（带 partner 对象，供下钻）。"""
+    return _partner_balance(
+        company,
+        SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED),
+        "customer",
+        ReceiptAllocation.objects.filter(receipt__company=company).select_related("invoice__customer"),
+        lambda a: a.invoice.customer,
+        NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES,
+                                      is_endorsement=False),
+        SalesInvoice, dfrom, dto)
+
+
+def partner_ledger(company, partner, kind, dfrom, dto):
+    """往来对象明细账：发票(增) + 核销/票据(减) 按时间滚动余额。kind ∈ {payable, receivable}。
+
+    返回 {opening, rows:[{date,kind,doc_no,inc,dec,balance}], income, outgo, ending}。
+    """
+    if kind == "payable":
+        invoices = PurchaseInvoice.objects.filter(
+            company=company, supplier=partner, status=PurchaseInvoice.Status.REGISTERED)
+        allocs = PaymentAllocation.objects.filter(
+            payment__company=company, invoice__supplier=partner).select_related("payment")
+        alloc_label, alloc_doc = "付款核销", lambda a: a.payment.doc_no
+        notes = NoteSettlement.objects.filter(
+            company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
+        inv_ids = set(PurchaseInvoice.objects.filter(
+            company=company, supplier=partner).values_list("pk", flat=True))
+        inv_label = "采购发票"
+    else:
+        invoices = SalesInvoice.objects.filter(
+            company=company, customer=partner, status=SalesInvoice.Status.REGISTERED)
+        allocs = ReceiptAllocation.objects.filter(
+            receipt__company=company, invoice__customer=partner).select_related("receipt")
+        alloc_label, alloc_doc = "收款核销", lambda a: a.receipt.doc_no
+        notes = NoteSettlement.objects.filter(
+            company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES, is_endorsement=False)
+        inv_ids = set(SalesInvoice.objects.filter(
+            company=company, customer=partner).values_list("pk", flat=True))
+        inv_label = "销售发票"
+
+    events = []
+    for inv in invoices:
+        events.append({"date": inv.doc_date, "kind": inv_label, "doc_no": inv.doc_no,
+                       "inc": inv.amount_taxed, "dec": Z})
+    for a in allocs:
+        events.append({"date": a.created_at.date(), "kind": alloc_label, "doc_no": alloc_doc(a),
+                       "inc": Z, "dec": a.amount})
+    for ns in notes.filter(invoice_id__in=inv_ids):
+        events.append({"date": ns.created_at.date(), "kind": "票据抵付", "doc_no": ns.note_no,
+                       "inc": Z, "dec": ns.amount})
+
+    opening = Z
+    period = []
+    for e in events:
+        if e["date"] < dfrom:
+            opening += e["inc"] - e["dec"]
+        elif e["date"] <= dto:
+            period.append(e)
+    period.sort(key=lambda e: (e["date"], 0 if e["inc"] else 1))
+    bal, income, outgo, rows = opening, Z, Z, []
+    for e in period:
+        bal += e["inc"] - e["dec"]
+        income += e["inc"]
+        outgo += e["dec"]
+        rows.append({**e, "balance": bal})
+    return {"opening": opening, "rows": rows, "income": income, "outgo": outgo,
+            "ending": opening + income - outgo}

@@ -477,6 +477,52 @@ class BankReconcileTests(TestCase):
         self.assertEqual(r["batch"].system_only_count, 1)  # 税费 200(06-06)
 
 
+class PartnerDrilldownTests(TestCase):
+    """往来两级下钻（M9-2/M9-3）：供应商应付余额表 + 往来明细账。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("100000"))
+        # 6/10 采购发票 1130（应付增）；6/20 付款 500 核销（应付减）
+        cls.inv = create_purchase_invoice(
+            company=cls.c1, user=None, doc_date=date(2026, 6, 10), supplier=cls.sup,
+            lines=[{"product": None, "description": "货", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0.13")}])
+        pay = create_payment(company=cls.c1, user=None, doc_date=date(2026, 6, 20),
+                             bank_account=cls.acc, supplier=cls.sup, amount=Decimal("500"))
+        allocate_payment(payment=pay, allocations=[{"invoice": cls.inv, "amount": Decimal("500")}])
+
+    def test_payable_partners_balance(self):
+        from apps.opening.reports import payable_partners_balance
+        rows = payable_partners_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        r = next(x for x in rows if x["partner"] == self.sup)
+        self.assertEqual(r["opening"], Decimal("0.00"))
+        self.assertEqual(r["income"], Decimal("1130.00"))
+        self.assertEqual(r["outgo"], Decimal("500.00"))
+        self.assertEqual(r["ending"], Decimal("630.00"))
+
+    def test_partner_ledger_rolling_balance(self):
+        from apps.opening.reports import partner_ledger
+        d = partner_ledger(self.c1, self.sup, "payable", date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(d["opening"], Decimal("0.00"))
+        self.assertEqual(d["income"], Decimal("1130.00"))
+        self.assertEqual(d["outgo"], Decimal("500.00"))
+        self.assertEqual(d["ending"], Decimal("630.00"))
+        self.assertEqual(len(d["rows"]), 2)            # 发票 + 核销
+        self.assertEqual(d["rows"][-1]["balance"], Decimal("630.00"))
+
+    def test_ledger_period_before_shows_opening_only(self):
+        from apps.opening.reports import partner_ledger
+        # 区间在所有业务之后 → 全进期初，本期无发生，期初=期末
+        d = partner_ledger(self.c1, self.sup, "payable", date(2026, 7, 1), date(2026, 7, 31))
+        self.assertEqual(d["rows"], [])
+        self.assertEqual(d["opening"], Decimal("630.00"))
+        self.assertEqual(d["ending"], Decimal("630.00"))
+
+
 class BankAccountsReportTests(TestCase):
     """银行存款分户余额表（总览下钻第一层）。"""
 
