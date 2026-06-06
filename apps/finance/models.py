@@ -188,7 +188,8 @@ class Payment(CompanyScopedModel):
     doc_no = models.CharField("付款单号", max_length=32)
     doc_date = models.DateField("付款日期")
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="付款银行账户")
-    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="收款供应商")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True,
+                                 verbose_name="收款供应商")
     amount = models.DecimalField("付款金额", max_digits=18, decimal_places=2)
     settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     summary = models.CharField("摘要", max_length=255, blank=True)
@@ -312,7 +313,8 @@ class Receipt(CompanyScopedModel):
     doc_no = models.CharField("收款单号", max_length=32)
     doc_date = models.DateField("收款日期")
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="收款银行账户")
-    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="付款客户")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True,
+                                 verbose_name="付款客户")
     amount = models.DecimalField("收款金额", max_digits=18, decimal_places=2)
     settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     summary = models.CharField("摘要", max_length=255, blank=True)

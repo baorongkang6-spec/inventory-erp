@@ -93,8 +93,11 @@ def create_payment(*, company, user, doc_date, bank_account, supplier, amount, s
     journal = BankJournal.objects.create(
         company=company, created_by=user, bank_account=bank_account, date=doc_date,
         direction=BankJournal.Direction.OUT, amount=amount,
-        entry_type=BankJournal.EntryType.SETTLEMENT,
-        counterparty=str(supplier), summary=summary or f"付款 {pay.doc_no}",
+        # 选了供应商 = 往来结算（可核销）；未选 = 其他付款
+        entry_type=(BankJournal.EntryType.SETTLEMENT if supplier
+                    else BankJournal.EntryType.OTHER),
+        counterparty=str(supplier) if supplier else "",
+        summary=summary or f"付款 {pay.doc_no}",
         source_type="Payment", source_id=str(pay.pk), source_no=pay.doc_no,
     )
     pay.bank_journal = journal
@@ -102,7 +105,7 @@ def create_payment(*, company, user, doc_date, bank_account, supplier, amount, s
 
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=pay,
-        summary=f"付款 {pay.doc_no} 付 {supplier} {amount}（{bank_account}）",
+        summary=f"付款 {pay.doc_no} 付 {supplier or '其他'} {amount}（{bank_account}）",
     )
     return pay
 
@@ -203,8 +206,10 @@ def create_receipt(*, company, user, doc_date, bank_account, customer, amount, s
     journal = BankJournal.objects.create(
         company=company, created_by=user, bank_account=bank_account, date=doc_date,
         direction=BankJournal.Direction.IN, amount=amount,
-        entry_type=BankJournal.EntryType.SETTLEMENT,
-        counterparty=str(customer), summary=summary or f"收款 {rec.doc_no}",
+        entry_type=(BankJournal.EntryType.SETTLEMENT if customer
+                    else BankJournal.EntryType.OTHER),
+        counterparty=str(customer) if customer else "",
+        summary=summary or f"收款 {rec.doc_no}",
         source_type="Receipt", source_id=str(rec.pk), source_no=rec.doc_no,
     )
     rec.bank_journal = journal
@@ -212,7 +217,7 @@ def create_receipt(*, company, user, doc_date, bank_account, customer, amount, s
 
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=rec,
-        summary=f"收款 {rec.doc_no} 收 {customer} {amount}（{bank_account}）",
+        summary=f"收款 {rec.doc_no} 收 {customer or '其他'} {amount}（{bank_account}）",
     )
     return rec
 

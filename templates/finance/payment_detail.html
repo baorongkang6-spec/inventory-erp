@@ -16,7 +16,7 @@
     <div class="col-md-3"><span class="text-muted">公司：</span>{{ pay.company }}</div>
     <div class="col-md-3"><span class="text-muted">日期：</span>{{ pay.doc_date }}</div>
     <div class="col-md-3"><span class="text-muted">银行账户：</span>{{ pay.bank_account }}</div>
-    <div class="col-md-3"><span class="text-muted">供应商：</span>{{ pay.supplier }}</div>
+    <div class="col-md-3"><span class="text-muted">供应商：</span>{{ pay.supplier|default:"其他付款" }}</div>
     <div class="col-md-3"><span class="text-muted">付款金额：</span>{{ pay.amount }}</div>
     <div class="col-md-3"><span class="text-muted">已核销：</span>{{ pay.settled_amount }}</div>
     <div class="col-md-3"><span class="text-muted">未核销：</span><strong>{{ pay.unallocated }}</strong></div>

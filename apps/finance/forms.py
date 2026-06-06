@@ -143,6 +143,8 @@ class PaymentForm(forms.ModelForm):
             self.fields["supplier"].queryset = Supplier.objects.filter(
                 company=company, is_active=True
             )
+        self.fields["supplier"].required = False
+        self.fields["supplier"].empty_label = "（其他付款，可不选）"
         for name, field in self.fields.items():
             w = field.widget
             w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
@@ -247,6 +249,8 @@ class ReceiptForm(forms.ModelForm):
             self.fields["customer"].queryset = Customer.objects.filter(
                 company=company, is_active=True
             )
+        self.fields["customer"].required = False
+        self.fields["customer"].empty_label = "（其他收款，可不选）"
         for name, field in self.fields.items():
             w = field.widget
             w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")

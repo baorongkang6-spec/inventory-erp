@@ -16,7 +16,7 @@
     <div class="col-md-3"><span class="text-muted">公司：</span>{{ rec.company }}</div>
     <div class="col-md-3"><span class="text-muted">日期：</span>{{ rec.doc_date }}</div>
     <div class="col-md-3"><span class="text-muted">银行账户：</span>{{ rec.bank_account }}</div>
-    <div class="col-md-3"><span class="text-muted">客户：</span>{{ rec.customer }}</div>
+    <div class="col-md-3"><span class="text-muted">客户：</span>{{ rec.customer|default:"其他收款" }}</div>
     <div class="col-md-3"><span class="text-muted">收款金额：</span>{{ rec.amount }}</div>
     <div class="col-md-3"><span class="text-muted">已核销：</span>{{ rec.settled_amount }}</div>
     <div class="col-md-3"><span class="text-muted">未核销：</span><strong>{{ rec.unallocated }}</strong></div>

@@ -24,7 +24,7 @@
           <td><a href="{% url 'payment_detail' p.pk %}">{{ p.doc_no }}</a></td>
           <td>{{ p.doc_date }}</td>
           <td>{{ p.bank_account }}</td>
-          <td>{{ p.supplier }}</td>
+          <td>{{ p.supplier|default:"其他付款" }}</td>
           <td class="text-end">{{ p.amount }}</td>
           <td class="text-end">{{ p.settled_amount }}</td>
           <td class="text-end fw-semibold">{{ p.unallocated }}</td>

@@ -352,6 +352,46 @@ class BankJournalImportViewTests(TestCase):
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
 
 
+class PartnerlessReceiptPaymentTests(TestCase):
+    """收/付款可不选往来对象（其他收款/其他付款）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("1000"))
+
+    def test_receipt_without_customer(self):
+        from apps.finance.models import BankJournal
+        from apps.finance.services import create_receipt
+        rec = create_receipt(company=self.c1, user=None, doc_date=date(2026, 6, 6),
+                             bank_account=self.acc, customer=None, amount=Decimal("200"),
+                             summary="利息收入")
+        self.assertIsNone(rec.customer)
+        j = rec.bank_journal
+        self.assertEqual(j.entry_type, BankJournal.EntryType.OTHER)  # 无往来 → 其他
+        self.assertEqual(j.counterparty, "")
+        self.assertEqual(j.amount, Decimal("200.00"))
+
+    def test_payment_without_supplier(self):
+        from apps.finance.models import BankJournal
+        from apps.finance.services import create_payment
+        pay = create_payment(company=self.c1, user=None, doc_date=date(2026, 6, 6),
+                             bank_account=self.acc, supplier=None, amount=Decimal("50"),
+                             summary="银行手续费")
+        self.assertIsNone(pay.supplier)
+        self.assertEqual(pay.bank_journal.entry_type, BankJournal.EntryType.OTHER)
+
+    def test_receipt_with_customer_still_settlement(self):
+        from apps.finance.models import BankJournal
+        from apps.finance.services import create_receipt
+        from apps.masterdata.models import Customer
+        cust = Customer.objects.create(company=self.c1, code="C9", name="客户甲")
+        rec = create_receipt(company=self.c1, user=None, doc_date=date(2026, 6, 6),
+                             bank_account=self.acc, customer=cust, amount=Decimal("300"))
+        self.assertEqual(rec.bank_journal.entry_type, BankJournal.EntryType.SETTLEMENT)
+
+
 class OtherCashflowTests(TestCase):
     """其他收支登记（M8-2）：非往来银行收支直接成日记账。"""
 

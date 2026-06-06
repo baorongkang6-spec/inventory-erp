@@ -24,7 +24,7 @@
           <td><a href="{% url 'receipt_detail' r.pk %}">{{ r.doc_no }}</a></td>
           <td>{{ r.doc_date }}</td>
           <td>{{ r.bank_account }}</td>
-          <td>{{ r.customer }}</td>
+          <td>{{ r.customer|default:"其他收款" }}</td>
           <td class="text-end">{{ r.amount }}</td>
           <td class="text-end">{{ r.settled_amount }}</td>
           <td class="text-end fw-semibold">{{ r.unallocated }}</td>
