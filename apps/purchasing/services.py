@@ -32,7 +32,19 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
         purchase_type=purchase_type,
         remark=remark,
     )
+    total_qty, total_amount = _apply_inbound_lines(
+        doc, user, doc_date, lines, expenses, purchase_type, supplier, borrow_counterparty)
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
+        summary=f"采购入库 {doc.doc_no} 入 {total_qty} 件 金额 {total_amount}",
+    )
+    return doc
 
+
+def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
+                         supplier, borrow_counterparty):
+    """把明细行过账到已存在的入库单 doc 上（创建/修改共用）。返回 (总数量, 入库成本合计)。"""
+    company = doc.company
     norm = [{"product": ln["product"], "quantity": round_qty(ln["quantity"]),
              "unit_price": round_money(ln["unit_price"]),
              "tax_rate": ln.get("tax_rate", DEFAULT_TAX_RATE)} for ln in lines]
@@ -98,12 +110,63 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
     doc.total_taxed = total_taxed
     doc.save(update_fields=["total_quantity", "total_amount",
                             "total_untaxed", "total_tax", "total_taxed"])
+    return total_qty, total_amount
 
+
+@transaction.atomic
+def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, remark="",
+                              expenses=None, purchase_type=PurchaseInbound.PurchaseType.EXTERNAL,
+                              borrow_counterparty=""):
+    """修改采购入库单：冲正原过账 → 按新明细在同一张单上重新过账（保留单号）。
+
+    调用前应已校验可改性（见 inbound_edit_block_reason）。镜像生成单不可改。
+    """
+    if doc.status == PurchaseInbound.Status.VOID:
+        raise InventoryError("已作废单据不可修改")
+    if doc.source_outbound_id:
+        raise InventoryError("关联镜像生成的入库单不可直接修改，请改源销售出库单")
+
+    # 冲正原过账
+    for line in doc.lines.select_related("stock_move"):
+        if line.stock_move_id:
+            reverse_move(line.stock_move, date=doc.doc_date, source_type="PurchaseInboundEdit",
+                         source_id=doc.pk, source_no=f"改前{doc.doc_no}")
+    doc.lines.all().delete()
+    from apps.finance.models import BorrowTransaction, ExpenseEntry
+    ExpenseEntry.objects.filter(company=doc.company, source_type="PurchaseInbound",
+                                source_id=str(doc.pk)).delete()
+    BorrowTransaction.objects.filter(company=doc.company, source_type="PurchaseInbound",
+                                     source_id=str(doc.pk)).delete()
+
+    doc.doc_date = doc_date
+    doc.supplier = supplier
+    doc.purchase_type = purchase_type
+    doc.remark = remark
+    doc.save(update_fields=["doc_date", "supplier", "purchase_type", "remark"])
+
+    total_qty, total_amount = _apply_inbound_lines(
+        doc, user, doc_date, lines, expenses, purchase_type, supplier, borrow_counterparty)
     AuditLog.record(
-        actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
-        summary=f"采购入库 {doc.doc_no} 入 {total_qty} 件 金额 {total_amount}",
+        actor=user, company=doc.company, action=AuditLog.Action.UPDATE, target=doc,
+        summary=f"修改采购入库 {doc.doc_no}（冲正重过账，入 {total_qty} 件 金额 {total_amount}）",
     )
     return doc
+
+
+def inbound_edit_block_reason(doc, user, today, is_manager=False):
+    """返回不可修改的原因字符串；可改则返回 None。规则：本人+管理员、未被下游引用、本月内。"""
+    from apps.finance.models import PurchaseInvoiceLine
+    if doc.status == PurchaseInbound.Status.VOID:
+        return "单据已作废"
+    if doc.source_outbound_id:
+        return "本单由关联销售出库自动生成，请修改源出库单"
+    if not (is_manager or doc.created_by_id == getattr(user, "pk", None)):
+        return "只有录入人本人或管理员可修改"
+    if (doc.doc_date.year, doc.doc_date.month) != (today.year, today.month):
+        return "跨月单据不可修改（请作废重录或在当月处理）"
+    if PurchaseInvoiceLine.objects.filter(source_inbound_line__inbound=doc).exists():
+        return "已被采购发票引用，不可修改（请先处理发票或作废重录）"
+    return None
 
 
 def _record_expenses(company, user, doc, doc_date, expenses, kind):

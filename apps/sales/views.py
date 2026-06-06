@@ -113,3 +113,64 @@ def outbound_create(request):
 
     return render(request, "sales/outbound_form.html",
                   {"header": header, "formset": formset, "expenses_fs": expenses_fs, "title": "销售出库"})
+
+
+def _outbound_is_manager(user):
+    return user.is_superuser or user.has_perm("sales.void_salesoutbound")
+
+
+@login_required
+@permission_required("sales.add_salesoutbound", raise_exception=True)
+def outbound_edit(request, pk):
+    """修改销售出库单（冲正重过账，保留单号）。本人+管理员、本月、未被下游引用方可改。"""
+    from .services import outbound_edit_block_reason, update_and_repost_outbound
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    doc = get_object_or_404(SalesOutbound.objects.select_related("customer", "mirror_inbound"),
+                            pk=pk, company=company)
+    reason = outbound_edit_block_reason(doc, request.user, timezone.localdate(),
+                                        _outbound_is_manager(request.user))
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect("outbound_detail", pk=doc.pk)
+
+    if request.method == "POST":
+        header = OutboundHeaderForm(request.POST, company=company)
+        formset = OutboundLineFormSet(request.POST, company=company)
+        expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
+        if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
+            lines = [{"product": cd["product"], "quantity": cd["quantity"],
+                      "sale_unit_price": cd.get("sale_unit_price"), "tax_rate": cd["tax_rate"]}
+                     for cd in formset.valid_lines]
+            expenses = [{"category": e["category"], "amount": e["amount"]}
+                        for e in expenses_fs.expense_lines]
+            try:
+                update_and_repost_outbound(
+                    doc, user=request.user, doc_date=header.cleaned_data["doc_date"],
+                    customer=header.cleaned_data.get("customer"),
+                    remark=header.cleaned_data.get("remark", ""),
+                    lines=lines, expenses=expenses,
+                    sales_type=header.cleaned_data["sales_type"])
+            except InsufficientStockError as e:
+                messages.error(request, f"库存不足，未修改：{e}")
+            except InventoryError as e:
+                messages.error(request, f"修改失败：{e}")
+            else:
+                messages.success(request, f"销售出库已修改：{doc.doc_no}")
+                return redirect("outbound_detail", pk=doc.pk)
+    else:
+        header = OutboundHeaderForm(company=company, initial={
+            "doc_date": doc.doc_date, "sales_type": doc.sales_type,
+            "customer": doc.customer_id, "remark": doc.remark})
+        line_init = [{"product": ln.product_id, "quantity": ln.quantity,
+                      "sale_unit_price": ln.sale_unit_price, "tax_rate": ln.tax_rate}
+                     for ln in doc.lines.all()]
+        formset = OutboundLineFormSet(company=company, initial=line_init)
+        from apps.finance.models import ExpenseEntry
+        exp_init = [{"category": e.category_id, "amount": e.amount}
+                    for e in ExpenseEntry.objects.filter(
+                        company=company, source_type="SalesOutbound", source_id=str(doc.pk))]
+        expenses_fs = ExpenseFormSet(prefix="exp", company=company, initial=exp_init)
+
+    return render(request, "sales/outbound_form.html",
+                  {"header": header, "formset": formset, "expenses_fs": expenses_fs,
+                   "title": f"修改销售出库 {doc.doc_no}", "editing": True})

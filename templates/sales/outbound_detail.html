@@ -6,6 +6,9 @@
     {% if doc.status == 'void' %}<span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
   <div class="d-flex gap-2">
     <a href="{% url 'outbound_print' doc.pk %}" target="_blank" class="btn btn-outline-primary btn-sm">打印</a>
+    {% if doc.status != 'void' and not doc.mirror_inbound_id and perms.sales.add_salesoutbound %}
+    <a href="{% url 'outbound_edit' doc.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
+    {% endif %}
     {% if doc.status != 'void' and perms.sales.void_salesoutbound %}
     <form method="post" action="{% url 'outbound_void' doc.pk %}" onsubmit="return confirm('确认作废本出库单？将反向冲减库存{% if doc.mirror_inbound_id %}，并联动作废对方镜像入库{% endif %}。');">
       {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>

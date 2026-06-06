@@ -33,7 +33,21 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
         sales_type=sales_type,
         remark=remark,
     )
+    total_qty, total_cost = _apply_outbound_lines(
+        doc, user, doc_date, lines, expenses, sales_type, customer, borrow_counterparty)
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
+        summary=f"销售出库 {doc.doc_no} 出 {total_qty} 件 成本 {total_cost}",
+    )
+    # 关联交易自动联动（M4，SPEC §5）：客户指向系统内关联公司则镜像生成对方采购入库
+    _mirror_to_related_company(doc, user)
+    return doc
 
+
+def _apply_outbound_lines(doc, user, doc_date, lines, expenses, sales_type,
+                          customer, borrow_counterparty):
+    """把明细行过账到已存在的出库单 doc 上（创建/修改共用）。返回 (总数量, 结转成本合计)。"""
+    company = doc.company
     total_qty = ZERO_QTY
     total_cost = total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for ln in lines:
@@ -80,15 +94,62 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
             direction=BorrowTransaction.Direction.OUT, amount=total_cost, date=doc_date,
             source_type="SalesOutbound", source_id=str(doc.pk), source_no=doc.doc_no,
         )
+    return total_qty, total_cost
 
+
+@transaction.atomic
+def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, remark="",
+                               expenses=None, sales_type=SalesOutbound.SalesType.SALE,
+                               borrow_counterparty=""):
+    """修改销售出库单：冲正原过账 → 在同一张单上按新明细重过账（保留单号）。
+
+    有关联镜像的出库单不可改（请作废重录以联动）。调用前应已校验可改性。
+    """
+    if doc.status == SalesOutbound.Status.VOID:
+        raise InventoryError("已作废单据不可修改")
+    if doc.mirror_inbound_id:
+        raise InventoryError("本单已生成关联镜像入库，请作废重录以联动")
+
+    for line in doc.lines.select_related("stock_move"):
+        if line.stock_move_id:
+            reverse_move(line.stock_move, date=doc.doc_date, source_type="SalesOutboundEdit",
+                         source_id=doc.pk, source_no=f"改前{doc.doc_no}")
+    doc.lines.all().delete()
+    from apps.finance.models import BorrowTransaction, ExpenseEntry
+    ExpenseEntry.objects.filter(company=doc.company, source_type="SalesOutbound",
+                                source_id=str(doc.pk)).delete()
+    BorrowTransaction.objects.filter(company=doc.company, source_type="SalesOutbound",
+                                     source_id=str(doc.pk)).delete()
+
+    doc.doc_date = doc_date
+    doc.customer = customer
+    doc.sales_type = sales_type
+    doc.remark = remark
+    doc.save(update_fields=["doc_date", "customer", "sales_type", "remark"])
+
+    total_qty, total_cost = _apply_outbound_lines(
+        doc, user, doc_date, lines, expenses, sales_type, customer, borrow_counterparty)
     AuditLog.record(
-        actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
-        summary=f"销售出库 {doc.doc_no} 出 {total_qty} 件 成本 {total_cost}",
+        actor=user, company=doc.company, action=AuditLog.Action.UPDATE, target=doc,
+        summary=f"修改销售出库 {doc.doc_no}（冲正重过账，出 {total_qty} 件 成本 {total_cost}）",
     )
-
-    # 关联交易自动联动（M4，SPEC §5）：客户指向系统内关联公司则镜像生成对方采购入库
-    _mirror_to_related_company(doc, user)
     return doc
+
+
+def outbound_edit_block_reason(doc, user, today, is_manager=False):
+    """返回不可修改原因；可改返回 None。本人+管理员、未被下游引用(发票/镜像)、本月内。"""
+    from apps.finance.models import SalesInvoiceLine
+    if doc.status == SalesOutbound.Status.VOID:
+        return "单据已作废"
+    if doc.mirror_inbound_id:
+        return "本单已生成关联镜像入库，请作废重录"
+    if not (is_manager or doc.created_by_id == getattr(user, "pk", None)):
+        return "只有录入人本人或管理员可修改"
+    if (doc.doc_date.year, doc.doc_date.month) != (today.year, today.month):
+        return "跨月单据不可修改（请作废重录或在当月处理）"
+    if SalesInvoiceLine.objects.filter(source_outbound_line__outbound=doc).exists():
+        return "已被销售发票引用，不可修改（请先处理发票或作废重录）"
+    return None
 
 
 def _ensure_product_in(company_b, source_product):

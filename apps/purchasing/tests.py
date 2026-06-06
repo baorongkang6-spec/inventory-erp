@@ -46,6 +46,50 @@ class InboundPostingTests(TestCase):
         self.assertEqual(nos, ["RK-C1-20260605-001", "RK-C1-20260605-002"])
 
 
+class InboundEditTests(TestCase):
+    """采购入库修改（M14）：冲正重过账、保留单号、可改性守卫。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.u = get_user_model().objects.create_user(username="op", password="x")
+
+    def _today(self):
+        from django.utils import timezone
+        return timezone.localdate()
+
+    def test_update_reposts_and_keeps_docno(self):
+        from apps.purchasing.services import create_and_post_inbound, update_and_repost_inbound
+        doc = create_and_post_inbound(company=self.c1, user=self.u, doc_date=self._today(),
+            lines=[{"product": self.p, "quantity": Decimal("10"), "unit_price": Decimal("5")}])
+        no = doc.doc_no
+        update_and_repost_inbound(doc, user=self.u, doc_date=self._today(),
+            lines=[{"product": self.p, "quantity": Decimal("20"), "unit_price": Decimal("6"),
+                    "tax_rate": Decimal("0.13")}])
+        doc.refresh_from_db()
+        self.assertEqual(doc.doc_no, no)                  # 单号不变
+        self.assertEqual(doc.total_quantity, Decimal("20.000"))
+        bal = StockBalance.objects.get(company=self.c1, product=self.p)
+        self.assertEqual(bal.quantity, Decimal("20.000"))
+        self.assertEqual(bal.amount, Decimal("120.00"))
+
+    def test_block_reasons(self):
+        from datetime import date
+        from apps.purchasing.services import create_and_post_inbound, inbound_edit_block_reason
+        doc = create_and_post_inbound(company=self.c1, user=self.u, doc_date=self._today(),
+            lines=[{"product": self.p, "quantity": Decimal("1"), "unit_price": Decimal("1")}])
+        from django.contrib.auth import get_user_model
+        other = get_user_model().objects.create_user(username="x2", password="x")
+        self.assertIsNone(inbound_edit_block_reason(doc, self.u, self._today(), False))
+        self.assertIsNotNone(inbound_edit_block_reason(doc, other, self._today(), False))  # 非本人
+        self.assertIsNone(inbound_edit_block_reason(doc, other, self._today(), True))       # 管理员
+        old = create_and_post_inbound(company=self.c1, user=self.u, doc_date=date(2026, 1, 1),
+            lines=[{"product": self.p, "quantity": Decimal("1"), "unit_price": Decimal("1")}])
+        self.assertIn("跨月", inbound_edit_block_reason(old, self.u, self._today(), True))
+
+
 class InboundListFilterTests(TestCase):
     """FilteredListMixin（#9）：入库单列表按日期区间 + 关键字筛选。"""
 

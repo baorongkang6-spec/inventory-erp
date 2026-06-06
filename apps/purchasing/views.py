@@ -102,6 +102,65 @@ def _active_company(request):
     return get_active_company(request, list(get_visible_companies(request.user)))
 
 
+def _inbound_is_manager(user):
+    return user.is_superuser or user.has_perm("purchasing.void_purchaseinbound")
+
+
+@login_required
+@permission_required("purchasing.add_purchaseinbound", raise_exception=True)
+def inbound_edit(request, pk):
+    """修改采购入库单（冲正重过账，保留单号）。本人+管理员、本月、未被下游引用方可改。"""
+    from .services import inbound_edit_block_reason, update_and_repost_inbound
+    company = _active_company(request)
+    doc = get_object_or_404(PurchaseInbound.objects.select_related("supplier"),
+                            pk=pk, company=company)
+    reason = inbound_edit_block_reason(doc, request.user, timezone.localdate(),
+                                       _inbound_is_manager(request.user))
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect("inbound_detail", pk=doc.pk)
+
+    if request.method == "POST":
+        header = InboundHeaderForm(request.POST, company=company)
+        formset = InboundLineFormSet(request.POST, company=company)
+        expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
+        if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
+            lines = [{"product": cd["product"], "quantity": cd["quantity"],
+                      "unit_price": cd["unit_price"], "tax_rate": cd["tax_rate"]}
+                     for cd in formset.valid_lines]
+            expenses = [{"category": e["category"], "amount": e["amount"]}
+                        for e in expenses_fs.expense_lines]
+            try:
+                update_and_repost_inbound(
+                    doc, user=request.user, doc_date=header.cleaned_data["doc_date"],
+                    supplier=header.cleaned_data.get("supplier"),
+                    remark=header.cleaned_data.get("remark", ""),
+                    lines=lines, expenses=expenses,
+                    purchase_type=header.cleaned_data["purchase_type"])
+            except InventoryError as e:
+                messages.error(request, f"修改失败：{e}")
+            else:
+                messages.success(request, f"采购入库已修改：{doc.doc_no}")
+                return redirect("inbound_detail", pk=doc.pk)
+    else:
+        header = InboundHeaderForm(company=company, initial={
+            "doc_date": doc.doc_date, "purchase_type": doc.purchase_type,
+            "supplier": doc.supplier_id, "remark": doc.remark})
+        line_init = [{"product": ln.product_id, "quantity": ln.quantity,
+                      "unit_price": ln.unit_price, "tax_rate": ln.tax_rate}
+                     for ln in doc.lines.all()]
+        formset = InboundLineFormSet(company=company, initial=line_init)
+        from apps.finance.models import ExpenseEntry
+        exp_init = [{"category": e.category_id, "amount": e.amount}
+                    for e in ExpenseEntry.objects.filter(
+                        company=company, source_type="PurchaseInbound", source_id=str(doc.pk))]
+        expenses_fs = ExpenseFormSet(prefix="exp", company=company, initial=exp_init)
+
+    return render(request, "purchasing/inbound_form.html",
+                  {"header": header, "formset": formset, "expenses_fs": expenses_fs,
+                   "title": f"修改采购入库 {doc.doc_no}", "editing": True})
+
+
 @require_POST
 @login_required
 @permission_required("purchasing.void_purchaseinbound", raise_exception=True)
