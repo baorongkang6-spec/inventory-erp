@@ -38,7 +38,7 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="text-start">{{ r.move.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="text-start">{{ r.move.date|date:"Y-m-d" }}</td>
           <td class="text-start">{{ r.move.source_no|default:"—" }}</td>
           <td class="text-start">{{ r.move.get_direction_display }}</td>
           <td>{{ r.in_qty|default:"" }}</td>{% if can_view_amount %}<td>{{ r.in_amount|default:"" }}</td>{% endif %}

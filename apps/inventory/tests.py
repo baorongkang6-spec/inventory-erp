@@ -150,3 +150,17 @@ class MovingAverageTests(TestCase):
         self.assertEqual(
             StockBalance.objects.get(company=self.c2, product=p2).amount, D("495.00")
         )
+
+
+class StockMoveDateTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+
+    def test_move_uses_business_date(self):
+        from datetime import date
+        m = post_inbound(self.c1, self.p, D("10"), D("5"), date=date(2026, 6, 1))
+        self.assertEqual(m.date, date(2026, 6, 1))
+        out = post_outbound(self.c1, self.p, D("3"), date=date(2026, 6, 2))
+        self.assertEqual(out.date, date(2026, 6, 2))

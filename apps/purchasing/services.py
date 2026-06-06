@@ -60,6 +60,7 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
         line_amount = round_money(b + fee)
         move = post_inbound(
             company, x["product"], x["quantity"], x["unit_price"], amount=line_amount,
+            date=doc_date,
             source_type="PurchaseInbound", source_id=doc.pk, source_no=doc.doc_no,
         )
         PurchaseInboundLine.objects.create(

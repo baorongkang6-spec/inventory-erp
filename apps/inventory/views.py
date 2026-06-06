@@ -56,7 +56,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
 
         rows = []
         if product:
-            moves = StockMove.objects.filter(company=company, product=product).order_by("created_at", "id")
+            moves = StockMove.objects.filter(company=company, product=product).order_by("date", "id")
             for m in moves:
                 is_in = m.direction == StockMove.Direction.IN
                 rows.append({

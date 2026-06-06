@@ -93,7 +93,8 @@ def import_stock(company, user, file):
             errors.append(f"第{idx}行：数量/单价无效"); continue
         if StockMove.objects.filter(company=company, product=product, source_type="Opening").exists():
             skipped += 1; continue
-        post_inbound(company, product, qty, price, source_type="Opening", source_no="期初")
+        post_inbound(company, product, qty, price, date=OPENING,
+                     source_type="Opening", source_no="期初")
         created += 1
     return created, skipped, errors
 

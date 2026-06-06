@@ -12,6 +12,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.core.money import ZERO_MONEY, round_money, round_qty
 from apps.masterdata.models import Product
@@ -44,7 +45,7 @@ def _get_balance_for_update(company, product) -> StockBalance:
 
 
 @transaction.atomic
-def post_inbound(company, product, quantity, unit_price, *, amount=None,
+def post_inbound(company, product, quantity, unit_price, *, amount=None, date=None,
                  source_type="", source_id="", source_no="") -> StockMove:
     """入库过账：数量、金额累加并重算移动加权均价，返回流水记录。
 
@@ -69,6 +70,7 @@ def post_inbound(company, product, quantity, unit_price, *, amount=None,
 
     return StockMove.objects.create(
         company=company, product=product, direction=StockMove.Direction.IN,
+        date=date or timezone.localdate(),
         quantity=quantity, unit_price=unit_price, amount=amount,
         balance_quantity=bal.quantity, balance_amount=bal.amount, balance_price=bal.avg_price,
         source_type=source_type, source_id=str(source_id), source_no=source_no,
@@ -76,7 +78,7 @@ def post_inbound(company, product, quantity, unit_price, *, amount=None,
 
 
 @transaction.atomic
-def reverse_move(move: StockMove, *, source_type="", source_id="", source_no="") -> StockMove:
+def reverse_move(move: StockMove, *, date=None, source_type="", source_id="", source_no="") -> StockMove:
     """精确反冲一笔历史流水（用于单据作废）。
 
     - 反冲入库：从结存中扣回原数量与原金额；若现存数量/金额不足（货已被后续消耗）→
@@ -105,6 +107,7 @@ def reverse_move(move: StockMove, *, source_type="", source_id="", source_no="")
 
     return StockMove.objects.create(
         company=move.company, product=move.product, direction=new_dir,
+        date=date or timezone.localdate(),
         quantity=move.quantity, unit_price=move.unit_price, amount=move.amount,
         balance_quantity=bal.quantity, balance_amount=bal.amount, balance_price=bal.avg_price,
         source_type=source_type, source_id=str(source_id), source_no=source_no,
@@ -112,7 +115,7 @@ def reverse_move(move: StockMove, *, source_type="", source_id="", source_no="")
 
 
 @transaction.atomic
-def post_outbound(company, product, quantity, *,
+def post_outbound(company, product, quantity, *, date=None,
                   source_type="", source_id="", source_no="") -> StockMove:
     """出库过账：按当前移动加权均价结转成本。库存不足抛 InsufficientStockError。"""
     quantity = round_qty(quantity)
@@ -142,6 +145,7 @@ def post_outbound(company, product, quantity, *,
 
     return StockMove.objects.create(
         company=company, product=product, direction=StockMove.Direction.OUT,
+        date=date or timezone.localdate(),
         quantity=quantity, unit_price=unit_price, amount=cost,
         balance_quantity=bal.quantity, balance_amount=bal.amount, balance_price=bal.avg_price,
         source_type=source_type, source_id=str(source_id), source_no=source_no,

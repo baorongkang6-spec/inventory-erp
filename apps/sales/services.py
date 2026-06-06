@@ -39,7 +39,7 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
     for ln in lines:
         quantity = round_qty(ln["quantity"])
         move = post_outbound(
-            company, ln["product"], quantity,
+            company, ln["product"], quantity, date=doc_date,
             source_type="SalesOutbound", source_id=doc.pk, source_no=doc.doc_no,
         )
         SalesOutboundLine.objects.create(

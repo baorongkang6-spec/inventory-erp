@@ -8,6 +8,7 @@
 """
 
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import Company, CompanyScopedModel
 from apps.core.money import ZERO_MONEY, ZERO_QTY
@@ -49,6 +50,7 @@ class StockMove(models.Model):
         Product, on_delete=models.PROTECT, verbose_name="商品", related_name="stock_moves"
     )
     direction = models.CharField("方向", max_length=4, choices=Direction.choices)
+    date = models.DateField("业务日期", default=timezone.localdate)  # 取自来源单据日期
 
     quantity = models.DecimalField("数量", max_digits=18, decimal_places=3)
     unit_price = models.DecimalField("单价", max_digits=18, decimal_places=2)
@@ -70,7 +72,10 @@ class StockMove(models.Model):
         verbose_name = "库存流水"
         verbose_name_plural = "库存流水"
         ordering = ["created_at", "id"]
-        indexes = [models.Index(fields=["company", "product", "created_at"])]
+        indexes = [
+            models.Index(fields=["company", "product", "created_at"]),
+            models.Index(fields=["company", "product", "date"]),
+        ]
 
     def __str__(self) -> str:
         return f"[{self.get_direction_display()}] {self.product} {self.quantity}@{self.unit_price}"
