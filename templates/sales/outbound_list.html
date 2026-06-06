@@ -13,7 +13,7 @@
     <table class="table table-hover table-striped mb-0 align-middle">
       <thead class="table-light">
         <tr><th>出库单号</th><th>日期</th><th>客户</th><th>方式</th>
-            <th class="text-end">总数量</th>
+            <th class="text-end">总数量</th><th class="text-end">含税售额</th>
             {% if perms.inventory.view_amount %}<th class="text-end">结转成本</th>{% endif %}
             <th>状态</th></tr>
       </thead>
@@ -25,11 +25,12 @@
           <td>{{ doc.customer|default:"—" }}</td>
           <td>{{ doc.get_sales_type_display }}</td>
           <td class="text-end">{{ doc.total_quantity }}</td>
+          <td class="text-end">{{ doc.total_taxed }}</td>
           {% if perms.inventory.view_amount %}<td class="text-end">{{ doc.total_cost }}</td>{% endif %}
           <td>{{ doc.get_status_display }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="7" class="text-center text-muted py-4">当前账套暂无出库单</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">当前账套暂无出库单</td></tr>
         {% endfor %}
       </tbody>
     </table>

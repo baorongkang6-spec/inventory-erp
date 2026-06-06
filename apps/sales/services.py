@@ -8,7 +8,7 @@ from django.db import transaction
 
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
-from apps.core.money import ZERO_MONEY, ZERO_QTY, round_money, round_qty
+from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY, round_money, round_qty
 from apps.inventory.services import InventoryError, post_outbound, reverse_move
 
 from .models import SalesOutbound, SalesOutboundLine
@@ -35,23 +35,37 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
     )
 
     total_qty = ZERO_QTY
-    total_cost = ZERO_MONEY
+    total_cost = total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for ln in lines:
         quantity = round_qty(ln["quantity"])
+        sale_price = round_money(ln.get("sale_unit_price") or ZERO_MONEY)
+        rate = ln.get("tax_rate", DEFAULT_TAX_RATE)
+        untaxed = round_money(quantity * sale_price)
+        tax = round_money(untaxed * rate)
+        taxed = round_money(untaxed + tax)
         move = post_outbound(
             company, ln["product"], quantity, date=doc_date,
             source_type="SalesOutbound", source_id=doc.pk, source_no=doc.doc_no,
         )
         SalesOutboundLine.objects.create(
             outbound=doc, product=ln["product"], quantity=quantity,
+            sale_unit_price=sale_price, tax_rate=rate,
+            amount_untaxed=untaxed, tax_amount=tax, amount_taxed=taxed,
             unit_cost=move.unit_price, amount=move.amount, stock_move=move,
         )
         total_qty = round_qty(total_qty + quantity)
         total_cost = round_money(total_cost + move.amount)
+        total_untaxed = round_money(total_untaxed + untaxed)
+        total_tax = round_money(total_tax + tax)
+        total_taxed = round_money(total_taxed + taxed)
 
     doc.total_quantity = total_qty
     doc.total_cost = total_cost
-    doc.save(update_fields=["total_quantity", "total_cost"])
+    doc.total_untaxed = total_untaxed
+    doc.total_tax = total_tax
+    doc.total_taxed = total_taxed
+    doc.save(update_fields=["total_quantity", "total_cost",
+                            "total_untaxed", "total_tax", "total_taxed"])
 
     # 其他费用（期间费用，不计入存货成本）
     from apps.purchasing.services import _record_expenses

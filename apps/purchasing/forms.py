@@ -6,6 +6,7 @@ product/supplier 下拉按当前账套过滤。空行（未填商品）跳过，
 from django import forms
 
 from apps.core.forms import BootstrapForm
+from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Product, Supplier
 
 from .models import PurchaseInbound
@@ -32,7 +33,9 @@ class InboundLineForm(BootstrapForm):
         label="商品", queryset=Product.objects.none(), required=False, empty_label="—"
     )
     quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3, min_value=0)
-    unit_price = forms.DecimalField(label="成本单价", required=False, max_digits=18, decimal_places=2, min_value=0)
+    unit_price = forms.DecimalField(label="不含税单价", required=False, max_digits=18, decimal_places=2, min_value=0)
+    tax_rate = forms.DecimalField(label="税率", required=False, max_digits=5, decimal_places=4,
+                                  min_value=0, max_value=1, initial=DEFAULT_TAX_RATE)
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -56,7 +59,9 @@ class InboundLineForm(BootstrapForm):
         if qty is None or qty <= 0:
             self.add_error("quantity", "数量必须大于 0")
         if price is None or price < 0:
-            self.add_error("unit_price", "请填写成本单价")
+            self.add_error("unit_price", "请填写不含税单价")
+        if cleaned.get("tax_rate") is None:
+            cleaned["tax_rate"] = DEFAULT_TAX_RATE
         return cleaned
 
 

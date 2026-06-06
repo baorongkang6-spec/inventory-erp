@@ -3,6 +3,7 @@
 from django import forms
 
 from apps.core.forms import BootstrapForm
+from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Customer, Product
 
 from .models import SalesOutbound
@@ -29,6 +30,10 @@ class OutboundLineForm(BootstrapForm):
         label="商品", queryset=Product.objects.none(), required=False, empty_label="—"
     )
     quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3, min_value=0)
+    sale_unit_price = forms.DecimalField(label="销售单价(不含税)", required=False,
+                                         max_digits=18, decimal_places=2, min_value=0)
+    tax_rate = forms.DecimalField(label="税率", required=False, max_digits=5, decimal_places=4,
+                                  min_value=0, max_value=1, initial=DEFAULT_TAX_RATE)
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -41,7 +46,7 @@ class OutboundLineForm(BootstrapForm):
         cleaned = super().clean()
         product = cleaned.get("product")
         qty = cleaned.get("quantity")
-        if not product and not qty:
+        if not product and not qty and not cleaned.get("sale_unit_price"):
             cleaned["_empty"] = True
             return cleaned
         cleaned["_empty"] = False
@@ -49,6 +54,8 @@ class OutboundLineForm(BootstrapForm):
             self.add_error("product", "请选择商品")
         if qty is None or qty <= 0:
             self.add_error("quantity", "数量必须大于 0")
+        if cleaned.get("tax_rate") is None:
+            cleaned["tax_rate"] = DEFAULT_TAX_RATE
         return cleaned
 
 

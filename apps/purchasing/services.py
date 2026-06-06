@@ -4,7 +4,7 @@ from django.db import transaction
 
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
-from apps.core.money import ZERO_MONEY, ZERO_QTY, round_money, round_qty
+from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY, round_money, round_qty
 from apps.inventory.services import InventoryError, post_inbound, reverse_move
 
 from .models import PurchaseInbound, PurchaseInboundLine
@@ -34,7 +34,8 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
     )
 
     norm = [{"product": ln["product"], "quantity": round_qty(ln["quantity"]),
-             "unit_price": round_money(ln["unit_price"])} for ln in lines]
+             "unit_price": round_money(ln["unit_price"]),
+             "tax_rate": ln.get("tax_rate", DEFAULT_TAX_RATE)} for ln in lines]
     base = [round_money(x["quantity"] * x["unit_price"]) for x in norm]
     base_total = sum(base, ZERO_MONEY)
 
@@ -55,9 +56,11 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
                 alloc[i] = round_money(cost_fee - running)  # 余数归最后一行
 
     total_qty = ZERO_QTY
-    total_amount = ZERO_MONEY
+    total_amount = total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for x, b, fee in zip(norm, base, alloc):
-        line_amount = round_money(b + fee)
+        line_amount = round_money(b + fee)  # 入库成本（不含税 + 计入成本的费用分摊）
+        tax = round_money(b * x["tax_rate"])
+        taxed = round_money(b + tax)
         move = post_inbound(
             company, x["product"], x["quantity"], x["unit_price"], amount=line_amount,
             date=doc_date,
@@ -65,10 +68,15 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
         )
         PurchaseInboundLine.objects.create(
             inbound=doc, product=x["product"], quantity=x["quantity"],
-            unit_price=move.unit_price, amount=move.amount, stock_move=move,
+            unit_price=move.unit_price, tax_rate=x["tax_rate"],
+            amount_untaxed=b, tax_amount=tax, amount_taxed=taxed,
+            amount=move.amount, stock_move=move,
         )
         total_qty = round_qty(total_qty + x["quantity"])
         total_amount = round_money(total_amount + move.amount)
+        total_untaxed = round_money(total_untaxed + b)
+        total_tax = round_money(total_tax + tax)
+        total_taxed = round_money(total_taxed + taxed)
 
     # 记录其他费用（含计入成本与期间费用）
     _record_expenses(company, user, doc, doc_date, expenses, kind="purchase")
@@ -85,7 +93,11 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
 
     doc.total_quantity = total_qty
     doc.total_amount = total_amount
-    doc.save(update_fields=["total_quantity", "total_amount"])
+    doc.total_untaxed = total_untaxed
+    doc.total_tax = total_tax
+    doc.total_taxed = total_taxed
+    doc.save(update_fields=["total_quantity", "total_amount",
+                            "total_untaxed", "total_tax", "total_taxed"])
 
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,

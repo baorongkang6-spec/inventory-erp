@@ -264,9 +264,10 @@ class Command(BaseCommand):
         create_and_post_inbound(company=c1, user=None, doc_date=d, lines=[
             {"product": p001, "quantity": Decimal("50"), "unit_price": Decimal("13")},
         ])
-        # 出库 60 → 按均价 11.00 结转成本 660，结存 90@11
+        # 出库 60 → 按均价 11.00 结转成本 660，结存 90@11；售价 15(不含税)
         create_and_post_outbound(company=c1, user=None, doc_date=d, lines=[
-            {"product": p001, "quantity": Decimal("60")},
+            {"product": p001, "quantity": Decimal("60"),
+             "sale_unit_price": Decimal("15"), "tax_rate": Decimal("0.13")},
         ])
         self.stdout.write("  · 样例单据（入库×2 + 出库×1，演示移动加权）")
 

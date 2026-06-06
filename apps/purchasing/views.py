@@ -50,7 +50,8 @@ def inbound_create(request):
         expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [
-                {"product": cd["product"], "quantity": cd["quantity"], "unit_price": cd["unit_price"]}
+                {"product": cd["product"], "quantity": cd["quantity"],
+                 "unit_price": cd["unit_price"], "tax_rate": cd["tax_rate"]}
                 for cd in formset.valid_lines
             ]
             expenses = [{"category": e["category"], "amount": e["amount"]}

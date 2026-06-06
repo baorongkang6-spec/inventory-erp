@@ -33,7 +33,9 @@
     <table class="table table-striped mb-0 align-middle">
       <thead class="table-light">
         <tr><th>商品</th><th class="text-end">数量</th>
-            {% if perms.inventory.view_amount %}<th class="text-end">结转单位成本</th><th class="text-end">结转成本</th>{% endif %}
+            <th class="text-end">销售单价</th><th class="text-end">不含税</th>
+            <th class="text-end">税率</th><th class="text-end">税额</th><th class="text-end">含税</th>
+            {% if perms.inventory.view_amount %}<th class="text-end">结转成本</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -41,13 +43,20 @@
         <tr>
           <td>{{ line.product }}</td>
           <td class="text-end">{{ line.quantity }}</td>
-          {% if perms.inventory.view_amount %}<td class="text-end">{{ line.unit_cost }}</td><td class="text-end">{{ line.amount }}</td>{% endif %}
+          <td class="text-end">{{ line.sale_unit_price }}</td>
+          <td class="text-end">{{ line.amount_untaxed }}</td>
+          <td class="text-end">{{ line.tax_rate }}</td>
+          <td class="text-end">{{ line.tax_amount }}</td>
+          <td class="text-end">{{ line.amount_taxed }}</td>
+          {% if perms.inventory.view_amount %}<td class="text-end">{{ line.amount }}</td>{% endif %}
         </tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-light">
-        <tr><th>合计</th><th class="text-end">{{ doc.total_quantity }}</th>
-            {% if perms.inventory.view_amount %}<th></th><th class="text-end">{{ doc.total_cost }}</th>{% endif %}
+        <tr><th>合计</th><th class="text-end">{{ doc.total_quantity }}</th><th></th>
+            <th class="text-end">{{ doc.total_untaxed }}</th><th></th>
+            <th class="text-end">{{ doc.total_tax }}</th><th class="text-end">{{ doc.total_taxed }}</th>
+            {% if perms.inventory.view_amount %}<th class="text-end">{{ doc.total_cost }}</th>{% endif %}
         </tr>
       </tfoot>
     </table>

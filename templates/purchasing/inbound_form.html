@@ -39,8 +39,8 @@
     <div class="table-responsive">
       <table class="table mb-0 align-middle">
         <thead class="table-light">
-          <tr><th style="width:45%">商品</th><th style="width:25%">数量</th>
-              <th style="width:25%">成本单价</th><th></th></tr>
+          <tr><th style="width:34%">商品</th><th>数量</th>
+              <th>不含税单价</th><th>税率</th><th></th></tr>
         </thead>
         <tbody>
           {% for form in formset %}
@@ -48,6 +48,7 @@
             <td>{{ form.product }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.unit_price }}{% for e in form.unit_price.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.tax_rate }}{% for e in form.tax_rate.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td class="text-muted small">第 {{ forloop.counter }} 行</td>
           </tr>
           {% endfor %}

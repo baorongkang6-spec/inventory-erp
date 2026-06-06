@@ -53,3 +53,37 @@ class ExpenseCostTests(TestCase):
         b2 = StockBalance.objects.get(company=self.c1, product=self.p2)
         self.assertEqual(b1.amount, Decimal("1100.00"))  # 1000 + 100
         self.assertEqual(b2.amount, Decimal("3300.00"))  # 3000 + 300
+
+
+class ThreePriceTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+
+    def test_inbound_three_price(self):
+        from datetime import date
+        doc = create_and_post_inbound(company=self.c1, user=None, doc_date=date(2026, 6, 1),
+            lines=[{"product": self.p, "quantity": Decimal("100"), "unit_price": Decimal("10"),
+                    "tax_rate": Decimal("0.13")}])
+        ln = doc.lines.get()
+        self.assertEqual(ln.amount_untaxed, Decimal("1000.00"))
+        self.assertEqual(ln.tax_amount, Decimal("130.00"))
+        self.assertEqual(ln.amount_taxed, Decimal("1130.00"))
+        self.assertEqual(ln.amount, Decimal("1000.00"))  # 入库成本=不含税(无费用)
+        self.assertEqual(doc.total_taxed, Decimal("1130.00"))
+
+    def test_outbound_sale_three_price_independent_of_cost(self):
+        from datetime import date
+        from apps.sales.services import create_and_post_outbound
+        create_and_post_inbound(company=self.c1, user=None, doc_date=date(2026, 6, 1),
+            lines=[{"product": self.p, "quantity": Decimal("100"), "unit_price": Decimal("10"),
+                    "tax_rate": Decimal("0.13")}])
+        out = create_and_post_outbound(company=self.c1, user=None, doc_date=date(2026, 6, 2),
+            lines=[{"product": self.p, "quantity": Decimal("60"),
+                    "sale_unit_price": Decimal("15"), "tax_rate": Decimal("0.13")}])
+        ln = out.lines.get()
+        self.assertEqual(ln.amount_untaxed, Decimal("900.00"))   # 售价 60×15
+        self.assertEqual(ln.tax_amount, Decimal("117.00"))
+        self.assertEqual(ln.amount_taxed, Decimal("1017.00"))
+        self.assertEqual(ln.amount, Decimal("600.00"))           # 结转成本 60×10，独立

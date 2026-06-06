@@ -7,7 +7,7 @@
 from django.db import models
 
 from apps.core.models import CompanyScopedModel
-from apps.core.money import ZERO_MONEY, ZERO_QTY
+from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY
 from apps.masterdata.models import Product, Supplier
 
 
@@ -31,7 +31,10 @@ class PurchaseInbound(CompanyScopedModel):
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.POSTED)
     remark = models.CharField("备注", max_length=255, blank=True)
     total_quantity = models.DecimalField("总数量", max_digits=18, decimal_places=3, default=ZERO_QTY)
-    total_amount = models.DecimalField("总金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_amount = models.DecimalField("入库成本合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_untaxed = models.DecimalField("不含税合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_tax = models.DecimalField("税额合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_taxed = models.DecimalField("含税合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     # 关联联动（M4）：本单是由对方公司的销售出库自动镜像生成时，指向源出库单
     source_outbound = models.ForeignKey(
         "sales.SalesOutbound", on_delete=models.SET_NULL, null=True, blank=True,
@@ -57,8 +60,13 @@ class PurchaseInboundLine(models.Model):
     )
     product = models.ForeignKey(Product, on_delete=models.PROTECT, verbose_name="商品")
     quantity = models.DecimalField("数量", max_digits=18, decimal_places=3)
-    unit_price = models.DecimalField("成本单价", max_digits=18, decimal_places=2)
-    amount = models.DecimalField("金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    unit_price = models.DecimalField("不含税单价", max_digits=18, decimal_places=2)
+    # 含税三价（M7：单据上带出，供发票联动；库存成本仍按不含税 amount 入账）
+    tax_rate = models.DecimalField("税率", max_digits=5, decimal_places=4, default=DEFAULT_TAX_RATE)
+    amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    amount = models.DecimalField("入库成本金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     stock_move = models.ForeignKey(
         "inventory.StockMove", on_delete=models.PROTECT, null=True, blank=True, verbose_name="对应流水"
     )

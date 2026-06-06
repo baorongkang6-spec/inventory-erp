@@ -7,7 +7,7 @@
 from django.db import models
 
 from apps.core.models import CompanyScopedModel
-from apps.core.money import ZERO_MONEY, ZERO_QTY
+from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY
 from apps.masterdata.models import Customer, Product
 
 
@@ -32,7 +32,10 @@ class SalesOutbound(CompanyScopedModel):
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.POSTED)
     remark = models.CharField("备注", max_length=255, blank=True)
     total_quantity = models.DecimalField("总数量", max_digits=18, decimal_places=3, default=ZERO_QTY)
-    total_cost = models.DecimalField("总成本", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_cost = models.DecimalField("结转成本合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_untaxed = models.DecimalField("不含税售额合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_tax = models.DecimalField("税额合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    total_taxed = models.DecimalField("含税售额合计", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     # 关联联动（M4）：本单面向关联公司时，自动在对方账套生成的镜像采购入库单
     mirror_inbound = models.ForeignKey(
         "purchasing.PurchaseInbound", on_delete=models.SET_NULL, null=True, blank=True,
@@ -58,6 +61,13 @@ class SalesOutboundLine(models.Model):
     )
     product = models.ForeignKey(Product, on_delete=models.PROTECT, verbose_name="商品")
     quantity = models.DecimalField("数量", max_digits=18, decimal_places=3)
+    # 售价含税三价（M7：供销售发票联动；与结转成本相互独立）
+    sale_unit_price = models.DecimalField("销售单价(不含税)", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    tax_rate = models.DecimalField("税率", max_digits=5, decimal_places=4, default=DEFAULT_TAX_RATE)
+    amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    # 结转成本（移动加权，库存侧）
     unit_cost = models.DecimalField("结转单位成本", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     amount = models.DecimalField("结转成本", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     stock_move = models.ForeignKey(

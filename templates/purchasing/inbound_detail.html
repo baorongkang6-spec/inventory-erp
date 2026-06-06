@@ -32,8 +32,9 @@
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>商品</th><th class="text-end">数量</th><th class="text-end">成本单价</th>
-            <th class="text-end">金额</th></tr>
+        <tr><th>商品</th><th class="text-end">数量</th><th class="text-end">不含税单价</th>
+            <th class="text-end">不含税金额</th><th class="text-end">税率</th><th class="text-end">税额</th>
+            <th class="text-end">含税金额</th><th class="text-end">入库成本</th></tr>
       </thead>
       <tbody>
         {% for line in doc.lines.all %}
@@ -41,12 +42,19 @@
           <td>{{ line.product }}</td>
           <td class="text-end">{{ line.quantity }}</td>
           <td class="text-end">{{ line.unit_price }}</td>
+          <td class="text-end">{{ line.amount_untaxed }}</td>
+          <td class="text-end">{{ line.tax_rate }}</td>
+          <td class="text-end">{{ line.tax_amount }}</td>
+          <td class="text-end">{{ line.amount_taxed }}</td>
           <td class="text-end">{{ line.amount }}</td>
         </tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-light">
         <tr><th>合计</th><th class="text-end">{{ doc.total_quantity }}</th><th></th>
+            <th class="text-end">{{ doc.total_untaxed }}</th><th></th>
+            <th class="text-end">{{ doc.total_tax }}</th>
+            <th class="text-end">{{ doc.total_taxed }}</th>
             <th class="text-end">{{ doc.total_amount }}</th></tr>
       </tfoot>
     </table>
