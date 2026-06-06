@@ -106,7 +106,7 @@ def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
 
 # (key, 标签, 下钻报表 url 名)
 CATEGORIES = [
-    ("bank", "银行存款", "bank_journal_report"),
+    ("bank", "银行存款", "bank_accounts_report"),
     ("stock", "库存商品（金额）", "stock_report"),
     ("payable", "供应商往来（应付）", "payables_report"),
     ("receivable", "客户往来（应收）", "receivables_report"),
@@ -175,6 +175,22 @@ def _pset():
     return {"opening": Z, "income": Z, "outgo": Z}
 
 
+def bank_accounts_balance(company, dfrom, dto):
+    """某公司各银行账户在 [dfrom, dto] 的 期初/本期收入/本期发出/期末（带 account 对象，供下钻）。
+
+    期初 = 账户期初余额 + 区间前日记账净额；当期无发生时 期初=期末。
+    """
+    rows = []
+    for acc in BankAccount.objects.filter(company=company).order_by("name"):
+        bj = BankJournal.objects.filter(company=company, bank_account=acc)
+        r = _period(bj.filter(direction=BankJournal.Direction.IN),
+                    bj.filter(direction=BankJournal.Direction.OUT), "date", "date", dfrom, dto)
+        r["opening"] += acc.opening_balance
+        r["ending"] += acc.opening_balance
+        rows.append({"account": acc, **r})
+    return rows
+
+
 def account_balance_table(companies, dfrom, dto):
     """三公司明细账户余额：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
 
@@ -183,13 +199,10 @@ def account_balance_table(companies, dfrom, dto):
     bank_rows, stock_rows, ap_rows, ar_rows = [], [], [], []
     for company in companies:
         # 银行：每账户
-        for acc in BankAccount.objects.filter(company=company).order_by("name"):
-            bj = BankJournal.objects.filter(company=company, bank_account=acc)
-            r = _period(bj.filter(direction=BankJournal.Direction.IN),
-                        bj.filter(direction=BankJournal.Direction.OUT), "date", "date", dfrom, dto)
-            r["opening"] += acc.opening_balance
-            r["ending"] += acc.opening_balance
-            bank_rows.append({"company": company, "name": str(acc), **r})
+        for r in bank_accounts_balance(company, dfrom, dto):
+            bank_rows.append({"company": company, "name": str(r["account"]),
+                              "opening": r["opening"], "income": r["income"],
+                              "outgo": r["outgo"], "ending": r["ending"]})
 
         # 库存：每商品（金额）
         moves = StockMove.objects.filter(company=company).select_related("product")

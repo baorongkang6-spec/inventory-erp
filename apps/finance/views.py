@@ -481,6 +481,30 @@ def _journal_rows(company, account, date_from=None, date_to=None):
 
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
+def bank_accounts_report(request):
+    """银行存款分户余额表（总览「银行存款」下钻第一层）：
+    某公司各银行账户的 期初/本期收入/本期发出/期末，行可再点入该账户流水。"""
+    from apps.opening.reports import bank_accounts_balance
+    company = resolve_company(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    rows = bank_accounts_balance(company, dfrom, dto) if company else []
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("opening", "income", "outgo", "ending")}
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["银行账户", "期初余额", "本期收入", "本期发出", "期末余额"]
+        data = [[str(r["account"]), r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
+        return xlsx_response(f"银行存款分户余额表_{dfrom}_{dto}", headers, data)
+    return render(request, "finance/bank_accounts_report.html", {
+        "rows": rows, "totals": totals, "active_company": company,
+        "date_from": dfrom, "date_to": dto,
+    })
+
+
+@login_required
+@permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_report(request):
     company = resolve_company(request)
     accounts = list(BankAccount.objects.filter(company=company).order_by("name"))

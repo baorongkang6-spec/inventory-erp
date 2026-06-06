@@ -28,6 +28,7 @@ urlpatterns = [
     path("receipts/<int:pk>/", views.ReceiptDetailView.as_view(), name="receipt_detail"),
     path("receipts/<int:pk>/allocate/", views.receipt_allocate, name="receipt_allocate"),
     # 报表（M2-6）
+    path("reports/bank-accounts/", views.bank_accounts_report, name="bank_accounts_report"),
     path("reports/bank-journal/", views.bank_journal_report, name="bank_journal_report"),
     path("reports/bank-journal/export/", views.bank_journal_export, name="bank_journal_export"),
     path("reports/bank-journal/import/", views.bank_journal_import, name="bank_journal_import"),

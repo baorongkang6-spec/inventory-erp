@@ -322,6 +322,52 @@ class BankJournalImportViewTests(TestCase):
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
 
 
+class BankAccountsReportTests(TestCase):
+    """银行存款分户余额表（总览下钻第一层）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc1 = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                              opening_balance=Decimal("1000"))
+        cls.acc2 = BankAccount.objects.create(company=cls.c1, name="一般户",
+                                              opening_balance=Decimal("500"))
+        # 基本户：期间内付款 300（流出）
+        create_payment(company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+                       bank_account=cls.acc1, supplier=cls.sup, amount=Decimal("300"), summary="付款")
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        cls.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="finance", codename="view_bankjournal"))
+
+    def _rows(self, dfrom="2026-06-01", dto="2026-06-30"):
+        self.client.force_login(self.user)
+        r = self.client.get(f"/finance/reports/bank-accounts/?company={self.c1.pk}&from={dfrom}&to={dto}",
+                            SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        return {row["account"].name: row for row in r.context["rows"]}
+
+    def test_per_account_balances(self):
+        rows = self._rows()
+        self.assertEqual(rows["基本户"]["opening"], Decimal("1000.00"))
+        self.assertEqual(rows["基本户"]["outgo"], Decimal("300.00"))
+        self.assertEqual(rows["基本户"]["ending"], Decimal("700.00"))
+        # 一般户当期无发生：期初=期末=500
+        self.assertEqual(rows["一般户"]["income"], Decimal("0.00"))
+        self.assertEqual(rows["一般户"]["ending"], Decimal("500.00"))
+
+    def test_future_range_shows_ending_without_activity(self):
+        rows = self._rows("2099-01-01", "2099-12-31")
+        # 付款已在区间前 → 计入期初；当期无发生但仍显示期末
+        self.assertEqual(rows["基本户"]["income"], Decimal("0.00"))
+        self.assertEqual(rows["基本户"]["outgo"], Decimal("0.00"))
+        self.assertEqual(rows["基本户"]["ending"], Decimal("700.00"))
+        self.assertEqual(rows["基本户"]["opening"], rows["基本户"]["ending"])
+
+
 class NoteRegistrationTests(TestCase):
     @classmethod
     def setUpTestData(cls):

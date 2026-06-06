@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}银行存款分户余额表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">银行存款分户余额表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">点账户行可进入该账户流水明细；当期无发生也显示期末余额。金额单位元。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  {% if request.GET.company %}<input type="hidden" name="company" value="{{ request.GET.company }}">{% endif %}
+  <div class="col-auto"><label class="form-label">起始日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">截止日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">银行账户</th><th>期初余额</th><th>本期收入</th>
+            <th>本期发出</th><th>期末余额</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="text-start">
+            <a href="{% url 'bank_journal_report' %}?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}account={{ r.account.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">{{ r.account }}</a>
+          </td>
+          <td>{{ r.opening }}</td>
+          <td>{{ r.income }}</td>
+          <td>{{ r.outgo }}</td>
+          <td class="fw-semibold">{{ r.ending }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-4">该公司暂无银行账户</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th class="text-start">合计</th><th>{{ totals.opening }}</th><th>{{ totals.income }}</th>
+            <th>{{ totals.outgo }}</th><th>{{ totals.ending }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}
