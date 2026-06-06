@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}对账记录 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">对账记录 · {{ run.get_category_display }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <div class="d-flex gap-2">
+    <a href="?export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
+    <a href="{% url 'reconciliation_history' %}" class="btn btn-outline-secondary btn-sm">返回历史</a>
+  </div>
+</div>
+<p class="text-muted">
+  对账时间：{{ run.created_at|date:"Y-m-d H:i" }}　截止日期：{{ run.as_of_date }}
+  <b>对账人：{{ run.created_by|default:"—" }}</b>
+</p>
+
+<div class="card">
+  <div class="card-header">对账结果（差异≠0 标红）</div>
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light"><tr><th class="text-start">项目</th><th>系统余额</th><th>外部余额</th><th>差异</th></tr></thead>
+      <tbody>
+        {% for ln in lines %}
+        <tr class="{% if ln.diff %}table-danger{% endif %}">
+          <td class="text-start">{{ ln.item_label }}</td>
+          <td>{{ ln.system_amount }}</td>
+          <td>{{ ln.external_amount }}</td>
+          <td class="fw-semibold">{{ ln.diff }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="text-center text-muted py-3">无明细</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -70,7 +70,7 @@ def _safe(s):
 
 
 def xlsx_response(report_name, headers, rows, *, company=None, period=None,
-                  sheet_title=None, generated=None):
+                  sheet_title=None, generated=None, extra_meta=None):
     """report_name 报表名（作标题）；company 编制单位（Company 或 str）；
     period (dfrom, dto) 期间；generated 导出日期（默认今天）。
     文件名规则：{报表名}_{编制单位}_{起}-{止}_{导出日}.xlsx（缺省部分省略）。"""
@@ -102,6 +102,8 @@ def xlsx_response(report_name, headers, rows, *, company=None, period=None,
         meta.append(f"编制单位：{company_label}")
     if dfrom or dto:
         meta.append(f"期间：{_norm(dfrom) or '起初'} ~ {_norm(dto) or '至今'}")
+    for m in (extra_meta or []):
+        meta.append(str(m))
     meta.append(f"导出日期：{_norm(gen)}")
     ws.merge_cells(f"A{r}:{last_col}{r}")
     mcell = ws.cell(r, 1, "　".join(meta))

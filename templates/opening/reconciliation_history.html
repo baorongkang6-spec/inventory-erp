@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}对账历史 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">对账历史<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a href="{% url 'reconciliation' %}" class="btn btn-outline-primary btn-sm">新建对账</a>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>对账时间</th><th>对账类别</th><th>截止日期</th><th>对账人</th>
+            <th class="text-center">项目数</th><th class="text-center">差异</th><th class="text-end">操作</th></tr>
+      </thead>
+      <tbody>
+        {% for x in rows %}
+        <tr>
+          <td>{{ x.run.created_at|date:"Y-m-d H:i" }}</td>
+          <td>{{ x.run.get_category_display }}</td>
+          <td>{{ x.run.as_of_date }}</td>
+          <td>{{ x.run.created_by|default:"—" }}</td>
+          <td class="text-center">{{ x.n }}</td>
+          <td class="text-center">
+            {% if x.has_diff %}<span class="badge text-bg-danger">有差异</span>
+            {% else %}<span class="badge text-bg-success">平</span>{% endif %}
+          </td>
+          <td class="text-end">
+            <a href="{% url 'reconciliation_detail' x.run.pk %}" class="btn btn-sm btn-outline-secondary">查看</a>
+            <a href="{% url 'reconciliation_detail' x.run.pk %}?export=xlsx" class="btn btn-sm btn-outline-success">导出</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-4">暂无对账记录</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

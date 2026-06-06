@@ -4,7 +4,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.accounts import roles
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
@@ -219,6 +219,7 @@ def reconciliation(request):
     sys_lines = recon_lines(company, category)
     result = None
 
+    saved_run = None
     if request.method == "POST":
         as_of = request.POST.get("as_of") or str(timezone.localdate())
         run = ReconciliationRun.objects.create(
@@ -236,9 +237,47 @@ def reconciliation(request):
                 external_amount=ext, diff=diff)
             result.append({"label": line["label"], "system": line["system_amount"],
                            "external": ext, "diff": diff})
+        saved_run = run
         messages.success(request, "对账完成，已保存对账记录")
 
     return render(request, "opening/reconciliation.html", {
         "categories": categories, "category": category,
-        "sys_lines": sys_lines, "result": result, "today": timezone.localdate(),
+        "sys_lines": sys_lines, "result": result, "saved_run": saved_run,
+        "today": timezone.localdate(),
     })
+
+
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def reconciliation_history(request):
+    """对账历史：列出本账套已保存的对账记录（每月对账留痕）。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    runs = (ReconciliationRun.objects.filter(company=company)
+            .select_related("created_by").prefetch_related("lines")
+            if company else ReconciliationRun.objects.none())
+    rows = []
+    for run in runs:
+        lines = list(run.lines.all())
+        has_diff = any(ln.diff != 0 for ln in lines)
+        rows.append({"run": run, "n": len(lines), "has_diff": has_diff})
+    return render(request, "opening/reconciliation_history.html",
+                  {"rows": rows, "active_company": company})
+
+
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def reconciliation_detail(request, pk):
+    """对账记录详情（含对账人）+ 导出 Excel。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    run = get_object_or_404(ReconciliationRun, pk=pk, company=company)
+    lines = list(run.lines.all())
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["项目", "系统余额", "外部余额", "差异"]
+        data = [[ln.item_label, ln.system_amount, ln.external_amount, ln.diff] for ln in lines]
+        return xlsx_response(f"月底对账-{run.get_category_display()}", headers, data,
+                             company=company,
+                             extra_meta=[f"截止日期：{run.as_of_date}",
+                                         f"对账人：{run.created_by or '—'}"])
+    return render(request, "opening/reconciliation_detail.html",
+                  {"run": run, "lines": lines, "active_company": company})

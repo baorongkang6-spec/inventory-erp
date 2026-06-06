@@ -93,6 +93,7 @@
             {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'notes_balance_report' %}">票据余额表</a></li>{% endif %}
             {% if perms.finance.view_borrowtransaction %}<li><a class="dropdown-item" href="{% url 'borrow_report' %}">借调往来余额表</a></li>{% endif %}
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'reconciliation' %}">月底对账</a></li>{% endif %}
+            {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'reconciliation_history' %}">对账历史</a></li>{% endif %}
             {% if perms.finance.add_purchaseinvoice %}<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="{% url 'opening_import' %}">期初导入</a></li>{% endif %}
           </ul>
         </li>
