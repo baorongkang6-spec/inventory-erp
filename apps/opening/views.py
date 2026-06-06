@@ -7,7 +7,7 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
 from apps.accounts import roles
-from apps.core.scope import get_active_company, get_visible_companies
+from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 
 from .imports import IMPORTERS, TEMPLATES, build_template
 from .models import ReconciliationLine, ReconciliationRun
@@ -101,9 +101,10 @@ def overview(request):
 # ============================= 账户余额表（M7-6 / #8）========================
 @login_required
 def account_balance(request):
-    """三公司明细账户余额表：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
+    """当前账套明细账户余额表：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
 
-    口径同总览：期初(区间前累计)+本期收入−本期发出=期末。默认月初~今天。
+    跟随当前账套（与「报表」菜单其它项一致）；需跨三家公司请用「总览表」。
+    口径：期初(区间前累计)+本期收入−本期发出=期末。默认月初~今天。
     """
     if not (_is_overview(request.user)
             or request.user.has_perm("finance.view_bankjournal")
@@ -113,7 +114,8 @@ def account_balance(request):
     today = timezone.localdate()
     dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
     dto = _parse_date(request.GET.get("to")) or today
-    companies = list(get_visible_companies(request.user))
+    company = resolve_company(request)
+    companies = [company] if company else []
     sections = account_balance_table(companies, dfrom, dto)
     blocks = [
         {"key": "bank", "label": "银行存款明细账户", "rows": sections["bank"]},
@@ -129,7 +131,7 @@ def account_balance(request):
                 for b in blocks for r in b["rows"]]
         return xlsx_response(f"账户余额表_{dfrom}_{dto}", headers, rows)
     return render(request, "opening/account_balance.html", {
-        "companies": companies, "blocks": blocks,
+        "companies": companies, "blocks": blocks, "active_company": company,
         "date_from": dfrom, "date_to": dto,
     })
 
