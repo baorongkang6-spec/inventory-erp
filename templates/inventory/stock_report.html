@@ -4,11 +4,24 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">库存{% if can_view_amount %}数量金额{% else %}数量{% endif %}表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
   <div class="d-flex gap-2">
-    <a href="{% url 'stock_ledger' %}" class="btn btn-outline-secondary btn-sm">商品流水台账</a>
-    <a href="?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}export=xlsx"
+    <a href="{% url 'stock_products_report' %}{% if company_id %}?company={{ company_id }}{% endif %}"
+       class="btn btn-outline-secondary btn-sm">商品余额表（期初/本期/期末）</a>
+    <a href="?{% if company_id %}company={{ company_id }}&{% endif %}{% if q %}q={{ q }}&{% endif %}export=xlsx"
        class="btn btn-outline-success btn-sm">导出 Excel</a>
   </div>
 </div>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  {% if company_id %}<input type="hidden" name="company" value="{{ company_id }}">{% endif %}
+  <div class="col-auto"><label class="form-label">商品编码/名称</label>
+    <input type="text" name="q" value="{{ q }}" placeholder="编码或名称" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">明细账·起始日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">明细账·截止日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+<p class="text-muted small">下表为当前结存；点商品「明细账」按所选日期区间生成该商品流水明细。</p>
 
 <div class="card">
   <div class="table-responsive">
@@ -18,6 +31,7 @@
           <th>编码</th><th>名称</th><th>规格</th><th>单位</th>
           <th class="text-end">结存数量</th>
           {% if can_view_amount %}<th class="text-end">移动加权均价</th><th class="text-end">结存金额</th>{% endif %}
+          <th class="text-end">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -29,14 +43,18 @@
           <td>{{ b.product.unit|default:"—" }}</td>
           <td class="text-end">{{ b.quantity }}</td>
           {% if can_view_amount %}<td class="text-end">{{ b.avg_price }}</td><td class="text-end">{{ b.amount }}</td>{% endif %}
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary py-0"
+               href="{% url 'stock_ledger' %}?{% if company_id %}company={{ company_id }}&{% endif %}product={{ b.product.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">明细账</a>
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="{% if can_view_amount %}7{% else %}5{% endif %}" class="text-center text-muted py-4">当前账套暂无库存</td></tr>
+        <tr><td colspan="{% if can_view_amount %}8{% else %}6{% endif %}" class="text-center text-muted py-4">未找到匹配的库存商品</td></tr>
         {% endfor %}
       </tbody>
       {% if can_view_amount and balances %}
       <tfoot class="table-light">
-        <tr><th colspan="6" class="text-end">库存总金额</th><th class="text-end">{{ total_amount }}</th></tr>
+        <tr><th colspan="6" class="text-end">库存总金额</th><th class="text-end">{{ total_amount }}</th><th></th></tr>
       </tfoot>
       {% endif %}
     </table>

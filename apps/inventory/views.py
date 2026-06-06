@@ -37,6 +37,10 @@ class StockReportView(CompanyScopedMixin, ListView):
     def get_queryset(self):
         company = resolve_company(self.request)
         qs = self.model.objects.all() if company is None else self.model.objects.for_company(company)
+        q = (self.request.GET.get("q") or "").strip()
+        if q:
+            from django.db.models import Q
+            qs = qs.filter(Q(product__code__icontains=q) | Q(product__name__icontains=q))
         return qs.select_related("product").order_by("product__code")
 
     def get(self, request, *args, **kwargs):
@@ -60,9 +64,14 @@ class StockReportView(CompanyScopedMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        today = timezone.localdate()
         ctx["can_view_amount"] = self.request.user.has_perm("inventory.view_amount")
         ctx["total_amount"] = sum((b.amount for b in ctx["balances"]), start=Decimal("0.00"))
         ctx["active_company"] = resolve_company(self.request)
+        ctx["q"] = self.request.GET.get("q", "")
+        ctx["date_from"] = _parse_date(self.request.GET.get("from")) or today.replace(day=1)
+        ctx["date_to"] = _parse_date(self.request.GET.get("to")) or today
+        ctx["company_id"] = self.request.GET.get("company", "")
         return ctx
 
 

@@ -55,6 +55,16 @@ class StockReportPermissionTests(TestCase):
         self.assertContains(resp, "结存金额")
         self.assertContains(resp, "50.00")
 
+    def test_keyword_filter_and_ledger_link(self):
+        Product.objects.create(company=self.c1, code="P002", name="固化剂")
+        post_inbound(self.c1, Product.objects.get(company=self.c1, code="P002"),
+                     Decimal("5"), Decimal("2"))
+        self.client.force_login(self.with_amount)
+        resp = self.client.get("/inventory/stock/?q=固化", SERVER_NAME="localhost")
+        self.assertContains(resp, "固化剂")
+        self.assertNotContains(resp, "环氧树脂")
+        self.assertContains(resp, "明细账")        # 下钻按钮存在
+
 
 class MovingAverageTests(TestCase):
     @classmethod
