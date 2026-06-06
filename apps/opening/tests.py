@@ -121,6 +121,50 @@ class OverviewReportTests(TestCase):
         self.assertEqual(ov["stock"]["opening"], ov["stock"]["ending"])
 
 
+class AccountBalanceTableTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from datetime import date
+        from apps.inventory.services import post_inbound
+        from apps.purchasing.services import create_and_post_inbound
+        from apps.finance.services import (
+            allocate_payment, create_payment, create_purchase_invoice,
+        )
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("1000"))
+        d = date(2026, 6, 1)
+        post_inbound(cls.c1, cls.p, Decimal("50"), Decimal("10"),
+                     source_type="Opening", source_no="期初")
+        create_and_post_inbound(company=cls.c1, user=None, doc_date=d,
+            lines=[{"product": cls.p, "quantity": Decimal("100"), "unit_price": Decimal("10")}])
+        inv = create_purchase_invoice(company=cls.c1, user=None, doc_date=d, supplier=cls.sup,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0.13")}])  # 应付 1130
+        pay = create_payment(company=cls.c1, user=None, doc_date=d, bank_account=cls.acc,
+                             supplier=cls.sup, amount=Decimal("500"))
+        allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("500")}])
+
+    def test_account_balance_detail_rows(self):
+        from datetime import date
+        from apps.opening.reports import account_balance_table
+        t = account_balance_table([self.c1], date(2026, 1, 1), date(2030, 1, 1))
+        # 银行：期初1000 + 付款500流出 → 期末500
+        bank = t["bank"][0]
+        self.assertEqual(bank["ending"], Decimal("500.00"))
+        self.assertEqual(bank["outgo"], Decimal("500.00"))
+        # 库存：50@10 + 100@10 = 1500
+        stock = t["stock"][0]
+        self.assertEqual(stock["ending"], Decimal("1500.00"))
+        # 应付：发票1130 - 付款核销500 = 630
+        ap = t["payable"][0]
+        self.assertEqual(ap["ending"], Decimal("630.00"))
+        for sec in (bank, stock, ap):
+            self.assertEqual(sec["opening"] + sec["income"] - sec["outgo"], sec["ending"])
+
+
 class ReconciliationTests(TestCase):
     @classmethod
     def setUpTestData(cls):

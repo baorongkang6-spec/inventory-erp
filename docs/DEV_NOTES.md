@@ -54,3 +54,10 @@
 - **静态文件**：纯 WSGI（Waitress）不会自动服务 static，用 **WhiteNoise**（中间件紧跟 SecurityMiddleware）+ 生产 `CompressedManifestStaticFilesStorage`（须先 `collectstatic`）；开发不启用 manifest，否则未 collect 时 `{% static %}` 报错。
 - **.env 要真正加载**：写了 `.env.example` 不等于生效——`settings` 里 `load_dotenv(BASE_DIR/'.env')` 才会读。
 - **校验**：`manage.py check --deploy`（带生产 env）应零告警；`SECRET_KEY` 须 50+ 位随机（否则 W009）。
+
+## 五、M7 增强（多期间报表 / 下钻 / 筛选）
+
+- **`StockMove` 加业务日期**：补 `date`（默认 `localdate`，从单据 `doc_date` 带入），并迁移回填历史（`date=created_at.date()`）；自此总览/报表全按业务日期口径（银行 `date`、库存 `move.date`、发票 `doc_date`、票据 `draw_date`；核销无落库日期，用 `created_at.date()` 近似——已知限制）。
+- **报表下钻不改账套**：`scope.resolve_company(request)` 读 `?company=`（须在可见集合内）否则退回当前账套，让总览行可直接点进「某公司」明细，而不必先切账套。
+- **账户余额表（明细账户级）**：`opening/reports.py:account_balance_table()`——银行按账户、库存按品种、应付按供应商、应收按客户的 期初/本期收入/本期发出/期末。AP/AP 减项需归属到往来对象：付款核销走 `allocation.invoice.supplier/customer`，票据冲销按 `invoice_id` 反查对手；数据量小直接 Python 归并（非 SQL group by）。四列恒等 `期初+收入−发出=期末` 用断言守。
+- **通用列表筛选（`FilteredListMixin`）**：声明 `search_fields`（支持跨表 `supplier__name`，`Q` 或连）+ `date_filter_field`（`?from/?to` 区间）即得筛选条，模板 `{% include "_filter_bar.html" %}` 统一渲染（按 `has_q/has_date` 自适应）。`ScopedListView` 已内置，自定义 ListView 加 mixin 即可。重置即 `request.path`。

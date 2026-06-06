@@ -1,0 +1,19 @@
+{% if filter.has_q or filter.has_date %}
+<form method="get" class="row g-2 mb-3 align-items-end">
+  {% if filter.has_date %}
+  <div class="col-auto"><label class="form-label mb-0 small text-muted">起始日期</label>
+    <input type="date" name="from" value="{{ filter.from }}" class="form-control form-control-sm"></div>
+  <div class="col-auto"><label class="form-label mb-0 small text-muted">截止日期</label>
+    <input type="date" name="to" value="{{ filter.to }}" class="form-control form-control-sm"></div>
+  {% endif %}
+  {% if filter.has_q %}
+  <div class="col-auto"><label class="form-label mb-0 small text-muted">{{ filter.q_placeholder }}</label>
+    <input type="text" name="q" value="{{ filter.q }}" placeholder="{{ filter.q_placeholder }}"
+           class="form-control form-control-sm"></div>
+  {% endif %}
+  <div class="col-auto">
+    <button class="btn btn-sm btn-primary">筛选</button>
+    <a href="{{ request.path }}" class="btn btn-sm btn-outline-secondary">重置</a>
+  </div>
+</form>
+{% endif %}

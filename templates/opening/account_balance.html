@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}账户余额表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">账户余额表</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末；金额单位元。默认月初~今天。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-auto"><label class="form-label">期初日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">期末日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+
+{% for b in blocks %}
+<div class="card mb-4">
+  <div class="card-header fw-semibold">{{ b.label }}</div>
+  <div class="table-responsive">
+    <table class="table table-striped table-sm mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">公司</th><th class="text-start">账户/科目</th>
+            <th>期初</th><th>本期收入</th><th>本期发出</th><th>期末余额</th></tr>
+      </thead>
+      <tbody>
+        {% for r in b.rows %}
+        <tr>
+          <td class="text-start">{{ r.company }}</td>
+          <td class="text-start">{{ r.name }}</td>
+          <td>{{ r.opening }}</td>
+          <td>{{ r.income }}</td>
+          <td>{{ r.outgo }}</td>
+          <td class="fw-semibold">{{ r.ending }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted">无数据</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

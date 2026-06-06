@@ -168,3 +168,108 @@ def recon_lines(company, category):
         for sup, amt in sorted(agg.items(), key=lambda kv: kv[0].code):
             out.append({"label": str(sup), "system_amount": amt})
     return out
+
+
+# ============================= 账户余额表（M7-6 / #8）=========================
+def _pset():
+    return {"opening": Z, "income": Z, "outgo": Z}
+
+
+def account_balance_table(companies, dfrom, dto):
+    """三公司明细账户余额：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
+
+    每行 期初(区间前净)/本期收入(增)/本期发出(减)/期末。低数据量，用 Python 归并。
+    """
+    bank_rows, stock_rows, ap_rows, ar_rows = [], [], [], []
+    for company in companies:
+        # 银行：每账户
+        for acc in BankAccount.objects.filter(company=company).order_by("name"):
+            bj = BankJournal.objects.filter(company=company, bank_account=acc)
+            r = _period(bj.filter(direction=BankJournal.Direction.IN),
+                        bj.filter(direction=BankJournal.Direction.OUT), "date", "date", dfrom, dto)
+            r["opening"] += acc.opening_balance
+            r["ending"] += acc.opening_balance
+            bank_rows.append({"company": company, "name": str(acc), **r})
+
+        # 库存：每商品（金额）
+        moves = StockMove.objects.filter(company=company).select_related("product")
+        prods = {}
+        for m in moves:
+            d = prods.setdefault(m.product, _pset())
+            amt = m.amount
+            signed_in = m.direction == StockMove.Direction.IN
+            if m.date < dfrom:
+                d["opening"] += amt if signed_in else -amt
+            elif m.date <= dto:
+                if signed_in:
+                    d["income"] += amt
+                else:
+                    d["outgo"] += amt
+        for prod, d in sorted(prods.items(), key=lambda kv: kv[0].code):
+            ending = d["opening"] + d["income"] - d["outgo"]
+            stock_rows.append({"company": company, "name": f"{prod.code} {prod.name}",
+                               "opening": d["opening"], "income": d["income"],
+                               "outgo": d["outgo"], "ending": ending})
+
+        # 应付：每供应商
+        ap_rows += _partner_rows(
+            company,
+            PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED),
+            "supplier",
+            PaymentAllocation.objects.filter(payment__company=company).select_related("invoice__supplier"),
+            lambda a: a.invoice.supplier,
+            NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE),
+            PurchaseInvoice, dfrom, dto)
+        # 应收：每客户
+        ar_rows += _partner_rows(
+            company,
+            SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED),
+            "customer",
+            ReceiptAllocation.objects.filter(receipt__company=company).select_related("invoice__customer"),
+            lambda a: a.invoice.customer,
+            NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES,
+                                          is_endorsement=False),
+            SalesInvoice, dfrom, dto)
+
+    return {"bank": bank_rows, "stock": stock_rows, "payable": ap_rows, "receivable": ar_rows}
+
+
+def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,
+                  invoice_model, dfrom, dto):
+    """按往来对象归并 期初/增/减。增=发票(doc_date)，减=核销分摊+票据冲销(created_at)。"""
+    data = {}
+    for inv in invoices.select_related(partner_attr):
+        partner = getattr(inv, partner_attr)
+        d = data.setdefault(partner, _pset())
+        if inv.doc_date < dfrom:
+            d["opening"] += inv.amount_taxed
+        elif inv.doc_date <= dto:
+            d["income"] += inv.amount_taxed
+    # 减项：核销分摊
+    for a in allocations:
+        partner = alloc_partner(a)
+        d = data.setdefault(partner, _pset())
+        ad = a.created_at.date()
+        if ad < dfrom:
+            d["opening"] -= a.amount
+        elif ad <= dto:
+            d["outgo"] += a.amount
+    # 减项：票据冲销（按发票 id 找对手）
+    inv_partner = {i.pk: getattr(i, partner_attr) for i in invoice_model.objects.filter(company=company)}
+    for ns in note_settlements:
+        partner = inv_partner.get(ns.invoice_id)
+        if partner is None:
+            continue
+        d = data.setdefault(partner, _pset())
+        nd = ns.created_at.date()
+        if nd < dfrom:
+            d["opening"] -= ns.amount
+        elif nd <= dto:
+            d["outgo"] += ns.amount
+    rows = []
+    for partner, d in sorted(data.items(), key=lambda kv: kv[0].code):
+        ending = d["opening"] + d["income"] - d["outgo"]
+        if d["opening"] or d["income"] or d["outgo"] or ending:
+            rows.append({"company": company, "name": str(partner), "opening": d["opening"],
+                         "income": d["income"], "outgo": d["outgo"], "ending": ending})
+    return rows

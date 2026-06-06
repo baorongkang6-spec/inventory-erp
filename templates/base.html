@@ -69,6 +69,7 @@
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">报表</a>
           <ul class="dropdown-menu">
+            {% if perms.finance.view_bankjournal or perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'account_balance_report' %}">账户余额表</a></li>{% endif %}
             {% if perms.finance.view_bankjournal %}<li><a class="dropdown-item" href="{% url 'bank_journal_report' %}">银行存款日记账</a></li>{% endif %}
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'payables_report' %}">应付账款余额表</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'receivables_report' %}">应收账款余额表</a></li>{% endif %}

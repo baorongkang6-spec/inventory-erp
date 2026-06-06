@@ -7,9 +7,62 @@
 - 全程要求登录。
 """
 
+from datetime import datetime
+
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
+from django.db.models import Q
 
 from .scope import get_active_company, get_visible_companies
+
+
+def _parse_date(s):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+class FilteredListMixin:
+    """通用列表筛选（M7-6 / #9）：?q 关键字模糊匹配 + ?from/?to 业务日期区间。
+
+    子类声明：
+    - search_fields：模糊匹配字段名列表（支持跨表如 "supplier__name"）；
+    - date_filter_field：日期区间过滤字段（如 "doc_date"）。
+    都为空时不显示筛选条。保持其它 super().get_queryset() 的账套过滤不变。
+    """
+
+    search_fields: list = []
+    date_filter_field = None
+    q_placeholder = "关键字"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        q = (self.request.GET.get("q") or "").strip()
+        if q and self.search_fields:
+            cond = Q()
+            for f in self.search_fields:
+                cond |= Q(**{f"{f}__icontains": q})
+            qs = qs.filter(cond)
+        if self.date_filter_field:
+            df = _parse_date(self.request.GET.get("from"))
+            dt = _parse_date(self.request.GET.get("to"))
+            if df:
+                qs = qs.filter(**{f"{self.date_filter_field}__gte": df})
+            if dt:
+                qs = qs.filter(**{f"{self.date_filter_field}__lte": dt})
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["filter"] = {
+            "q": self.request.GET.get("q", ""),
+            "from": self.request.GET.get("from", ""),
+            "to": self.request.GET.get("to", ""),
+            "has_q": bool(self.search_fields),
+            "has_date": bool(self.date_filter_field),
+            "q_placeholder": self.q_placeholder,
+        }
+        return ctx
 
 
 class ModelPermRequiredMixin(PermissionRequiredMixin):

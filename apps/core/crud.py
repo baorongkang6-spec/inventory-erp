@@ -11,11 +11,11 @@ from django.contrib import messages
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, DeleteView, ListView, UpdateView
 
-from .mixins import CompanyScopedFormMixin, CompanyScopedMixin
+from .mixins import CompanyScopedFormMixin, CompanyScopedMixin, FilteredListMixin
 from .models import AuditLog
 
 
-class ScopedListView(CompanyScopedMixin, ListView):
+class ScopedListView(FilteredListMixin, CompanyScopedMixin, ListView):
     """通用列表：columns = [(表头, 字段名)]，自动取值渲染。"""
 
     template_name = "crud/list.html"

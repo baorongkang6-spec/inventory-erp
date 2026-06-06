@@ -19,6 +19,8 @@ class ProductListView(ScopedListView):
     title = "商品"
     columns = [("编码", "code"), ("名称", "name"), ("规格", "spec"),
                ("单位", "unit"), ("分类", "category"), ("启用", "is_active")]
+    search_fields = ["code", "name", "spec", "category"]
+    q_placeholder = "编码/名称/规格"
     create_url_name = "product_create"
     update_url_name = "product_update"
     delete_url_name = "product_delete"
@@ -50,6 +52,8 @@ class CustomerListView(ScopedListView):
     title = "客户"
     columns = [("编码", "code"), ("名称", "name"), ("联系人", "contact"),
                ("电话", "phone"), ("关联企业", "related_company"), ("启用", "is_active")]
+    search_fields = ["code", "name", "contact", "phone"]
+    q_placeholder = "编码/名称/联系人"
     create_url_name = "customer_create"
     update_url_name = "customer_update"
     delete_url_name = "customer_delete"
@@ -81,6 +85,8 @@ class SupplierListView(ScopedListView):
     title = "供应商"
     columns = [("编码", "code"), ("名称", "name"), ("联系人", "contact"),
                ("电话", "phone"), ("关联企业", "related_company"), ("启用", "is_active")]
+    search_fields = ["code", "name", "contact", "phone"]
+    q_placeholder = "编码/名称/联系人"
     create_url_name = "supplier_create"
     update_url_name = "supplier_update"
     delete_url_name = "supplier_delete"
@@ -111,6 +117,8 @@ class ExpenseCategoryListView(ScopedListView):
     model = ExpenseCategory
     title = "费用类别"
     columns = [("费用类别", "name"), ("计入存货成本", "include_in_cost"), ("启用", "is_active")]
+    search_fields = ["name"]
+    q_placeholder = "费用类别"
     create_url_name = "expensecategory_create"
     update_url_name = "expensecategory_update"
     delete_url_name = "expensecategory_delete"

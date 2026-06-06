@@ -6,6 +6,8 @@
   {% if can_add %}<a href="{{ create_url }}" class="btn btn-primary btn-sm">新增{{ title }}</a>{% endif %}
 </div>
 
+{% include "_filter_bar.html" %}
+
 <div class="card">
   <div class="table-responsive">
     <table class="table table-hover table-striped mb-0 align-middle">

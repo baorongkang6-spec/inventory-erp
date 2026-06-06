@@ -11,7 +11,7 @@ from apps.core.scope import get_active_company, get_visible_companies
 
 from .imports import IMPORTERS, TEMPLATES, build_template
 from .models import ReconciliationLine, ReconciliationRun
-from .reports import overview_table, recon_lines
+from .reports import account_balance_table, overview_table, recon_lines
 
 
 def _parse_date(s):
@@ -82,6 +82,35 @@ def overview(request):
     companies = list(get_visible_companies(request.user))
     blocks = overview_table(companies, dfrom, dto)
     return render(request, "opening/overview.html", {
+        "companies": companies, "blocks": blocks,
+        "date_from": dfrom, "date_to": dto,
+    })
+
+
+# ============================= 账户余额表（M7-6 / #8）========================
+@login_required
+def account_balance(request):
+    """三公司明细账户余额表：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
+
+    口径同总览：期初(区间前累计)+本期收入−本期发出=期末。默认月初~今天。
+    """
+    if not (_is_overview(request.user)
+            or request.user.has_perm("finance.view_bankjournal")
+            or request.user.has_perm("finance.view_purchaseinvoice")):
+        raise PermissionDenied("无权查看账户余额表")
+    from django.utils import timezone
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    companies = list(get_visible_companies(request.user))
+    sections = account_balance_table(companies, dfrom, dto)
+    blocks = [
+        {"key": "bank", "label": "银行存款明细账户", "rows": sections["bank"]},
+        {"key": "receivable", "label": "应收账款（按客户）", "rows": sections["receivable"]},
+        {"key": "payable", "label": "应付账款（按供应商）", "rows": sections["payable"]},
+        {"key": "stock", "label": "库存商品（按品种·金额）", "rows": sections["stock"]},
+    ]
+    return render(request, "opening/account_balance.html", {
         "companies": companies, "blocks": blocks,
         "date_from": dfrom, "date_to": dto,
     })

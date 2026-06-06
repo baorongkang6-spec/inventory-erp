@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
-from apps.core.mixins import CompanyScopedMixin
+from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
 from apps.core.scope import get_active_company, get_visible_companies
 from apps.inventory.services import InventoryError
 
@@ -18,7 +18,10 @@ from .models import PurchaseInbound
 from .services import create_and_post_inbound, void_purchase_inbound
 
 
-class InboundListView(CompanyScopedMixin, ListView):
+class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "supplier__name"]
+    date_filter_field = "doc_date"
+    q_placeholder = "单号/供应商"
     model = PurchaseInbound
     template_name = "purchasing/inbound_list.html"
     context_object_name = "docs"

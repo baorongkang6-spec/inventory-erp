@@ -15,7 +15,7 @@ from apps.core.crud import (
     ScopedListView,
     ScopedUpdateView,
 )
-from apps.core.mixins import CompanyScopedMixin
+from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 from apps.purchasing.models import PurchaseInbound
 from apps.sales.models import SalesOutbound
@@ -58,6 +58,8 @@ from .services import (
 
 
 class BankAccountListView(ScopedListView):
+    search_fields = ["name", "account_no", "bank_name"]
+    q_placeholder = "户名/账号"
     model = BankAccount
     title = "银行账户"
     columns = [("账户名称", "name"), ("开户行", "bank_name"), ("银行账号", "account_no"),
@@ -88,7 +90,10 @@ class BankAccountDeleteView(ScopedDeleteView):
 
 
 # --- 采购发票（→应付账款）----------------------------------------------------
-class PurchaseInvoiceListView(CompanyScopedMixin, ListView):
+class PurchaseInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "invoice_no", "supplier__name"]
+    date_filter_field = "doc_date"
+    q_placeholder = "单号/发票号/供应商"
     model = PurchaseInvoice
     template_name = "finance/purchase_invoice_list.html"
     context_object_name = "invoices"
@@ -174,7 +179,10 @@ def purchase_invoice_create(request):
 
 
 # --- 付款登记（自动生成银行日记账）------------------------------------------
-class PaymentListView(CompanyScopedMixin, ListView):
+class PaymentListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "supplier__name"]
+    date_filter_field = "doc_date"
+    q_placeholder = "单号/供应商"
     model = Payment
     template_name = "finance/payment_list.html"
     context_object_name = "payments"
@@ -257,7 +265,10 @@ def payment_allocate(request, pk):
 
 
 # ============================= 销售侧（镜像采购侧）=============================
-class SalesInvoiceListView(CompanyScopedMixin, ListView):
+class SalesInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "invoice_no", "customer__name"]
+    date_filter_field = "doc_date"
+    q_placeholder = "单号/发票号/客户"
     model = SalesInvoice
     template_name = "finance/sales_invoice_list.html"
     context_object_name = "invoices"
@@ -335,7 +346,10 @@ def sales_invoice_create(request):
                   {"header": header, "formset": formset, "outbounds": outbounds, "title": "销售发票"})
 
 
-class ReceiptListView(CompanyScopedMixin, ListView):
+class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "customer__name"]
+    date_filter_field = "doc_date"
+    q_placeholder = "单号/客户"
     model = Receipt
     template_name = "finance/receipt_list.html"
     context_object_name = "receipts"
@@ -593,7 +607,10 @@ def bank_journal_import(request):
 
 
 # ============================= 票据登记（M3-1）================================
-class NoteReceivableListView(CompanyScopedMixin, ListView):
+class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "note_no", "customer__name"]
+    date_filter_field = "draw_date"
+    q_placeholder = "单号/票号/客户"
     model = NoteReceivable
     template_name = "finance/note_receivable_list.html"
     context_object_name = "notes"
@@ -602,7 +619,10 @@ class NoteReceivableListView(CompanyScopedMixin, ListView):
         return super().get_queryset().select_related("customer")
 
 
-class NotePayableListView(CompanyScopedMixin, ListView):
+class NotePayableListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "note_no", "supplier__name"]
+    date_filter_field = "draw_date"
+    q_placeholder = "单号/票号/供应商"
     model = NotePayable
     template_name = "finance/note_payable_list.html"
     context_object_name = "notes"

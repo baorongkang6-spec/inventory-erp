@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
-from apps.core.mixins import CompanyScopedMixin
+from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
 from apps.core.scope import get_active_company, get_visible_companies
 from apps.inventory.services import InsufficientStockError, InventoryError
 
@@ -18,7 +18,10 @@ from .models import SalesOutbound
 from .services import create_and_post_outbound, void_sales_outbound
 
 
-class OutboundListView(CompanyScopedMixin, ListView):
+class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
+    search_fields = ["doc_no", "customer__name"]
+    date_filter_field = "doc_date"
+    q_placeholder = "单号/客户"
     model = SalesOutbound
     template_name = "sales/outbound_list.html"
     context_object_name = "docs"
