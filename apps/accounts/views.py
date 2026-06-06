@@ -71,3 +71,67 @@ def switch_company(request):
     else:
         messages.error(request, "无权访问该公司账套")
     return redirect(request.META.get("HTTP_REFERER", "home"))
+
+
+# ============================= 用户管理（M13，仅管理员）======================
+from functools import wraps  # noqa: E402
+
+from django.core.exceptions import PermissionDenied  # noqa: E402
+from django.shortcuts import get_object_or_404  # noqa: E402
+
+from .forms import UserForm  # noqa: E402
+from .models import User  # noqa: E402
+
+
+def _admin_only(view):
+    """仅超级管理员可访问；已登录的非管理员返回 403（而非跳登录）。"""
+    @wraps(view)
+    def _wrapped(request, *args, **kwargs):
+        if not request.user.is_superuser:
+            raise PermissionDenied("仅管理员可管理用户")
+        return view(request, *args, **kwargs)
+    return _wrapped
+
+
+@login_required
+@_admin_only
+def user_list(request):
+    users = User.objects.prefetch_related("groups", "companies").order_by("username")
+    rows = []
+    for u in users:
+        rows.append({
+            "u": u,
+            "roles": "、".join(u.role_names) or "—",
+            "scope": "全部公司" if u.can_view_all_companies
+                     else ("、".join(str(c) for c in u.companies.all()) or "—"),
+        })
+    return render(request, "accounts/user_list.html", {"rows": rows})
+
+
+@login_required
+@_admin_only
+def user_create(request):
+    form = UserForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        u = form.save()
+        messages.success(request, f"已新增用户：{u.get_username()}")
+        return redirect("user_list")
+    return render(request, "accounts/user_form.html", {"form": form, "title": "新增用户"})
+
+
+@login_required
+@_admin_only
+def user_edit(request, pk):
+    user_obj = get_object_or_404(User, pk=pk)
+    form = UserForm(request.POST or None, instance=user_obj)
+    if request.method == "POST" and form.is_valid():
+        # 不允许停用自己，避免把自己锁在外面
+        if user_obj.pk == request.user.pk and not form.cleaned_data.get("is_active"):
+            messages.error(request, "不能停用当前登录的自己")
+        else:
+            form.save()
+            messages.success(request, f"已保存用户：{user_obj.get_username()}")
+            return redirect("user_list")
+    return render(request, "accounts/user_form.html",
+                  {"form": form, "title": f"编辑用户：{user_obj.get_username()}",
+                   "edit_user": user_obj})

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <h4 class="mb-3">{{ title }}</h4>
+    <div class="card">
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+          {% for field in form %}
+          <div class="mb-3">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {% if field.name == "roles" or field.name == "companies" %}
+            <div>
+              {% for cb in field %}
+              <div class="form-check form-check-inline">{{ cb.tag }}
+                <label class="form-check-label" for="{{ cb.id_for_label }}">{{ cb.choice_label }}</label></div>
+              {% endfor %}
+            </div>
+            {% elif field.name == "is_active" or field.name == "can_view_all_companies" %}
+            <div class="form-check">{{ field }}
+              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.help_text }}</label></div>
+            {% else %}
+            {{ field }}
+            {% endif %}
+            {% if field.help_text and field.name not in "is_active can_view_all_companies" %}
+            <div class="form-text">{{ field.help_text }}</div>{% endif %}
+            {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">保存</button>
+            <a href="{% url 'user_list' %}" class="btn btn-outline-secondary">取消</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

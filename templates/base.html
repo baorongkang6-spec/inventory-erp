@@ -125,7 +125,9 @@
             {{ user }}{% if user.role_names %} <span class="badge text-bg-info">{{ user.role_names|join:" / " }}</span>{% endif %}
           </a>
           <ul class="dropdown-menu dropdown-menu-end">
+            {% if user.is_superuser %}<li><a class="dropdown-item" href="{% url 'user_list' %}">用户管理</a></li>{% endif %}
             {% if user.is_staff %}<li><a class="dropdown-item" href="/admin/">后台管理</a></li>{% endif %}
+            {% if user.is_superuser or user.is_staff %}<li><hr class="dropdown-divider"></li>{% endif %}
             <li>
               <form method="post" action="{% url 'logout' %}" class="px-2">
                 {% csrf_token %}

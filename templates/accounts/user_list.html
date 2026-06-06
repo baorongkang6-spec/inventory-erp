@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}用户管理 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">用户管理</h4>
+  <a href="{% url 'user_create' %}" class="btn btn-primary btn-sm">新增用户</a>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>用户名</th><th>显示名</th><th>角色</th><th>可见公司</th>
+            <th class="text-center">状态</th><th class="text-end">操作</th></tr>
+      </thead>
+      <tbody>
+        {% for x in rows %}
+        <tr>
+          <td>{{ x.u.username }}{% if x.u.is_superuser %} <span class="badge text-bg-dark">超管</span>{% endif %}</td>
+          <td>{{ x.u.display_name|default:"—" }}</td>
+          <td>{{ x.roles }}</td>
+          <td class="small">{{ x.scope }}</td>
+          <td class="text-center">
+            {% if x.u.is_active %}<span class="badge text-bg-success">启用</span>
+            {% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}
+          </td>
+          <td class="text-end"><a href="{% url 'user_edit' x.u.pk %}" class="btn btn-sm btn-outline-secondary">编辑</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted small mt-2">角色决定权限（按角色叠加）；勾「可见全部公司」即跨三家公司，否则只看所选公司。仅管理员可访问本页。</p>
+{% endblock %}
