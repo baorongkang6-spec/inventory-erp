@@ -102,7 +102,7 @@ def overview(request):
                              r["opening"], r["income"], r["outgo"], r["ending"]])
             rows.append([b["label"] + " 合计", "", b["totals"]["opening"], b["totals"]["income"],
                          b["totals"]["outgo"], b["totals"]["ending"]])
-        return xlsx_response(f"跨公司总览表_{dfrom}_{dto}", headers, rows)
+        return xlsx_response("跨公司总览表", headers, rows, period=(dfrom, dto))
     return render(request, "opening/overview.html", {
         "companies": companies, "blocks": blocks,
         "date_from": dfrom, "date_to": dto,
@@ -149,7 +149,8 @@ def query_center(request):
         if result["totals"]:
             rows.append(result["totals"])
         label = SUBJECTS[subject]["label"]
-        return xlsx_response(f"{label}_{dfrom}_{dto}", result["columns"], rows)
+        return xlsx_response(label, result["columns"], rows, period=(dfrom, dto),
+                             company=chosen[0] if len(chosen) == 1 else None)
 
     from apps.finance.models import BankJournal
     return render(request, "opening/query_center.html", {
@@ -193,7 +194,7 @@ def account_balance(request):
         rows = [[b["label"], r["company"].short_name or str(r["company"]), r["name"],
                  r["opening"], r["income"], r["outgo"], r["ending"]]
                 for b in blocks for r in b["rows"]]
-        return xlsx_response(f"账户余额表_{dfrom}_{dto}", headers, rows)
+        return xlsx_response("账户余额表", headers, rows, company=company, period=(dfrom, dto))
     return render(request, "opening/account_balance.html", {
         "companies": companies, "blocks": blocks, "active_company": company,
         "date_from": dfrom, "date_to": dto,

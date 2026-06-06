@@ -503,7 +503,7 @@ def bank_accounts_report(request):
         from apps.core.exports import xlsx_response
         headers = ["银行账户", "期初余额", "本期收入", "本期发出", "期末余额"]
         data = [[str(r["account"]), r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
-        return xlsx_response(f"银行存款分户余额表_{dfrom}_{dto}", headers, data)
+        return xlsx_response("银行存款分户余额表", headers, data, company=company, period=(dfrom, dto))
     return render(request, "finance/bank_accounts_report.html", {
         "rows": rows, "totals": totals, "active_company": company,
         "date_from": dfrom, "date_to": dto,
@@ -562,23 +562,23 @@ def payables_report(request):
     groups = sorted(groups.values(), key=lambda g: g["partner"].code)
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
     if request.GET.get("export") == "xlsx":
-        return _export_balance_report("应付账款余额表", "供应商", "应付", groups)
+        return _export_balance_report("应付账款余额表", "供应商", "应付", groups, company=company)
     return render(request, "finance/balance_report.html", {
         "title": "应付账款余额表", "kind": "应付", "groups": groups, "grand": grand,
         "active_company": company,
     })
 
 
-def _export_balance_report(title, partner_label, kind, groups):
+def _export_balance_report(title, partner_label, kind, groups, company=None):
     from apps.core.exports import xlsx_response
-    headers = [partner_label, "登记单号", "开票日期", "发票号码", f"未核销({kind})"]
+    headers = [partner_label, "单据编号", "开票日期", "发票号码", f"未核销({kind})"]
     rows = []
     for g in groups:
         for inv in g["items"]:
             rows.append([str(g["partner"]), inv.doc_no, inv.doc_date,
                          inv.invoice_no, inv.outstanding])
         rows.append([f"{g['partner']} 小计", "", "", "", g["total"]])
-    return xlsx_response(title, headers, rows)
+    return xlsx_response(title, headers, rows, company=company)
 
 
 @login_required
@@ -599,7 +599,7 @@ def receivables_report(request):
     groups = sorted(groups.values(), key=lambda g: g["partner"].code)
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
     if request.GET.get("export") == "xlsx":
-        return _export_balance_report("应收账款余额表", "客户", "应收", groups)
+        return _export_balance_report("应收账款余额表", "客户", "应收", groups, company=company)
     return render(request, "finance/balance_report.html", {
         "title": "应收账款余额表", "kind": "应收", "groups": groups, "grand": grand,
         "active_company": company,
@@ -628,7 +628,7 @@ def _partner_report(request, kind):
         from apps.core.exports import xlsx_response
         headers = [cfg["partner_label"], "期初", cfg["inc_label"], cfg["dec_label"], "期末"]
         data = [[str(r["partner"]), r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
-        return xlsx_response(f"{cfg['title']}_{dfrom}_{dto}", headers, data)
+        return xlsx_response(cfg["title"], headers, data, company=company, period=(dfrom, dto))
     return render(request, "finance/partner_balance_report.html", {
         "rows": rows, "totals": totals, "active_company": company,
         "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", ""),
@@ -655,7 +655,7 @@ def _partner_ledger_page(request, kind):
         rows += [[e["date"], e["kind"], e["doc_no"], e["inc"] or "", e["dec"] or "", e["balance"]]
                  for e in data["rows"]]
         rows.append(["期末余额", "", "", data["income"], data["outgo"], data["ending"]])
-        return xlsx_response(f"{cfg['title']}_{partner}_{dfrom}_{dto}", headers, rows)
+        return xlsx_response(f"{cfg['title']}-{partner}", headers, rows, company=company, period=(dfrom, dto))
     return render(request, "finance/partner_ledger.html", {
         "partner": partner, "data": data, "active_company": company,
         "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", ""),
@@ -704,7 +704,7 @@ def receivable_notes_report(request):
         headers = ["票据单号", "票据号", "出票日", "期初未用", "本期出票", "本期使用", "期末未用"]
         data = [[r["note"].doc_no, r["note"].note_no, r["note"].draw_date,
                  r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
-        return xlsx_response(f"应收票据余额表_{dfrom}_{dto}", headers, data)
+        return xlsx_response("应收票据余额表", headers, data, company=company, period=(dfrom, dto))
     return render(request, "finance/receivable_notes_report.html", {
         "rows": rows, "totals": totals, "active_company": company,
         "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", "")})
@@ -729,7 +729,7 @@ def receivable_note_ledger(request):
         rows += [[e["date"], e["kind"], e["doc_no"], e["inc"] or "", e["dec"] or "", e["balance"]]
                  for e in data["rows"]]
         rows.append(["期末未用", "", "", data["income"], data["outgo"], data["ending"]])
-        return xlsx_response(f"应收票据使用明细_{note.doc_no}_{dfrom}_{dto}", headers, rows)
+        return xlsx_response(f"应收票据使用明细-{note.doc_no}", headers, rows, company=company, period=(dfrom, dto))
     return render(request, "finance/receivable_note_ledger.html", {
         "note": note, "data": data, "active_company": company,
         "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", "")})
@@ -1185,7 +1185,7 @@ def notes_balance_report(request):
                   str(n.customer or ""), n.amount, n.settled_amount, n.unused] for n in ar]
                 + [["应付票据", n.doc_no, n.note_no, n.draw_date, n.due_date,
                     str(n.supplier or ""), n.amount, n.settled_amount, n.unused] for n in ap])
-        return xlsx_response("票据余额表", headers, rows)
+        return xlsx_response("票据余额表", headers, rows, company=company)
     return render(request, "finance/notes_balance_report.html", {
         "ar": ar, "ap": ap, "ar_total": ar_total, "ap_total": ap_total,
         "active_company": company,
@@ -1206,6 +1206,6 @@ def borrow_report(request):
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
         return xlsx_response("借调往来余额表", ["对手单位", "往来余额"],
-                             [[r["counterparty"], r["balance"]] for r in rows])
+                             [[r["counterparty"], r["balance"]] for r in rows], company=company)
     return render(request, "finance/borrow_report.html",
                   {"rows": rows, "total": total, "active_company": company})

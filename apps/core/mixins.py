@@ -53,7 +53,8 @@ class FilteredListMixin:
         headers = [h for h, _ in cols]
         rows = [[resolve_cell(obj, acc) for _, acc in cols]
                 for obj in self.get_queryset()]
-        return xlsx_response(self.export_filename, headers, rows)
+        company = self.get_active_company() if hasattr(self, "get_active_company") else None
+        return xlsx_response(self.export_filename, headers, rows, company=company)
 
     def get_queryset(self):
         qs = super().get_queryset()

@@ -60,7 +60,7 @@ class StockReportView(CompanyScopedMixin, ListView):
             if can_amt:
                 row += [b.amount, b.avg_price]
             rows.append(row)
-        return xlsx_response("库存数量金额表", headers, rows)
+        return xlsx_response("库存数量金额表", headers, rows, company=resolve_company(self.request))
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -102,7 +102,7 @@ class StockProductsReportView(CompanyScopedMixin, TemplateView):
         headers = ["商品编码", "商品名称", "期初金额", "本期收入", "本期发出", "期末金额", "期末数量"]
         data = [[r["product"].code, r["product"].name, r["opening"], r["income"],
                  r["outgo"], r["ending"], r["ending_qty"]] for r in rows]
-        return xlsx_response(f"库存商品余额表_{dfrom}_{dto}", headers, data)
+        return xlsx_response("库存商品余额表", headers, data, company=company, period=(dfrom, dto))
 
     def get_context_data(self, **kwargs):
         from apps.opening.reports import stock_products_balance
