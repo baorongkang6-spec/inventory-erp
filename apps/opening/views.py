@@ -9,7 +9,7 @@ from django.shortcuts import redirect, render
 from apps.accounts import roles
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 
-from .imports import IMPORTERS, TEMPLATES, build_template
+from .imports import IMPORTERS, TEMPLATES, build_combined_template, build_template, import_combined
 from .models import ReconciliationLine, ReconciliationRun
 from .reports import account_balance_table, overview_table, recon_lines
 
@@ -27,6 +27,11 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 @login_required
 @permission_required("finance.add_purchaseinvoice", raise_exception=True)
 def opening_template(request, kind):
+    """合并模板（kind=all，一个工作簿多 sheet）或单类模板（兼容旧链接）。"""
+    if kind == "all":
+        resp = HttpResponse(build_combined_template(), content_type=XLSX)
+        resp["Content-Disposition"] = 'attachment; filename="opening_all.xlsx"'
+        return resp
     if kind not in TEMPLATES:
         messages.error(request, "未知模板")
         return redirect("opening_import")
@@ -38,32 +43,38 @@ def opening_template(request, kind):
 @login_required
 @permission_required("finance.add_purchaseinvoice", raise_exception=True)
 def opening_import(request):
+    """一个工作簿（每类一个 sheet）一次导入全部期初。"""
     company = get_active_company(request, list(get_visible_companies(request.user)))
     if company is None:
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
     if request.method == "POST":
-        kind = request.POST.get("kind")
         upload = request.FILES.get("file")
-        if kind not in IMPORTERS or not upload:
-            messages.error(request, "请选择类别并上传文件")
+        if not upload:
+            messages.error(request, "请上传期初数据文件")
         else:
-            label, fn = IMPORTERS[kind]
             try:
-                created, skipped, errors = fn(company, request.user, upload)
+                results = import_combined(company, request.user, upload)
             except Exception as e:  # noqa: BLE001 解析失败等
-                messages.error(request, f"{label} 导入失败：{e}")
+                messages.error(request, f"导入失败：{e}")
             else:
-                messages.success(request, f"{label} 导入完成：成功 {created}，跳过重复 {skipped}")
-                for e in errors[:15]:
-                    messages.warning(request, e)
+                if not results:
+                    messages.warning(request, "文件中未找到期初数据 sheet，请用「下载模板」的文件填写")
+                for r in results:
+                    messages.success(
+                        request, f"{r['label']}：成功 {r['created']}，跳过重复 {r['skipped']}"
+                        + (f"，{len(r['errors'])} 行有问题" if r["errors"] else ""))
+                    for e in r["errors"][:8]:
+                        messages.warning(request, f"{r['label']} {e}")
         return redirect("opening_import")
 
-    cards = [{"kind": k, "label": label} for k, (label, _) in IMPORTERS.items()]
     from django.conf import settings
+    headers = [{"label": label, "cols": "、".join(cols)}
+               for k, label, cols in
+               [(k, IMPORTERS[k][0], TEMPLATES[k]) for k in IMPORTERS]]
     return render(request, "opening/opening_import.html",
-                  {"cards": cards, "opening_date": settings.OPENING_DATE})
+                  {"headers": headers, "opening_date": settings.OPENING_DATE})
 
 
 def _is_overview(user):

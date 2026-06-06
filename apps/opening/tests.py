@@ -30,16 +30,33 @@ class OpeningImportTests(TestCase):
         cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
 
     def test_import_stock(self):
-        f = _xlsx([["商品编码", "数量", "单价"], ["P001", 100, 10]])
+        # 数量金额式：数量 + 金额（不录单价）
+        f = _xlsx([["商品编码", "数量", "金额"], ["P001", 100, 1000]])
         created, skipped, errors = imports.import_stock(self.c1, None, f)
         self.assertEqual((created, errors), (1, []))
         bal = StockBalance.objects.get(company=self.c1, product=self.p)
         self.assertEqual(bal.quantity, Decimal("100.000"))
         self.assertEqual(bal.amount, Decimal("1000.00"))
+        self.assertEqual(bal.avg_price, Decimal("10.00"))   # 由 金额/数量 得出
         # 再次导入跳过（去重）
-        f2 = _xlsx([["商品编码", "数量", "单价"], ["P001", 100, 10]])
+        f2 = _xlsx([["商品编码", "数量", "金额"], ["P001", 100, 1000]])
         c2, s2, _ = imports.import_stock(self.c1, None, f2)
         self.assertEqual((c2, s2), (0, 1))
+
+    def test_import_combined_workbook(self):
+        from openpyxl import Workbook
+        from apps.finance.models import BankAccount as BA
+        wb = Workbook(); wb.remove(wb.active)
+        ws = wb.create_sheet("期初库存"); ws.append(["商品编码", "数量", "金额"]); ws.append(["P001", 50, 750])
+        ws2 = wb.create_sheet("期初银行存款"); ws2.append(["银行账户名称", "期初余额"]); ws2.append(["基本户", 8888])
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        results = imports.import_combined(self.c1, None, buf)
+        by = {r["kind"]: r for r in results}
+        self.assertEqual(by["stock"]["created"], 1)
+        self.assertEqual(by["bank"]["created"], 1)
+        self.assertEqual(StockBalance.objects.get(company=self.c1, product=self.p).amount, Decimal("750.00"))
+        self.acc.refresh_from_db()
+        self.assertEqual(self.acc.opening_balance, Decimal("8888.00"))
 
     def test_import_payable_creates_opening_invoice(self):
         f = _xlsx([["供应商编码", "期初应付金额"], ["S1", "5000"]])
@@ -216,13 +233,15 @@ class OpeningImportViewTests(TestCase):
         cls.user.user_permissions.add(
             Permission.objects.get(content_type__app_label="finance", codename="add_purchaseinvoice"))
 
-    def test_import_view_uploads_stock(self):
+    def test_import_view_uploads_combined(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
         from apps.inventory.models import StockBalance
-        buf = _xlsx([["商品编码", "数量", "单价"], ["P001", 20, 5]])
+        wb = Workbook(); wb.remove(wb.active)
+        ws = wb.create_sheet("期初库存"); ws.append(["商品编码", "数量", "金额"]); ws.append(["P001", 20, 100])
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
         self.client.force_login(self.user)
         resp = self.client.post("/opening/", {
-            "kind": "stock",
             "file": SimpleUploadedFile("o.xlsx", buf.read(),
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         }, SERVER_NAME="localhost", follow=True)
@@ -231,8 +250,13 @@ class OpeningImportViewTests(TestCase):
         self.assertEqual(bal.quantity, Decimal("20.000"))
         self.assertEqual(bal.amount, Decimal("100.00"))
 
-    def test_template_download(self):
+    def test_combined_template_download(self):
+        from openpyxl import load_workbook
         self.client.force_login(self.user)
-        resp = self.client.get("/opening/template/stock/", SERVER_NAME="localhost")
+        resp = self.client.get("/opening/template/all/", SERVER_NAME="localhost")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("spreadsheetml", resp["Content-Type"])
+        wb = load_workbook(BytesIO(resp.content))
+        self.assertIn("期初库存", wb.sheetnames)
+        self.assertIn("期初应付", wb.sheetnames)
+        self.assertEqual([c.value for c in wb["期初库存"][1]], ["商品编码", "数量", "金额"])
