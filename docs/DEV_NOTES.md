@@ -86,3 +86,11 @@
 - **明细账事件带 ref_url**：`partner_ledger`/`note_ledger` 在生成事件时就算好 `ref_url`(发票→发票详情、核销→付/收款详情、票据抵付→被冲发票)，模板只判空显示链接，避免模板里塞映射逻辑。
 - **术语两类统一**：单据**自身编号**列头统一「单据编号」(各列表+导出表头)；**引用来源单据**的列统一「来源单据」(台账「单据」、日记账「来源」改名并可点)。语义不混。
 - 改列头后注意同步**导出表头**(export_columns 第一元素)和断言旧表头的测试。
+
+## 九、M11 查询中心（跨公司组合查询）
+
+- **注册式事项**：`opening/query.py` 的 `SUBJECTS` + `_RUNNERS`，每个查询事项一个 `_q_*(companies, dfrom, dto, params)` 返回 `{columns, rows, totals}`(统一二维结构,模板/导出通用)。新增事项只加一段函数 + 注册。
+- **跨公司**：公司多选(checkbox),`company__in=chosen`;默认勾选全部可见公司,可取消。范围始终先按 `get_visible_companies` 过滤。
+- **跨公司商品/往来用关键字而非下拉**:C1/C2/C3 各有各的 Product/Customer 行,跨公司没有统一主键,所以筛选用 code/name 关键字(icontains),避免下拉只能选一家。
+- **合计列**:`_totals(columns, idxs, rows)` 只对金额列求和(数量异构不跨商品相加);首列「合计」。
+- 事项相关筛选(方向/业务类型/状态)由 `meta.extra` 声明,模板按需渲染对应控件。导出复用 `xlsx_response`,把合计行附在末尾。

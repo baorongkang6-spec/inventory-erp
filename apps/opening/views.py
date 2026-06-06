@@ -109,6 +109,59 @@ def overview(request):
     })
 
 
+# ============================= 查询中心（M11）================================
+@login_required
+def query_center(request):
+    """跨公司组合查询：选事项 + 公司(多选) + 日期 + 关键字/方向/类型/状态。"""
+    if not (_is_overview(request.user)
+            or request.user.has_perm("finance.view_bankjournal")
+            or request.user.has_perm("finance.view_purchaseinvoice")
+            or request.user.has_perm("inventory.view_stockbalance")):
+        raise PermissionDenied("无权使用查询中心")
+    from django.utils import timezone
+
+    from .query import DIRECTION_CHOICES, STATUS_CHOICES, SUBJECTS, run_query
+
+    visible = list(get_visible_companies(request.user))
+    today = timezone.localdate()
+    subject = request.GET.get("subject") or "stock_moves"
+    if subject not in SUBJECTS:
+        subject = "stock_moves"
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+
+    # 公司多选：未提交则默认全部可见
+    sel_ids = request.GET.getlist("company")
+    if sel_ids:
+        chosen = [c for c in visible if str(c.pk) in sel_ids]
+    else:
+        chosen = list(visible)
+
+    params = {"q": (request.GET.get("q") or "").strip(),
+              "direction": request.GET.get("direction", ""),
+              "entry_type": request.GET.get("entry_type", ""),
+              "status": request.GET.get("status", "")}
+    result = run_query(subject, chosen, dfrom, dto, params)
+
+    if request.GET.get("export") == "xlsx" and result["columns"]:
+        from apps.core.exports import xlsx_response
+        rows = list(result["rows"])
+        if result["totals"]:
+            rows.append(result["totals"])
+        label = SUBJECTS[subject]["label"]
+        return xlsx_response(f"{label}_{dfrom}_{dto}", result["columns"], rows)
+
+    from apps.finance.models import BankJournal
+    return render(request, "opening/query_center.html", {
+        "subjects": SUBJECTS, "subject": subject, "meta": SUBJECTS[subject],
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "date_from": dfrom, "date_to": dto, "params": params,
+        "result": result,
+        "direction_choices": DIRECTION_CHOICES, "status_choices": STATUS_CHOICES,
+        "entry_type_choices": BankJournal.EntryType.choices,
+    })
+
+
 # ============================= 账户余额表（M7-6 / #8）========================
 @login_required
 def account_balance(request):

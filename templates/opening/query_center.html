@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}查询中心 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">查询中心</h4>
+  {% if result.columns %}
+  <a class="btn btn-outline-success btn-sm"
+     href="?subject={{ subject }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&q={{ params.q|urlencode }}&direction={{ params.direction }}&entry_type={{ params.entry_type }}&status={{ params.status }}{% for id in chosen_ids %}&company={{ id }}{% endfor %}&export=xlsx">导出 Excel</a>
+  {% endif %}
+</div>
+
+<form method="get" class="card card-body mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">查询事项</label>
+      <select name="subject" class="form-select" onchange="this.form.submit()">
+        {% for key, m in subjects.items %}
+        <option value="{{ key }}" {% if key == subject %}selected{% endif %}>{{ m.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2"><label class="form-label">起始日期</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-md-2"><label class="form-label">截止日期</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-md-3"><label class="form-label">关键字</label>
+      <input type="text" name="q" value="{{ params.q }}" placeholder="{{ meta.placeholder }}" class="form-control"></div>
+    {% if "direction" in meta.extra %}
+    <div class="col-md-2"><label class="form-label">方向</label>
+      <select name="direction" class="form-select">
+        {% for v, t in direction_choices %}<option value="{{ v }}" {% if v == params.direction %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select></div>
+    {% endif %}
+    {% if "entry_type" in meta.extra %}
+    <div class="col-md-2"><label class="form-label">业务类型</label>
+      <select name="entry_type" class="form-select">
+        <option value="">全部</option>
+        {% for v, t in entry_type_choices %}<option value="{{ v }}" {% if v == params.entry_type %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select></div>
+    {% endif %}
+    {% if "status" in meta.extra %}
+    <div class="col-md-2"><label class="form-label">状态</label>
+      <select name="status" class="form-select">
+        {% for v, t in status_choices %}<option value="{{ v }}" {% if v == params.status %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select></div>
+    {% endif %}
+  </div>
+
+  <div class="mt-2">
+    <label class="form-label d-block">公司（可多选汇总）</label>
+    {% for c in visible_companies %}
+    <div class="form-check form-check-inline">
+      <input class="form-check-input" type="checkbox" name="company" value="{{ c.pk }}"
+             id="co{{ c.pk }}" {% if c.pk in chosen_ids %}checked{% endif %}>
+      <label class="form-check-label" for="co{{ c.pk }}">{{ c }}</label>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="mt-3"><button class="btn btn-primary">查询</button>
+    <a href="{% url 'query_center' %}" class="btn btn-outline-secondary">重置</a></div>
+</form>
+
+<div class="card">
+  <div class="card-header fw-semibold">{{ meta.label }}　共 {{ result.rows|length }} 行</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0 align-middle">
+      <thead class="table-light"><tr>{% for h in result.columns %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in result.rows %}
+        <tr>{% for cell in row %}<td>{{ cell|default:"" }}</td>{% endfor %}</tr>
+        {% empty %}
+        <tr><td colspan="{{ result.columns|length }}" class="text-center text-muted py-4">无匹配数据</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if result.totals %}
+      <tfoot class="table-secondary fw-semibold">
+        <tr>{% for cell in result.totals %}<td>{{ cell }}</td>{% endfor %}</tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

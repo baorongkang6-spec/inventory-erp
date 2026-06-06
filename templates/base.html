@@ -63,6 +63,10 @@
         <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
         {% endif %}
 
+        {% if is_overview or perms.finance.view_bankjournal or perms.finance.view_purchaseinvoice or perms.inventory.view_stockbalance %}
+        <li class="nav-item"><a class="nav-link" href="{% url 'query_center' %}">查询</a></li>
+        {% endif %}
+
         {# 资金：其他收支登记 + 票据 #}
         {% if perms.finance.add_bankjournal or perms.finance.view_notereceivable or perms.finance.view_notepayable %}
         <li class="nav-item dropdown">

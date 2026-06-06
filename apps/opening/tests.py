@@ -182,6 +182,47 @@ class AccountBalanceTableTests(TestCase):
             self.assertEqual(sec["opening"] + sec["income"] - sec["outgo"], sec["ending"])
 
 
+class QueryCenterTests(TestCase):
+    """查询中心（M11）：跨公司组合查询。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from datetime import date
+        from apps.inventory.services import post_inbound
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.c2 = Company.objects.create(code="C2", name="恒本源", short_name="恒本源")
+        cls.p1 = Product.objects.create(company=cls.c1, code="P001", name="环氧树脂")
+        cls.p2 = Product.objects.create(company=cls.c2, code="P001", name="环氧树脂")
+        post_inbound(cls.c1, cls.p1, Decimal("10"), Decimal("5"), date=date(2026, 6, 5))   # 50
+        post_inbound(cls.c2, cls.p2, Decimal("20"), Decimal("5"), date=date(2026, 6, 5))   # 100
+
+    def _run(self, **params):
+        from apps.opening.query import run_query
+        comps = params.pop("companies", [self.c1, self.c2])
+        from datetime import date
+        return run_query(params.pop("subject", "stock_moves"), comps,
+                         date(2026, 6, 1), date(2026, 6, 30),
+                         {"q": params.get("q", ""), "direction": params.get("direction", ""),
+                          "entry_type": "", "status": ""})
+
+    def test_multi_company_aggregates(self):
+        r = self._run()
+        self.assertEqual(len(r["rows"]), 2)             # 两家各一条入库
+        # 收入金额合计列(索引5) = 50 + 100 = 150
+        self.assertEqual(r["totals"][5], Decimal("150.00"))
+
+    def test_single_company_scope(self):
+        r = self._run(companies=[self.c1])
+        self.assertEqual(len(r["rows"]), 1)
+        self.assertEqual(r["totals"][5], Decimal("50.00"))
+
+    def test_keyword_and_direction(self):
+        r = self._run(q="环氧")
+        self.assertEqual(len(r["rows"]), 2)
+        r2 = self._run(direction="out")                 # 无出库
+        self.assertEqual(len(r2["rows"]), 0)
+
+
 class ReconciliationTests(TestCase):
     @classmethod
     def setUpTestData(cls):
