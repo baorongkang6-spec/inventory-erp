@@ -135,3 +135,24 @@ def user_edit(request, pk):
     return render(request, "accounts/user_form.html",
                   {"form": form, "title": f"编辑用户：{user_obj.get_username()}",
                    "edit_user": user_obj})
+
+
+# ============================= 修改密码（自助，所有登录用户）=================
+@login_required
+def password_change(request):
+    """用户自助修改密码：校验原密码 + 密码强度，改后保持登录不掉线。"""
+    from django.contrib.auth import update_session_auth_hash
+    from django.contrib.auth.forms import PasswordChangeForm
+
+    if request.method == "POST":
+        form = PasswordChangeForm(request.user, request.POST)
+        if form.is_valid():
+            user = form.save()
+            update_session_auth_hash(request, user)   # 改密后保持当前会话
+            messages.success(request, "密码已修改")
+            return redirect("home")
+    else:
+        form = PasswordChangeForm(request.user)
+    for f in form.fields.values():
+        f.widget.attrs.setdefault("class", "form-control")
+    return render(request, "accounts/password_change.html", {"form": form})
