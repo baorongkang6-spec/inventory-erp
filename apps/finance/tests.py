@@ -274,6 +274,53 @@ class BankJournalImportViewTests(TestCase):
         upload()  # 第二次全部重复
         self.assertEqual(BankJournal.objects.filter(company=self.c1, is_imported=True).count(), 2)
 
+    def _xlsx_with_txn(self, rows):
+        """rows: [(date, summary, party, income, outcome, txn_no)]。"""
+        from openpyxl import Workbook
+        from io import BytesIO
+        wb = Workbook(); ws = wb.active
+        ws.append(["日期", "摘要", "对方单位", "收入", "支出", "交易流水号"])
+        for r in rows:
+            ws.append(list(r))
+        buf = BytesIO(); wb.save(buf); return buf.getvalue()
+
+    def _upload(self, data):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return self.client.post(
+            "/finance/reports/bank-journal/import/",
+            {"account": self.acc.pk,
+             "file": SimpleUploadedFile("流水.xlsx", data,
+                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            SERVER_NAME="localhost", follow=True)
+
+    def test_dedup_by_txn_no_even_if_content_changes(self):
+        """有流水号时，按「账户+流水号」判重——即使摘要/金额变化也视为同一笔（修正重传）。"""
+        from apps.finance.models import BankJournal
+        self.client.force_login(self.user)
+        self._upload(self._xlsx_with_txn([
+            ("2026-06-05", "收货款", "客户甲", 500, None, "SN001"),
+            ("2026-06-06", "付电费", "电力公司", None, 80, "SN002"),
+        ]))
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 2)
+        # 重传：SN001 摘要修正、新增 SN003；SN001/SN002 应跳过，仅新增 SN003
+        self._upload(self._xlsx_with_txn([
+            ("2026-06-05", "收货款(更正)", "客户甲", 500, None, "SN001"),
+            ("2026-06-06", "付电费", "电力公司", None, 80, "SN002"),
+            ("2026-06-07", "收利息", "银行", 3, None, "SN003"),
+        ]))
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 3)
+        self.assertEqual(BankJournal.objects.get(txn_no="SN001").summary, "收货款")  # 未被覆盖
+
+    def test_dedup_within_same_batch(self):
+        """同一文件内重复流水号只入一条。"""
+        from apps.finance.models import BankJournal
+        self.client.force_login(self.user)
+        self._upload(self._xlsx_with_txn([
+            ("2026-06-05", "收货款", "客户甲", 500, None, "SN001"),
+            ("2026-06-05", "收货款", "客户甲", 500, None, "SN001"),
+        ]))
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+
 
 class NoteRegistrationTests(TestCase):
     @classmethod

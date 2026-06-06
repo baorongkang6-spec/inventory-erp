@@ -614,19 +614,31 @@ def bank_journal_import(request):
                 messages.error(request, f"文件解析失败：{e}")
             else:
                 created = skipped = 0
+                # 同一批次内也去重（文件里重复的流水号/同内容只入一次）
+                seen_txn, seen_content = set(), set()
                 for r in parsed:
-                    exists = BankJournal.objects.filter(
-                        company=company, bank_account=account, date=r["date"],
-                        direction=r["direction"], amount=r["amount"],
-                        summary=r["summary"], counterparty=r["counterparty"],
-                    ).exists()
-                    if exists:
+                    txn = r.get("txn_no", "")
+                    if txn:
+                        # 有流水号：按「账户+流水号」判重（最稳）
+                        dup = (txn in seen_txn or BankJournal.objects.filter(
+                            company=company, bank_account=account, txn_no=txn).exists())
+                        seen_txn.add(txn)
+                    else:
+                        # 无流水号：退回「账户+日期+方向+金额+摘要+对方」判重
+                        key = (r["date"], r["direction"], r["amount"], r["summary"], r["counterparty"])
+                        dup = (key in seen_content or BankJournal.objects.filter(
+                            company=company, bank_account=account, date=r["date"],
+                            direction=r["direction"], amount=r["amount"],
+                            summary=r["summary"], counterparty=r["counterparty"]).exists())
+                        seen_content.add(key)
+                    if dup:
                         skipped += 1
                         continue
                     BankJournal.objects.create(
                         company=company, created_by=request.user, bank_account=account,
                         date=r["date"], direction=r["direction"], amount=r["amount"],
-                        summary=r["summary"], counterparty=r["counterparty"], is_imported=True,
+                        summary=r["summary"], counterparty=r["counterparty"],
+                        txn_no=txn, is_imported=True,
                     )
                     created += 1
                 msg = f"导入完成：新增 {created} 条，跳过重复 {skipped} 条"
@@ -638,6 +650,19 @@ def bank_journal_import(request):
                 return redirect("bank_journal_report")
 
     return render(request, "finance/bank_journal_import.html", {"accounts": accounts})
+
+
+@login_required
+@permission_required("finance.add_bankjournal", raise_exception=True)
+def bank_journal_template(request):
+    """下载银行流水导入模板（含表头与示例行）。"""
+    from django.http import HttpResponse
+
+    from .excel import build_bank_template
+    XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    resp = HttpResponse(build_bank_template(), content_type=XLSX)
+    resp["Content-Disposition"] = 'attachment; filename="bank_journal_template.xlsx"'
+    return resp
 
 
 # ============================= 票据登记（M3-1）================================

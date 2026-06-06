@@ -120,6 +120,8 @@ class BankJournal(CompanyScopedModel):
     amount = models.DecimalField("金额", max_digits=18, decimal_places=2)
     counterparty = models.CharField("对方单位", max_length=128, blank=True)
     summary = models.CharField("摘要", max_length=255, blank=True)
+    txn_no = models.CharField("交易流水号", max_length=64, blank=True,
+                              help_text="网银流水唯一号；增量导入按「账户+流水号」去重。")
     is_imported = models.BooleanField("Excel导入", default=False)
     source_type = models.CharField("来源类型", max_length=32, blank=True)
     source_id = models.CharField("来源ID", max_length=32, blank=True)

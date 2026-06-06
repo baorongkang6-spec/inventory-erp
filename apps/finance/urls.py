@@ -31,6 +31,7 @@ urlpatterns = [
     path("reports/bank-journal/", views.bank_journal_report, name="bank_journal_report"),
     path("reports/bank-journal/export/", views.bank_journal_export, name="bank_journal_export"),
     path("reports/bank-journal/import/", views.bank_journal_import, name="bank_journal_import"),
+    path("reports/bank-journal/template/", views.bank_journal_template, name="bank_journal_template"),
     path("reports/payables/", views.payables_report, name="payables_report"),
     path("reports/receivables/", views.receivables_report, name="receivables_report"),
     # 票据（M3）

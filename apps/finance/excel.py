@@ -12,7 +12,9 @@ from io import BytesIO
 
 from openpyxl import Workbook, load_workbook
 
-HEADERS = ["日期", "摘要", "对方单位", "收入", "支出", "余额"]
+HEADERS = ["日期", "摘要", "对方单位", "收入", "支出", "交易流水号", "余额"]
+# 导入读取前 6 列（余额为只读统计列，不参与导入）。
+IMPORT_COLS = 6
 
 
 def export_bank_journal(account, rows) -> bytes:
@@ -30,8 +32,21 @@ def export_bank_journal(account, rows) -> bytes:
             j.counterparty,
             float(j.amount) if j.direction == "in" else None,
             float(j.amount) if j.direction == "out" else None,
+            j.txn_no,
             float(r["balance"]),
         ])
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_bank_template() -> bytes:
+    """空白导入模板（含表头与一行示例）。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "银行流水导入"
+    ws.append(HEADERS[:IMPORT_COLS])
+    ws.append(["2026-06-01", "示例：货款收入", "某某公司", 10000, None, "SN20260601001"])
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -77,8 +92,8 @@ def parse_bank_journal_xlsx(file):
         first = str(values[0]).strip() if values and values[0] is not None else ""
         if first.startswith("账户") or first == "日期":
             continue
-        # 期望至少 5 列：日期 摘要 对方 收入 支出
-        cells = (values + [None] * 5)[:5]
+        # 期望至少 6 列：日期 摘要 对方 收入 支出 交易流水号
+        cells = (values + [None] * IMPORT_COLS)[:IMPORT_COLS]
         d = _to_date(cells[0])
         if d is None:
             errors.append(f"第 {idx} 行：日期无法识别（{cells[0]!r}）")
@@ -98,6 +113,7 @@ def parse_bank_journal_xlsx(file):
             "counterparty": str(cells[2] or "").strip(),
             "direction": direction,
             "amount": amount,
+            "txn_no": str(cells[5] or "").strip(),
         })
     return parsed, errors
 
