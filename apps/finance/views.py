@@ -605,9 +605,10 @@ def bank_journal_export(request):
     account = get_object_or_404(BankAccount, pk=request.GET.get("account"), company=company)
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
-    _, rows, _ = _journal_rows(company, account, date_from, date_to)
+    opening, rows, closing = _journal_rows(company, account, date_from, date_to)
 
-    content = export_bank_journal(account, rows)
+    content = export_bank_journal(account, rows, opening=opening, closing=closing,
+                                  date_from=date_from, date_to=date_to)
     resp = HttpResponse(
         content,
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

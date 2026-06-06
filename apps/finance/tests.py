@@ -214,6 +214,36 @@ class BankJournalExcelTests(TestCase):
         self.assertEqual(parsed[0]["direction"], "out")
         self.assertEqual(parsed[0]["amount"], Decimal("300"))
 
+    def test_export_has_opening_total_closing_and_reimports_clean(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from apps.finance.excel import export_bank_journal, parse_bank_journal_xlsx
+        from apps.finance.views import _journal_rows
+        create_payment(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+                       bank_account=self.acc, supplier=self.sup, amount=Decimal("300"), summary="付A")
+        create_payment(company=self.c1, user=None, doc_date=date(2026, 6, 7),
+                       bank_account=self.acc, supplier=self.sup, amount=Decimal("200"), summary="付C")
+        opening, rows, closing = _journal_rows(self.c1, self.acc, date(2026, 6, 1), date(2026, 6, 30))
+        content = export_bank_journal(self.acc, rows, opening=opening, closing=closing,
+                                      date_from=date(2026, 6, 1), date_to=date(2026, 6, 30))
+        ws = load_workbook(BytesIO(content)).active
+        grid = list(ws.iter_rows(values_only=True))
+        labels = {r[0] for r in grid}
+        self.assertIn("期初余额", labels)
+        self.assertIn("本期合计", labels)
+        self.assertIn("期末余额", labels)
+        # 期初 1000、合计支出 500、期末 500
+        opening_row = next(r for r in grid if r[0] == "期初余额")
+        total_row = next(r for r in grid if r[0] == "本期合计")
+        closing_row = next(r for r in grid if r[0] == "期末余额")
+        self.assertEqual(opening_row[6], 1000)
+        self.assertEqual(total_row[4], 500)   # 支出合计
+        self.assertEqual(closing_row[6], 500)
+        # 再导入：汇总行被跳过，只解析出 2 条真实流水、无错误
+        parsed, errors = parse_bank_journal_xlsx(BytesIO(content))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(parsed), 2)
+
     def test_parse_skips_header_and_blank(self):
         from openpyxl import Workbook
         from io import BytesIO

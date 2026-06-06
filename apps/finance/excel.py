@@ -17,24 +17,59 @@ HEADERS = ["日期", "摘要", "对方单位", "收入", "支出", "交易流水
 IMPORT_COLS = 6
 
 
-def export_bank_journal(account, rows) -> bytes:
-    """rows: [{"j": BankJournal, "balance": Decimal}]，返回 xlsx 字节。"""
+# 导出时这些汇总行写在数据区上下；再导入时按首列识别并跳过（不当作流水）。
+SUMMARY_LABELS = {"期初余额", "本期合计", "合计", "期末余额"}
+
+
+def export_bank_journal(account, rows, opening=None, closing=None,
+                        date_from=None, date_to=None) -> bytes:
+    """rows: [{"j": BankJournal, "balance": Decimal}]。
+
+    含 期初余额 / 逐笔 / 本期合计(收入、支出) / 期末余额 行，便于直接对账。
+    opening/closing 缺省时按首末行余额回推。
+    """
+    from decimal import Decimal as D
     wb = Workbook()
     ws = wb.active
     ws.title = "银行存款日记账"
-    ws.append([f"账户：{account.name} {account.account_no}"])
+
+    period = ""
+    if date_from or date_to:
+        period = f"  期间：{date_from or '起初'} ~ {date_to or '至今'}"
+    ws.append([f"账户：{account.name} {account.account_no}{period}"])
     ws.append(HEADERS)
+
+    if opening is None:
+        opening = (rows[0]["balance"] - rows[0]["j"].signed_amount) if rows else account.opening_balance
+    if closing is None:
+        closing = rows[-1]["balance"] if rows else opening
+
+    # 期初余额行（余额列）
+    ws.append(["期初余额", None, None, None, None, None, float(opening)])
+
+    income_total = outgo_total = D("0.00")
     for r in rows:
         j = r["j"]
+        is_in = j.direction == "in"
+        if is_in:
+            income_total += j.amount
+        else:
+            outgo_total += j.amount
         ws.append([
             j.date.strftime("%Y-%m-%d"),
             j.summary,
             j.counterparty,
-            float(j.amount) if j.direction == "in" else None,
-            float(j.amount) if j.direction == "out" else None,
+            float(j.amount) if is_in else None,
+            float(j.amount) if not is_in else None,
             j.txn_no,
             float(r["balance"]),
         ])
+
+    # 本期合计行（收入、支出合计）
+    ws.append(["本期合计", None, None, float(income_total), float(outgo_total), None, None])
+    # 期末余额行（余额列）
+    ws.append(["期末余额", None, None, None, None, None, float(closing)])
+
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -88,9 +123,9 @@ def parse_bank_journal_xlsx(file):
         values = list(values)
         if not any(v not in (None, "") for v in values):
             continue
-        # 跳过标题/表头行
+        # 跳过标题/表头行与导出的汇总行（期初余额/本期合计/期末余额）
         first = str(values[0]).strip() if values and values[0] is not None else ""
-        if first.startswith("账户") or first == "日期":
+        if first.startswith("账户") or first == "日期" or first in SUMMARY_LABELS:
             continue
         # 期望至少 6 列：日期 摘要 对方 收入 支出 交易流水号
         cells = (values + [None] * IMPORT_COLS)[:IMPORT_COLS]
