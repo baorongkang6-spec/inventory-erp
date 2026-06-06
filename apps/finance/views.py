@@ -115,8 +115,8 @@ def _inbound_prefill(company, inbound_id):
         {
             "product": ln.product_id,
             "description": ln.product.name,
-            "amount_untaxed": ln.amount,           # 入库金额为不含税成本
-            "tax_rate": ln.product.default_tax_rate,
+            "amount_untaxed": ln.amount_untaxed,   # 直接引入库单行的不含税金额
+            "tax_rate": ln.tax_rate,
         }
         for ln in inbound.lines.select_related("product")
     ]
@@ -283,8 +283,8 @@ def _outbound_prefill(company, outbound_id):
         {
             "product": ln.product_id,
             "description": ln.product.name,
-            "amount_untaxed": ln.amount,      # 出库结转成本作不含税额初值，用户可改为售价
-            "tax_rate": ln.product.default_tax_rate,
+            "amount_untaxed": ln.amount_untaxed,   # 直接引出库单行的售价不含税金额
+            "tax_rate": ln.tax_rate,
         }
         for ln in outbound.lines.select_related("product")
     ]
