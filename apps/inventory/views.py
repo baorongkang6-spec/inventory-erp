@@ -137,26 +137,20 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
     def _active_company(self):
         return resolve_company(self.request)
 
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        company = self._active_company()
-        ctx["active_company"] = company
-        products = Product.objects.filter(company=company).order_by("code") if company else []
-
+    def _ledger(self, company):
+        """计算明细账数据，供页面与导出共用。"""
+        from apps.core.docrefs import doc_url
         product = None
         product_id = self.request.GET.get("product")
-        if product_id:
+        if product_id and company:
             product = Product.objects.filter(company=company, pk=product_id).first()
-
         date_from = _parse_date(self.request.GET.get("from"))
         date_to = _parse_date(self.request.GET.get("to"))
 
         rows = []
-        open_qty = open_amount = None
-        close_qty = close_amount = None
+        open_qty = open_amount = close_qty = close_amount = None
         if product:
             base = StockMove.objects.filter(company=company, product=product)
-            # 期初结存：区间起始日之前的累计
             open_qty, open_amount = ZERO_QTY, ZERO
             if date_from:
                 for m in base.filter(date__lt=date_from):
@@ -168,7 +162,6 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                 period = period.filter(date__gte=date_from)
             if date_to:
                 period = period.filter(date__lte=date_to)
-            from apps.core.docrefs import doc_url
             bal_qty, bal_amount = open_qty, open_amount
             for m in period.order_by("date", "id"):
                 is_in = m.direction == StockMove.Direction.IN
@@ -180,19 +173,62 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                     "in_amount": m.amount if is_in else None,
                     "out_qty": None if is_in else m.quantity,
                     "out_amount": None if is_in else m.amount,
-                    "bal_qty": bal_qty,
-                    "bal_amount": bal_amount,
+                    "bal_qty": bal_qty, "bal_amount": bal_amount,
                     "ref_url": doc_url(m.source_type, m.source_id),
                 })
             close_qty, close_amount = bal_qty, bal_amount
+        return {"product": product, "rows": rows, "date_from": date_from, "date_to": date_to,
+                "open_qty": open_qty, "open_amount": open_amount,
+                "close_qty": close_qty, "close_amount": close_amount}
 
+    def get(self, request, *args, **kwargs):
+        if request.GET.get("export") == "xlsx" and request.GET.get("product"):
+            return self._export_xlsx()
+        return super().get(request, *args, **kwargs)
+
+    def _export_xlsx(self):
+        from apps.core.exports import xlsx_response
+        company = self._active_company()
+        d = self._ledger(company)
+        product = d["product"]
+        if not product:
+            from django.shortcuts import redirect
+            return redirect("stock_ledger")
+        can_amt = self.request.user.has_perm("inventory.view_amount")
+        if can_amt:
+            headers = ["日期", "来源单据", "摘要", "收入数量", "收入金额", "发出数量",
+                       "发出金额", "结存数量", "均价", "结存金额"]
+            rows = [["期初结存", "", "", "", "", "", "", d["open_qty"], "", d["open_amount"]]]
+            for r in d["rows"]:
+                m = r["move"]
+                rows.append([m.date, m.source_no, m.get_direction_display(),
+                             r["in_qty"], r["in_amount"], r["out_qty"], r["out_amount"],
+                             m.balance_quantity, m.balance_price, m.balance_amount])
+            rows.append(["期末结存", "", "", "", "", "", "", d["close_qty"], "", d["close_amount"]])
+        else:
+            headers = ["日期", "来源单据", "摘要", "收入数量", "发出数量", "结存数量"]
+            rows = [["期初结存", "", "", "", "", d["open_qty"]]]
+            for r in d["rows"]:
+                m = r["move"]
+                rows.append([m.date, m.source_no, m.get_direction_display(),
+                             r["in_qty"], r["out_qty"], m.balance_quantity])
+            rows.append(["期末结存", "", "", "", "", d["close_qty"]])
+        return xlsx_response(f"商品流水台账-{product.code} {product.name}", headers, rows,
+                             company=company, period=(d["date_from"], d["date_to"]))
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        company = self._active_company()
+        products = Product.objects.filter(company=company).order_by("code") if company else []
+        d = self._ledger(company)
         ctx.update({
+            "active_company": company,
             "products": products,
-            "selected_product": product,
-            "rows": rows,
-            "open_qty": open_qty, "open_amount": open_amount,
-            "close_qty": close_qty, "close_amount": close_amount,
-            "date_from": date_from, "date_to": date_to,
+            "selected_product": d["product"],
+            "rows": d["rows"],
+            "open_qty": d["open_qty"], "open_amount": d["open_amount"],
+            "close_qty": d["close_qty"], "close_amount": d["close_amount"],
+            "date_from": d["date_from"], "date_to": d["date_to"],
             "company_id": self.request.GET.get("company", ""),
             "can_view_amount": self.request.user.has_perm("inventory.view_amount"),
         })
