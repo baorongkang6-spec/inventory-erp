@@ -8,6 +8,7 @@ from apps.core.money import ZERO_MONEY, round_money
 
 from .models import (
     BankJournal,
+    BankReconcileBatch,
     NotePayable,
     NoteReceivable,
     NoteSettlement,
@@ -456,3 +457,58 @@ def delete_other_cashflow(*, journal, user):
         summary=f"删除其他收支 {summary}",
     )
     journal.delete()
+
+
+# ============================= 银行对账（M8-3）===============================
+@transaction.atomic
+def reconcile_bank_journal(*, company, user, account, parsed, filename=""):
+    """把导入的网银流水与系统已登记日记账勾对，并持久化「已对账」状态。
+
+    parsed: parse_bank_journal_xlsx 的输出 [{date,summary,counterparty,direction,amount,txn_no}]。
+    匹配优先级：① 账户+交易流水号；② 账户+日期+金额+方向（同一系统行只配一次）。
+    返回 {batch, matched:[(line,journal)], system_only:[journal], bank_only:[line], period_from/to}。
+    """
+    dates = [p["date"] for p in parsed if p.get("date")]
+    pfrom, pto = (min(dates), max(dates)) if dates else (None, None)
+
+    jqs = BankJournal.objects.filter(company=company, bank_account=account)
+    if pfrom:
+        jqs = jqs.filter(date__gte=pfrom)
+    if pto:
+        jqs = jqs.filter(date__lte=pto)
+    journals = list(jqs.order_by("date", "id"))
+
+    by_txn, by_key = {}, {}
+    for j in journals:
+        if j.txn_no:
+            by_txn.setdefault(j.txn_no, []).append(j)
+        by_key.setdefault((j.date, j.amount, j.direction), []).append(j)
+
+    used = set()
+    matched, bank_only = [], []
+    for p in parsed:
+        hit = None
+        if p.get("txn_no"):
+            hit = next((c for c in by_txn.get(p["txn_no"], []) if c.pk not in used), None)
+        if hit is None:
+            key = (p["date"], round_money(p["amount"]), p["direction"])
+            hit = next((c for c in by_key.get(key, []) if c.pk not in used), None)
+        if hit is not None:
+            used.add(hit.pk)
+            matched.append((p, hit))
+        else:
+            bank_only.append(p)
+    system_only = [j for j in journals if j.pk not in used]
+
+    batch = BankReconcileBatch.objects.create(
+        company=company, created_by=user, bank_account=account, filename=filename,
+        period_from=pfrom, period_to=pto, matched_count=len(matched),
+        system_only_count=len(system_only), bank_only_count=len(bank_only))
+    BankJournal.objects.filter(pk__in=[j.pk for _, j in matched]).update(
+        reconciled=True, reconcile_batch=batch)
+
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.OFFSET, target=batch,
+        summary=f"银行对账 {account} 匹配 {len(matched)}／仅系统 {len(system_only)}／仅网银 {len(bank_only)}")
+    return {"batch": batch, "matched": matched, "system_only": system_only,
+            "bank_only": bank_only, "period_from": pfrom, "period_to": pto}

@@ -133,6 +133,10 @@ class BankJournal(CompanyScopedModel):
     txn_no = models.CharField("交易流水号", max_length=64, blank=True,
                               help_text="网银流水唯一号；增量导入按「账户+流水号」去重。")
     is_imported = models.BooleanField("Excel导入", default=False)
+    reconciled = models.BooleanField("已对账", default=False)
+    reconcile_batch = models.ForeignKey(
+        "BankReconcileBatch", on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name="对账批次", related_name="matched_journals")
     source_type = models.CharField("来源类型", max_length=32, blank=True)
     source_id = models.CharField("来源ID", max_length=32, blank=True)
     source_no = models.CharField("来源单号", max_length=64, blank=True)
@@ -150,6 +154,28 @@ class BankJournal(CompanyScopedModel):
     def signed_amount(self):
         """收入为正、支出为负，便于累计余额。"""
         return self.amount if self.direction == self.Direction.IN else -self.amount
+
+
+class BankReconcileBatch(CompanyScopedModel):
+    """一次银行对账（导入网银流水与系统日记账勾对）的批次记录。SPEC §15 M8-3。"""
+
+    bank_account = models.ForeignKey(
+        BankAccount, on_delete=models.PROTECT, verbose_name="银行账户",
+        related_name="reconcile_batches")
+    filename = models.CharField("文件名", max_length=255, blank=True)
+    period_from = models.DateField("起始日期", null=True, blank=True)
+    period_to = models.DateField("截止日期", null=True, blank=True)
+    matched_count = models.IntegerField("已匹配数", default=0)
+    system_only_count = models.IntegerField("仅系统有数", default=0)
+    bank_only_count = models.IntegerField("仅网银有数", default=0)
+
+    class Meta:
+        verbose_name = "银行对账批次"
+        verbose_name_plural = "银行对账批次"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"对账 {self.bank_account} {self.created_at:%Y-%m-%d %H:%M}"
 
 
 class Payment(CompanyScopedModel):

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}银行对账 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-1">银行对账<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<p class="text-muted">上传网银流水，与系统已登记日记账按「交易流水号 / 日期+金额+方向」勾对；匹配的标记为已对账。</p>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <form method="post" enctype="multipart/form-data" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <div class="col-md-4">
+        <label class="form-label">银行账户</label>
+        <select name="account" class="form-select" required>
+          {% for a in accounts %}<option value="{{ a.pk }}">{{ a.name }} {{ a.account_no }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">网银流水（.xlsx）</label>
+        <input type="file" name="file" accept=".xlsx" class="form-control" required>
+      </div>
+      <div class="col-auto"><button class="btn btn-primary">开始对账</button></div>
+      <div class="col-auto"><a href="{% url 'bank_journal_template' %}" class="btn btn-outline-success">下载模板</a></div>
+    </form>
+  </div>
+</div>
+
+{% if result %}
+<div class="alert alert-info">
+  账户 <b>{{ result.account }}</b>　期间 {{ result.period_from|default:"—" }} ~ {{ result.period_to|default:"—" }}　|
+  已匹配 <b>{{ result.batch.matched_count }}</b>，仅系统有 <b>{{ result.batch.system_only_count }}</b>，
+  仅网银有 <b>{{ result.batch.bank_only_count }}</b>
+</div>
+
+<div class="card mb-4 border-danger">
+  <div class="card-header fw-semibold text-danger">❗ 仅网银有（系统漏登，可一键补录为其他收支）</div>
+  {# 表单放表格外，行内控件用 HTML5 form= 关联，避免 <form> 嵌在 <tr> 里被浏览器拆散 #}
+  {% for line in result.bank_only %}
+  <form id="bo{{ forloop.counter }}" method="post" action="{% url 'other_cashflow_create' %}">
+    {% csrf_token %}
+    <input type="hidden" name="doc_date" value="{{ line.date|date:'Y-m-d' }}">
+    <input type="hidden" name="bank_account" value="{{ result.account.pk }}">
+    <input type="hidden" name="direction" value="{{ line.direction }}">
+    <input type="hidden" name="amount" value="{{ line.amount }}">
+    <input type="hidden" name="counterparty" value="{{ line.counterparty }}">
+    <input type="hidden" name="summary" value="{{ line.summary }}">
+    <input type="hidden" name="txn_no" value="{{ line.txn_no }}">
+  </form>
+  {% endfor %}
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead class="table-light"><tr><th>日期</th><th>摘要</th><th>对方单位</th>
+        <th class="text-end">收入</th><th class="text-end">支出</th><th>流水号</th>
+        <th>业务类型</th><th></th></tr></thead>
+      <tbody>
+        {% for line in result.bank_only %}
+        <tr>
+          <td>{{ line.date }}</td>
+          <td>{{ line.summary|default:"—" }}</td>
+          <td>{{ line.counterparty|default:"—" }}</td>
+          <td class="text-end">{% if line.direction == 'in' %}{{ line.amount }}{% endif %}</td>
+          <td class="text-end">{% if line.direction == 'out' %}{{ line.amount }}{% endif %}</td>
+          <td>{{ line.txn_no|default:"—" }}</td>
+          <td><select name="entry_type" form="bo{{ forloop.counter }}" class="form-select form-select-sm">
+            {% for val, label in entry_types %}<option value="{{ val }}">{{ label }}</option>{% endfor %}
+          </select></td>
+          <td><button form="bo{{ forloop.counter }}" class="btn btn-sm btn-outline-primary py-0">建其他收支</button></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-3">无（网银流水都已在系统中）</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted small">提示：若漏登的是客户收款 / 供应商付款（往来），请到「收款登记 / 付款登记」录入以便核销发票，不要在此建为其他收支。</p>
+
+<div class="card mb-4">
+  <div class="card-header fw-semibold">⚠️ 仅系统有（网银未出现，请复核是否错登/重复）</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0 align-middle">
+      <thead class="table-light"><tr><th>日期</th><th>业务类型</th><th>摘要</th><th>对方单位</th>
+        <th class="text-end">收入</th><th class="text-end">支出</th><th>来源</th></tr></thead>
+      <tbody>
+        {% for j in result.system_only %}
+        <tr>
+          <td>{{ j.date }}</td>
+          <td><span class="badge text-bg-light">{{ j.get_entry_type_display }}</span></td>
+          <td>{{ j.summary|default:"—" }}</td>
+          <td>{{ j.counterparty|default:"—" }}</td>
+          <td class="text-end">{% if j.direction == 'in' %}{{ j.amount }}{% endif %}</td>
+          <td class="text-end">{% if j.direction == 'out' %}{{ j.amount }}{% endif %}</td>
+          <td>{{ j.source_no|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-3">无</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header fw-semibold text-success">✅ 已匹配（已标记为已对账）</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped mb-0 align-middle">
+      <thead class="table-light"><tr><th>日期</th><th>摘要(网银)</th>
+        <th class="text-end">金额</th><th>系统单号/来源</th><th>业务类型</th></tr></thead>
+      <tbody>
+        {% for line, j in result.matched %}
+        <tr>
+          <td>{{ line.date }}</td>
+          <td>{{ line.summary|default:"—" }}</td>
+          <td class="text-end">{{ line.amount }}</td>
+          <td>{{ j.source_no|default:j.summary|default:"—" }}</td>
+          <td><span class="badge text-bg-light">{{ j.get_entry_type_display }}</span></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-3">无</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

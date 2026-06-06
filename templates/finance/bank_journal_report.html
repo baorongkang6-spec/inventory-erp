@@ -11,6 +11,7 @@
     {% if perms.finance.add_bankjournal %}
     <a class="btn btn-outline-secondary btn-sm" href="{% url 'other_cashflow_create' %}">其他收支登记</a>
     <a class="btn btn-outline-primary btn-sm" href="{% url 'bank_journal_import' %}">导入流水</a>
+    <a class="btn btn-outline-info btn-sm" href="{% url 'bank_reconcile' %}">银行对账</a>
     {% endif %}
   </div>
 </div>

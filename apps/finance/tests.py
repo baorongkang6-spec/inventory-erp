@@ -416,6 +416,67 @@ class OtherCashflowTests(TestCase):
             delete_other_cashflow(journal=pay.bank_journal, user=self.user)
 
 
+class BankReconcileTests(TestCase):
+    """银行对账（M8-3）：网银流水与日记账勾对、标记已对账、列出差异。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("1000"))
+        # 系统已登记：一笔付款 300（流水号 SN1），一笔其他收支税费 200（无流水号）
+        from apps.finance.services import create_other_cashflow
+        from apps.finance.models import BankJournal
+        cls.pay = create_payment(company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+                                 bank_account=cls.acc, supplier=cls.sup, amount=Decimal("300"))
+        cls.pay.bank_journal.txn_no = "SN1"; cls.pay.bank_journal.save(update_fields=["txn_no"])
+        create_other_cashflow(company=cls.c1, user=None, doc_date=date(2026, 6, 6),
+                              bank_account=cls.acc, direction=BankJournal.Direction.OUT,
+                              amount=Decimal("200"), entry_type=BankJournal.EntryType.TAX)
+        cls.user = get_user_model().objects.create_user(
+            username="fin", password="x", can_view_all_companies=True)
+
+    def _reconcile(self, lines):
+        from apps.finance.services import reconcile_bank_journal
+        return reconcile_bank_journal(company=self.c1, user=self.user, account=self.acc,
+                                      parsed=lines, filename="t.xlsx")
+
+    def test_match_by_txn_and_by_content_plus_bank_only(self):
+        from apps.finance.models import BankJournal
+        lines = [
+            # 匹配付款（按流水号 SN1）
+            {"date": date(2026, 6, 5), "summary": "付货款", "counterparty": "供应商甲",
+             "direction": "out", "amount": Decimal("300"), "txn_no": "SN1"},
+            # 匹配税费（按 日期+金额+方向，无流水号）
+            {"date": date(2026, 6, 6), "summary": "交税", "counterparty": "税务局",
+             "direction": "out", "amount": Decimal("200"), "txn_no": ""},
+            # 仅网银有：利息收入 5
+            {"date": date(2026, 6, 30), "summary": "利息", "counterparty": "银行",
+             "direction": "in", "amount": Decimal("5"), "txn_no": "SN9"},
+        ]
+        r = self._reconcile(lines)
+        self.assertEqual(r["batch"].matched_count, 2)
+        self.assertEqual(r["batch"].bank_only_count, 1)
+        self.assertEqual(r["batch"].system_only_count, 0)
+        # 匹配的日记账被标记已对账
+        self.assertTrue(BankJournal.objects.get(txn_no="SN1").reconciled)
+        self.assertEqual(r["bank_only"][0]["amount"], Decimal("5"))
+
+    def test_system_only_listed(self):
+        # 网银报了付款(06-05)和一笔利息(06-07)；期间内的税费(06-06)未出现在网银 → 仅系统有
+        r = self._reconcile([
+            {"date": date(2026, 6, 5), "summary": "付", "counterparty": "",
+             "direction": "out", "amount": Decimal("300"), "txn_no": "SN1"},
+            {"date": date(2026, 6, 7), "summary": "利息", "counterparty": "银行",
+             "direction": "in", "amount": Decimal("5"), "txn_no": "SN9"},
+        ])
+        self.assertEqual(r["batch"].matched_count, 1)
+        self.assertEqual(r["batch"].bank_only_count, 1)
+        self.assertEqual(r["batch"].system_only_count, 1)  # 税费 200(06-06)
+
+
 class BankAccountsReportTests(TestCase):
     """银行存款分户余额表（总览下钻第一层）。"""
 

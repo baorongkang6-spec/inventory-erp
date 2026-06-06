@@ -692,6 +692,43 @@ def bank_journal_import(request):
 
 @login_required
 @permission_required("finance.add_bankjournal", raise_exception=True)
+def bank_reconcile(request):
+    """银行对账：上传网银流水与系统日记账勾对，列出 已匹配/仅系统/仅网银。"""
+    from .excel import parse_bank_journal_xlsx
+    from .services import reconcile_bank_journal
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    accounts = list(BankAccount.objects.filter(company=company).order_by("name")) if company else []
+    result = None
+    if request.method == "POST":
+        account = next((a for a in accounts if str(a.pk) == request.POST.get("account")), None)
+        upload = request.FILES.get("file")
+        if not account or not upload:
+            messages.error(request, "请选择银行账户并上传 Excel 文件")
+        else:
+            try:
+                parsed, errors = parse_bank_journal_xlsx(upload)
+            except Exception as e:  # noqa: BLE001
+                messages.error(request, f"文件解析失败：{e}")
+            else:
+                result = reconcile_bank_journal(company=company, user=request.user,
+                                                account=account, parsed=parsed,
+                                                filename=getattr(upload, "name", ""))
+                result["account"] = account
+                b = result["batch"]
+                messages.success(request, f"对账完成：匹配 {b.matched_count}，仅系统 "
+                                          f"{b.system_only_count}，仅网银 {b.bank_only_count}")
+                for e in errors[:8]:
+                    messages.warning(request, e)
+    return render(request, "finance/bank_reconcile.html", {
+        "accounts": accounts, "result": result,
+        "entry_types": [c for c in BankJournal.EntryType.choices
+                        if c[0] != BankJournal.EntryType.SETTLEMENT],
+    })
+
+
+@login_required
+@permission_required("finance.add_bankjournal", raise_exception=True)
 def other_cashflow_create(request):
     """其他收支登记：手工录非往来银行收/支，生成日记账。"""
     from .forms import OtherCashflowForm
