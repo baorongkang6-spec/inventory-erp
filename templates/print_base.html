@@ -1,0 +1,49 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}单据打印{% endblock %}</title>
+  <style>
+    body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color:#000;
+           margin:0; padding:24px; font-size:13px; }
+    .sheet { max-width: 900px; margin:0 auto; }
+    .company { text-align:center; font-size:20px; font-weight:bold; }
+    .doc-title { text-align:center; font-size:16px; font-weight:bold; margin:4px 0 12px; }
+    .meta { display:flex; flex-wrap:wrap; gap:4px 32px; margin-bottom:8px; }
+    .meta div { min-width:200px; }
+    table { width:100%; border-collapse:collapse; margin-top:6px; }
+    th, td { border:1px solid #333; padding:5px 8px; }
+    th { background:#f0f0f0; }
+    .num { text-align:right; }
+    tfoot th, tfoot td { font-weight:bold; }
+    .sign { display:flex; justify-content:space-between; margin-top:28px; }
+    .toolbar { text-align:center; margin-bottom:16px; }
+    @media print {
+      .toolbar { display:none; }
+      body { padding:0; }
+    }
+    .btn { padding:6px 16px; font-size:14px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="btn" onclick="window.print()">打印</button>
+    <button class="btn" onclick="window.close()">关闭</button>
+  </div>
+  <div class="sheet">
+    <div class="company">{{ doc.company.name }}</div>
+    <div class="doc-title">{% block doc_title %}单据{% endblock %}</div>
+    {% block meta %}{% endblock %}
+    {% block lines %}{% endblock %}
+    <div class="sign">
+      <span>制单人：{{ doc.created_by|default:"—" }}</span>
+      <span>审核：____________</span>
+      <span>经手：____________</span>
+      <span>打印时间：{{ now|date:"Y-m-d H:i" }}</span>
+    </div>
+  </div>
+  <script>window.addEventListener("load", function(){ setTimeout(window.print, 300); });</script>
+</body>
+</html>

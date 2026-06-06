@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
 from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
-from apps.core.scope import get_active_company, get_visible_companies
+from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 from apps.inventory.services import InventoryError
 
 from apps.masterdata.forms import ExpenseFormSet
@@ -32,6 +32,18 @@ class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("supplier")
+
+
+@login_required
+@permission_required("purchasing.view_purchaseinbound", raise_exception=True)
+def inbound_print(request, pk):
+    """采购入库单打印页（A4，含公司全称、制单人）。"""
+    company = resolve_company(request)
+    doc = get_object_or_404(
+        PurchaseInbound.objects.select_related("company", "supplier", "created_by"),
+        pk=pk, company=company)
+    return render(request, "purchasing/inbound_print.html",
+                  {"doc": doc, "now": timezone.now()})
 
 
 class InboundDetailView(CompanyScopedMixin, DetailView):

@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
 from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
-from apps.core.scope import get_active_company, get_visible_companies
+from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 from apps.inventory.services import InsufficientStockError, InventoryError
 
 from apps.masterdata.forms import ExpenseFormSet
@@ -32,6 +32,18 @@ class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("customer")
+
+
+@login_required
+@permission_required("sales.view_salesoutbound", raise_exception=True)
+def outbound_print(request, pk):
+    """销售出库单打印页（A4，含公司全称、制单人）。"""
+    company = resolve_company(request)
+    doc = get_object_or_404(
+        SalesOutbound.objects.select_related("company", "customer", "created_by"),
+        pk=pk, company=company)
+    return render(request, "sales/outbound_print.html",
+                  {"doc": doc, "now": timezone.now()})
 
 
 class OutboundDetailView(CompanyScopedMixin, DetailView):

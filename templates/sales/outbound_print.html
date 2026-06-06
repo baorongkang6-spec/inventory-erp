@@ -1,0 +1,44 @@
+{% extends "print_base.html" %}
+{% block title %}销售出库单 {{ doc.doc_no }}{% endblock %}
+{% block doc_title %}销售出库单{% endblock %}
+{% block meta %}
+<div class="meta">
+  <div>单据编号：{{ doc.doc_no }}</div>
+  <div>出库日期：{{ doc.doc_date|date:"Y-m-d" }}</div>
+  <div>客户：{{ doc.customer|default:"—" }}</div>
+  <div>销售方式：{{ doc.get_sales_type_display }}</div>
+  <div>状态：{{ doc.get_status_display }}</div>
+  {% if doc.remark %}<div>备注：{{ doc.remark }}</div>{% endif %}
+</div>
+{% endblock %}
+{% block lines %}
+<table>
+  <thead>
+    <tr><th>#</th><th>商品编码</th><th>商品名称</th><th>规格</th><th>单位</th>
+        <th class="num">数量</th><th class="num">销售单价</th><th class="num">不含税金额</th>
+        <th class="num">税率</th><th class="num">税额</th><th class="num">含税金额</th></tr>
+  </thead>
+  <tbody>
+    {% for ln in doc.lines.all %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ ln.product.code }}</td>
+      <td>{{ ln.product.name }}</td>
+      <td>{{ ln.product.spec|default:"" }}</td>
+      <td>{{ ln.product.unit|default:"" }}</td>
+      <td class="num">{{ ln.quantity }}</td>
+      <td class="num">{{ ln.sale_unit_price }}</td>
+      <td class="num">{{ ln.amount_untaxed }}</td>
+      <td class="num">{{ ln.tax_rate }}</td>
+      <td class="num">{{ ln.tax_amount }}</td>
+      <td class="num">{{ ln.amount_taxed }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr><th colspan="5">合计</th><th class="num">{{ doc.total_quantity }}</th><th></th>
+        <th class="num">{{ doc.total_untaxed }}</th><th></th>
+        <th class="num">{{ doc.total_tax }}</th><th class="num">{{ doc.total_taxed }}</th></tr>
+  </tfoot>
+</table>
+{% endblock %}
