@@ -63,3 +63,11 @@
 - **通用列表筛选（`FilteredListMixin`）**：声明 `search_fields`（支持跨表 `supplier__name`，`Q` 或连）+ `date_filter_field`（`?from/?to` 区间）即得筛选条，模板 `{% include "_filter_bar.html" %}` 统一渲染（按 `has_q/has_date` 自适应）。`ScopedListView` 已内置，自定义 ListView 加 mixin 即可。重置即 `request.path`。
 - **通用 Excel 导出**：`core/exports.py:xlsx_response(filename, headers, rows)` 统一出包；`FilteredListMixin` 加 `export_columns=[(表头, accessor)]`（accessor 支持 `a__b` 跨级、callable、`get_x_display` 自动调用）即得「导出 Excel」按钮，**沿用当前筛选**（导出链接 = 当前 querystring + `export=xlsx`）。报表（总览/账户余额/库存/各余额表）在视图里判 `?export=xlsx` 直接调 `xlsx_response`。`_norm()` 把 Decimal→float、日期→`%Y-%m-%d`、模型实例→str，避免 openpyxl 写入报错。
 - **银行流水增量导入按流水号去重**：`BankJournal` 加 `txn_no`（交易流水号）；导入模板/导出均含该列。判重优先级：**有流水号→「账户+流水号」**（最稳，可重复上传整月网银流水、改摘要不影响判重，已存在的不覆盖），无流水号→退回「账户+日期+方向+金额+摘要+对方」。批次内部也用 `seen_txn/seen_content` 去重，避免同文件重复行。导出 HEADERS 第 6 列放流水号、第 7 列放只读余额，导入只读前 6 列（`IMPORT_COLS`）保证「导出→编辑→再导入」往返。
+
+## 六、M8 银行收支与对账（混合流）
+
+- **流程定调（混合流）**：银行存款日记账=完整资金账本。往来收付仍在源头登记（收款/付款，挂 AR/AP 可核销，关联镜像依赖单据带明确对象）；非往来（费用/税/工资/内部划转/其他）走「其他收支登记」或导入；Excel 导入定位为**对账工具**而非猜发票。
+- **日记账业务类型**：`BankJournal.entry_type`（settlement/expense/tax/payroll/transfer/other），付款收款自动标 settlement，其余默认 other；迁移按 `source_type in (Payment,Receipt)` 回填。日记账报表加类型列+筛选+本期合计；**类型筛选时逐笔余额仍按全部流水累计**（保持账户真实余额），只隐去非该类型行。
+- **其他收支登记**：`create_other_cashflow` 直接成日记账（source_type=Other），拒绝 settlement 类型（那走收付款）；`delete_other_cashflow` 仅允许删 Other（系统生成/往来的不可删，避免破坏核销）。
+- **银行对账**：`reconcile_bank_journal` 匹配优先级「账户+流水号 → 账户+日期+金额+方向」，同一系统行只配一次；匹配的置 `reconciled=True`+记 `BankReconcileBatch`。对账期间 = 导入流水日期跨度；**"仅系统有"只在该期间内判定**（期间外的系统流水不算漏报）。
+- **行内一键补录的坑**：`<form>` 不能直接嵌在 `<tr>` 里（浏览器会把它拆到表格外，hidden 输入失效）。解法：表单元素放表格外、行内 `<select>/<button>` 用 HTML5 `form="<id>"` 关联。
