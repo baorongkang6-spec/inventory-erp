@@ -104,12 +104,13 @@ def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
     return _row(opening, income, outgo, opening + income - outgo)
 
 
+# (key, 标签, 下钻报表 url 名)
 CATEGORIES = [
-    ("bank", "银行存款"),
-    ("stock", "库存商品（金额）"),
-    ("payable", "供应商往来（应付）"),
-    ("receivable", "客户往来（应收）"),
-    ("note_recv", "应收票据"),
+    ("bank", "银行存款", "bank_journal_report"),
+    ("stock", "库存商品（金额）", "stock_report"),
+    ("payable", "供应商往来（应付）", "payables_report"),
+    ("receivable", "客户往来（应收）", "receivables_report"),
+    ("note_recv", "应收票据", "notes_balance_report"),
 ]
 
 
@@ -117,7 +118,7 @@ def overview_table(companies, dfrom, dto):
     """组织成模板友好结构：每类一张表，行=各公司+合计。"""
     per = {c.pk: company_overview(c, dfrom, dto) for c in companies}
     blocks = []
-    for key, label in CATEGORIES:
+    for key, label, url in CATEGORIES:
         rows = []
         totals = _row(Z, Z, Z, Z)
         for c in companies:
@@ -125,7 +126,8 @@ def overview_table(companies, dfrom, dto):
             rows.append({"company": c, **r})
             for k in ("opening", "income", "outgo", "ending"):
                 totals[k] += r[k]
-        blocks.append({"key": key, "label": label, "rows": rows, "totals": totals})
+        blocks.append({"key": key, "label": label, "url": url,
+                       "rows": rows, "totals": totals})
     return blocks
 
 

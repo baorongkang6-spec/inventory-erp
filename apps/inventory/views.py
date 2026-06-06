@@ -8,13 +8,14 @@ from decimal import Decimal
 from django.views.generic import ListView, TemplateView
 
 from apps.core.mixins import CompanyScopedMixin
+from apps.core.scope import resolve_company
 from apps.masterdata.models import Product
 
 from .models import StockBalance, StockMove
 
 
 class StockReportView(CompanyScopedMixin, ListView):
-    """库存数量金额表：当前账套各商品结存。"""
+    """库存数量金额表：账套各商品结存（支持 ?company= 下钻）。"""
 
     model = StockBalance
     template_name = "inventory/stock_report.html"
@@ -22,12 +23,15 @@ class StockReportView(CompanyScopedMixin, ListView):
     perm_action = "view"  # inventory.view_stockbalance
 
     def get_queryset(self):
-        return super().get_queryset().select_related("product").order_by("product__code")
+        company = resolve_company(self.request)
+        qs = self.model.objects.all() if company is None else self.model.objects.for_company(company)
+        return qs.select_related("product").order_by("product__code")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["can_view_amount"] = self.request.user.has_perm("inventory.view_amount")
         ctx["total_amount"] = sum((b.amount for b in ctx["balances"]), start=Decimal("0.00"))
+        ctx["active_company"] = resolve_company(self.request)
         return ctx
 
 
@@ -41,12 +45,12 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
         return ("inventory.view_stockbalance",)
 
     def _active_company(self):
-        from apps.core.scope import get_active_company, get_visible_companies
-        return get_active_company(self.request, list(get_visible_companies(self.request.user)))
+        return resolve_company(self.request)
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         company = self._active_company()
+        ctx["active_company"] = company
         products = Product.objects.filter(company=company).order_by("code") if company else []
 
         product = None

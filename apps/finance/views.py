@@ -16,7 +16,7 @@ from apps.core.crud import (
     ScopedUpdateView,
 )
 from apps.core.mixins import CompanyScopedMixin
-from apps.core.scope import get_active_company, get_visible_companies
+from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 from apps.purchasing.models import PurchaseInbound
 from apps.sales.models import SalesOutbound
 
@@ -450,7 +450,7 @@ def _journal_rows(company, account, date_from=None, date_to=None):
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_report(request):
-    company = get_active_company(request, list(get_visible_companies(request.user)))
+    company = resolve_company(request)
     accounts = list(BankAccount.objects.filter(company=company).order_by("name"))
     account = None
     acc_id = request.GET.get("account")
@@ -471,6 +471,7 @@ def bank_journal_report(request):
         "accounts": accounts, "account": account, "rows": rows,
         "opening": opening, "closing": closing,
         "date_from": request.GET.get("from", ""), "date_to": request.GET.get("to", ""),
+        "active_company": company,
     })
 
 
@@ -478,7 +479,7 @@ def bank_journal_report(request):
 @permission_required("finance.view_purchaseinvoice", raise_exception=True)
 def payables_report(request):
     """应付余额表：按供应商汇总未核销的采购发票。"""
-    company = get_active_company(request, list(get_visible_companies(request.user)))
+    company = resolve_company(request)
     invoices = (PurchaseInvoice.objects
                 .filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
                 .select_related("supplier").order_by("supplier__code", "doc_date"))
@@ -493,6 +494,7 @@ def payables_report(request):
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
     return render(request, "finance/balance_report.html", {
         "title": "应付账款余额表", "kind": "应付", "groups": groups, "grand": grand,
+        "active_company": company,
     })
 
 
@@ -500,7 +502,7 @@ def payables_report(request):
 @permission_required("finance.view_salesinvoice", raise_exception=True)
 def receivables_report(request):
     """应收余额表：按客户汇总未核销的销售发票。"""
-    company = get_active_company(request, list(get_visible_companies(request.user)))
+    company = resolve_company(request)
     invoices = (SalesInvoice.objects
                 .filter(company=company, status=SalesInvoice.Status.REGISTERED)
                 .select_related("customer").order_by("customer__code", "doc_date"))
@@ -515,6 +517,7 @@ def receivables_report(request):
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
     return render(request, "finance/balance_report.html", {
         "title": "应收账款余额表", "kind": "应收", "groups": groups, "grand": grand,
+        "active_company": company,
     })
 
 
@@ -822,7 +825,7 @@ def note_payable_import(request):
 @permission_required("finance.view_notereceivable", raise_exception=True)
 def notes_balance_report(request):
     """票据余额表：在手/已开未用的应收、应付票据。"""
-    company = get_active_company(request, list(get_visible_companies(request.user)))
+    company = resolve_company(request)
     ar = [n for n in NoteReceivable.objects.filter(company=company).select_related("customer")
           if n.unused > 0 and n.status != NoteReceivable.Status.VOID]
     ap = [n for n in NotePayable.objects.filter(company=company).select_related("supplier")
@@ -831,6 +834,7 @@ def notes_balance_report(request):
     ap_total = sum((n.unused for n in ap), start=Decimal("0.00"))
     return render(request, "finance/notes_balance_report.html", {
         "ar": ar, "ap": ap, "ar_total": ar_total, "ap_total": ap_total,
+        "active_company": company,
     })
 
 
@@ -839,10 +843,11 @@ def notes_balance_report(request):
 @permission_required("finance.view_borrowtransaction", raise_exception=True)
 def borrow_report(request):
     from .models import BorrowTransaction
-    company = get_active_company(request, list(get_visible_companies(request.user)))
+    company = resolve_company(request)
     agg = {}
     for t in BorrowTransaction.objects.filter(company=company):
         agg[t.counterparty] = agg.get(t.counterparty, Decimal("0.00")) + t.signed_amount
     rows = [{"counterparty": k or "（未指定）", "balance": v} for k, v in sorted(agg.items())]
     total = sum((r["balance"] for r in rows), start=Decimal("0.00"))
-    return render(request, "finance/borrow_report.html", {"rows": rows, "total": total})
+    return render(request, "finance/borrow_report.html",
+                  {"rows": rows, "total": total, "active_company": company})

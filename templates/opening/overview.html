@@ -23,7 +23,9 @@
       <tbody>
         {% for r in b.rows %}
         <tr>
-          <td class="text-start">{{ r.company }}</td>
+          <td class="text-start">
+            <a href="{% url b.url %}?company={{ r.company.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">{{ r.company }}</a>
+          </td>
           <td>{{ r.opening }}</td>
           <td>{{ r.income }}</td>
           <td>{{ r.outgo }}</td>

@@ -43,3 +43,18 @@ def set_active_company(request, company_id):
         request.session[ACTIVE_COMPANY_SESSION_KEY] = company_id
         return True
     return False
+
+
+def resolve_company(request, visible=None):
+    """报表下钻用：URL ?company= 指定且在可见集合内则用之，否则退回当前账套。
+
+    让总览表能直接点进「某家公司」的明细报表，而不必先切账套。
+    """
+    if visible is None:
+        visible = list(get_visible_companies(request.user))
+    cid = request.GET.get("company")
+    if cid:
+        for c in visible:
+            if str(c.pk) == cid:
+                return c
+    return get_active_company(request, visible)
