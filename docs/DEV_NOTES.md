@@ -71,3 +71,11 @@
 - **其他收支登记**：`create_other_cashflow` 直接成日记账（source_type=Other），拒绝 settlement 类型（那走收付款）；`delete_other_cashflow` 仅允许删 Other（系统生成/往来的不可删，避免破坏核销）。
 - **银行对账**：`reconcile_bank_journal` 匹配优先级「账户+流水号 → 账户+日期+金额+方向」，同一系统行只配一次；匹配的置 `reconciled=True`+记 `BankReconcileBatch`。对账期间 = 导入流水日期跨度；**"仅系统有"只在该期间内判定**（期间外的系统流水不算漏报）。
 - **行内一键补录的坑**：`<form>` 不能直接嵌在 `<tr>` 里（浏览器会把它拆到表格外，hidden 输入失效）。解法：表单元素放表格外、行内 `<select>/<button>` 用 HTML5 `form="<id>"` 关联。
+
+## 七、M9 总览两级下钻（各类目→分项余额表→明细账）
+
+- **统一模式**：总览每类目点「类目-公司」→ 第一层「分项余额表」(期初/本期收入/本期发出/期末，带日期窗口)，再点某项→ 第二层明细账(滚动余额，期初/期末，当期无发生也显示期末)。全程 `?company=` 下钻不改账套。
+- **复用聚合**：`reports.py` 抽出 `bank_accounts_balance`/`stock_products_balance`/`payable_partners_balance`/`receivable_partners_balance`/`receivable_notes_balance` 第一层；`partner_ledger(kind)`/`note_ledger`/库存台账 第二层。`account_balance_table` 各段改为复用这些 helper，避免算法漂移。`_partner_rows` 重构为 `_partner_balance`(保留 partner 对象) 的包装。
+- **明细账滚动余额口径**：增=发票/出票，减=核销/票据抵付/使用；期初=区间前净额，逐笔累计；票据明细的「余额」是未用额。事件按 (日期, 增在前) 排序。
+- **库存明细账**：逐行结存直接用 StockMove 存的 `balance_quantity/price/amount`(过账时快照、含均价)；期初=区间前 signed 累计、期末=末笔结存，二者与快照一致。
+- **plain `manage.py shell` 验证陷阱**：非 TestCase 的 `Client()` 不挂 `store_rendered_templates` 信号 → `response.context` 为 None。冒烟脚本要么断言 `response.content` 文本，要么写进 TestCase 用 `resp.context`。
