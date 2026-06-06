@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}跨公司总览表 · 库存 ERP{% endblock %}
 {% block content %}
-<h4 class="mb-1">跨公司总览表</h4>
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">跨公司总览表</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
 <p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末结存；金额单位元。默认月初~今天。</p>
 
 <form method="get" class="row g-2 mb-3 align-items-end">

@@ -81,6 +81,17 @@ def overview(request):
     dto = _parse_date(request.GET.get("to")) or today
     companies = list(get_visible_companies(request.user))
     blocks = overview_table(companies, dfrom, dto)
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["类别", "公司", "期初", "本期收入", "本期发出", "期末结存"]
+        rows = []
+        for b in blocks:
+            for r in b["rows"]:
+                rows.append([b["label"], r["company"].short_name or str(r["company"]),
+                             r["opening"], r["income"], r["outgo"], r["ending"]])
+            rows.append([b["label"] + " 合计", "", b["totals"]["opening"], b["totals"]["income"],
+                         b["totals"]["outgo"], b["totals"]["ending"]])
+        return xlsx_response(f"跨公司总览表_{dfrom}_{dto}", headers, rows)
     return render(request, "opening/overview.html", {
         "companies": companies, "blocks": blocks,
         "date_from": dfrom, "date_to": dto,
@@ -110,6 +121,13 @@ def account_balance(request):
         {"key": "payable", "label": "应付账款（按供应商）", "rows": sections["payable"]},
         {"key": "stock", "label": "库存商品（按品种·金额）", "rows": sections["stock"]},
     ]
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["类别", "公司", "账户/科目", "期初", "本期收入", "本期发出", "期末余额"]
+        rows = [[b["label"], r["company"].short_name or str(r["company"]), r["name"],
+                 r["opening"], r["income"], r["outgo"], r["ending"]]
+                for b in blocks for r in b["rows"]]
+        return xlsx_response(f"账户余额表_{dfrom}_{dto}", headers, rows)
     return render(request, "opening/account_balance.html", {
         "companies": companies, "blocks": blocks,
         "date_from": dfrom, "date_to": dto,

@@ -14,6 +14,9 @@
   <div class="col-auto">
     <button class="btn btn-sm btn-primary">筛选</button>
     <a href="{{ request.path }}" class="btn btn-sm btn-outline-secondary">重置</a>
+    {% if filter.can_export %}<a href="{{ filter.export_url }}" class="btn btn-sm btn-outline-success">导出 Excel</a>{% endif %}
   </div>
 </form>
+{% elif filter.can_export %}
+<div class="mb-3"><a href="{{ filter.export_url }}" class="btn btn-sm btn-outline-success">导出 Excel</a></div>
 {% endif %}

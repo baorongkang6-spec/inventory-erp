@@ -27,6 +27,25 @@ class StockReportView(CompanyScopedMixin, ListView):
         qs = self.model.objects.all() if company is None else self.model.objects.for_company(company)
         return qs.select_related("product").order_by("product__code")
 
+    def get(self, request, *args, **kwargs):
+        if request.GET.get("export") == "xlsx":
+            return self._export_xlsx()
+        return super().get(request, *args, **kwargs)
+
+    def _export_xlsx(self):
+        from apps.core.exports import xlsx_response
+        can_amt = self.request.user.has_perm("inventory.view_amount")
+        headers = ["商品编码", "商品名称", "规格", "单位", "数量"]
+        if can_amt:
+            headers += ["金额", "移动加权单价"]
+        rows = []
+        for b in self.get_queryset():
+            row = [b.product.code, b.product.name, b.product.spec, b.product.unit, b.quantity]
+            if can_amt:
+                row += [b.amount, b.avg_price]
+            rows.append(row)
+        return xlsx_response("库存数量金额表", headers, rows)
+
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["can_view_amount"] = self.request.user.has_perm("inventory.view_amount")

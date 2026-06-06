@@ -34,6 +34,26 @@ class FilteredListMixin:
     search_fields: list = []
     date_filter_field = None
     q_placeholder = "关键字"
+    # 导出列：[(表头, accessor)]，accessor 同 exports.resolve_cell。
+    # 缺省回退到 ScopedListView 的 columns（显示列）。
+    export_columns: list = []
+    export_filename = "导出"
+
+    def get_export_columns(self):
+        return self.export_columns or getattr(self, "columns", [])
+
+    def get(self, request, *args, **kwargs):
+        if request.GET.get("export") == "xlsx" and self.get_export_columns():
+            return self._export_xlsx()
+        return super().get(request, *args, **kwargs)
+
+    def _export_xlsx(self):
+        from .exports import resolve_cell, xlsx_response
+        cols = self.get_export_columns()
+        headers = [h for h, _ in cols]
+        rows = [[resolve_cell(obj, acc) for _, acc in cols]
+                for obj in self.get_queryset()]
+        return xlsx_response(self.export_filename, headers, rows)
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -54,6 +74,8 @@ class FilteredListMixin:
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        params = self.request.GET.copy()
+        params["export"] = "xlsx"
         ctx["filter"] = {
             "q": self.request.GET.get("q", ""),
             "from": self.request.GET.get("from", ""),
@@ -61,6 +83,8 @@ class FilteredListMixin:
             "has_q": bool(self.search_fields),
             "has_date": bool(self.date_filter_field),
             "q_placeholder": self.q_placeholder,
+            "can_export": bool(self.get_export_columns()),
+            "export_url": "?" + params.urlencode(),
         }
         return ctx
 

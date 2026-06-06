@@ -94,6 +94,11 @@ class PurchaseInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "invoice_no", "supplier__name"]
     date_filter_field = "doc_date"
     q_placeholder = "单号/发票号/供应商"
+    export_filename = "采购发票"
+    export_columns = [("登记单号","doc_no"),("开票日期","doc_date"),("发票号码","invoice_no"),
+                      ("供应商","supplier__name"),("不含税","amount_untaxed"),("税额","tax_amount"),
+                      ("含税(应付)","amount_taxed"),("已核销","settled_amount"),("未核销","outstanding"),
+                      ("状态","get_status_display")]
     model = PurchaseInvoice
     template_name = "finance/purchase_invoice_list.html"
     context_object_name = "invoices"
@@ -183,6 +188,10 @@ class PaymentListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "supplier__name"]
     date_filter_field = "doc_date"
     q_placeholder = "单号/供应商"
+    export_filename = "付款登记"
+    export_columns = [("付款单号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
+                      ("供应商","supplier__name"),("付款金额","amount"),("已核销","settled_amount"),
+                      ("未核销","unallocated"),("状态","get_status_display")]
     model = Payment
     template_name = "finance/payment_list.html"
     context_object_name = "payments"
@@ -269,6 +278,11 @@ class SalesInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "invoice_no", "customer__name"]
     date_filter_field = "doc_date"
     q_placeholder = "单号/发票号/客户"
+    export_filename = "销售发票"
+    export_columns = [("登记单号","doc_no"),("开票日期","doc_date"),("发票号码","invoice_no"),
+                      ("客户","customer__name"),("不含税","amount_untaxed"),("税额","tax_amount"),
+                      ("含税(应收)","amount_taxed"),("已核销","settled_amount"),("未核销","outstanding"),
+                      ("状态","get_status_display")]
     model = SalesInvoice
     template_name = "finance/sales_invoice_list.html"
     context_object_name = "invoices"
@@ -350,6 +364,10 @@ class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "customer__name"]
     date_filter_field = "doc_date"
     q_placeholder = "单号/客户"
+    export_filename = "收款登记"
+    export_columns = [("收款单号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
+                      ("客户","customer__name"),("收款金额","amount"),("已核销","settled_amount"),
+                      ("未核销","unallocated"),("状态","get_status_display")]
     model = Receipt
     template_name = "finance/receipt_list.html"
     context_object_name = "receipts"
@@ -506,10 +524,24 @@ def payables_report(request):
         g["total"] += inv.outstanding
     groups = sorted(groups.values(), key=lambda g: g["partner"].code)
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
+    if request.GET.get("export") == "xlsx":
+        return _export_balance_report("应付账款余额表", "供应商", "应付", groups)
     return render(request, "finance/balance_report.html", {
         "title": "应付账款余额表", "kind": "应付", "groups": groups, "grand": grand,
         "active_company": company,
     })
+
+
+def _export_balance_report(title, partner_label, kind, groups):
+    from apps.core.exports import xlsx_response
+    headers = [partner_label, "登记单号", "开票日期", "发票号码", f"未核销({kind})"]
+    rows = []
+    for g in groups:
+        for inv in g["items"]:
+            rows.append([str(g["partner"]), inv.doc_no, inv.doc_date,
+                         inv.invoice_no, inv.outstanding])
+        rows.append([f"{g['partner']} 小计", "", "", "", g["total"]])
+    return xlsx_response(title, headers, rows)
 
 
 @login_required
@@ -529,6 +561,8 @@ def receivables_report(request):
         g["total"] += inv.outstanding
     groups = sorted(groups.values(), key=lambda g: g["partner"].code)
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
+    if request.GET.get("export") == "xlsx":
+        return _export_balance_report("应收账款余额表", "客户", "应收", groups)
     return render(request, "finance/balance_report.html", {
         "title": "应收账款余额表", "kind": "应收", "groups": groups, "grand": grand,
         "active_company": company,
@@ -611,6 +645,10 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "note_no", "customer__name"]
     date_filter_field = "draw_date"
     q_placeholder = "单号/票号/客户"
+    export_filename = "应收票据"
+    export_columns = [("单号","doc_no"),("票据号","note_no"),("出票日","draw_date"),("到期日","due_date"),
+                      ("来源客户","customer__name"),("票面","amount"),("已用","settled_amount"),
+                      ("未用","unused"),("状态","get_status_display")]
     model = NoteReceivable
     template_name = "finance/note_receivable_list.html"
     context_object_name = "notes"
@@ -623,6 +661,10 @@ class NotePayableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "note_no", "supplier__name"]
     date_filter_field = "draw_date"
     q_placeholder = "单号/票号/供应商"
+    export_filename = "应付票据"
+    export_columns = [("单号","doc_no"),("票据号","note_no"),("开票日","draw_date"),("到期日","due_date"),
+                      ("收票供应商","supplier__name"),("票面","amount"),("已用","settled_amount"),
+                      ("未用","unused"),("状态","get_status_display")]
     model = NotePayable
     template_name = "finance/note_payable_list.html"
     context_object_name = "notes"
@@ -852,6 +894,14 @@ def notes_balance_report(request):
           if n.unused > 0 and n.status != NotePayable.Status.VOID]
     ar_total = sum((n.unused for n in ar), start=Decimal("0.00"))
     ap_total = sum((n.unused for n in ap), start=Decimal("0.00"))
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["类别", "单号", "票据号", "出票/开票日", "到期日", "往来对象", "票面", "已用", "未用"]
+        rows = ([["应收票据", n.doc_no, n.note_no, n.draw_date, n.due_date,
+                  str(n.customer or ""), n.amount, n.settled_amount, n.unused] for n in ar]
+                + [["应付票据", n.doc_no, n.note_no, n.draw_date, n.due_date,
+                    str(n.supplier or ""), n.amount, n.settled_amount, n.unused] for n in ap])
+        return xlsx_response("票据余额表", headers, rows)
     return render(request, "finance/notes_balance_report.html", {
         "ar": ar, "ap": ap, "ar_total": ar_total, "ap_total": ap_total,
         "active_company": company,
@@ -869,5 +919,9 @@ def borrow_report(request):
         agg[t.counterparty] = agg.get(t.counterparty, Decimal("0.00")) + t.signed_amount
     rows = [{"counterparty": k or "（未指定）", "balance": v} for k, v in sorted(agg.items())]
     total = sum((r["balance"] for r in rows), start=Decimal("0.00"))
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        return xlsx_response("借调往来余额表", ["对手单位", "往来余额"],
+                             [[r["counterparty"], r["balance"]] for r in rows])
     return render(request, "finance/borrow_report.html",
                   {"rows": rows, "total": total, "active_company": company})

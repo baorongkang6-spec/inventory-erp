@@ -22,6 +22,10 @@ class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "customer__name"]
     date_filter_field = "doc_date"
     q_placeholder = "单号/客户"
+    export_filename = "销售出库"
+    export_columns = [("出库单号","doc_no"),("日期","doc_date"),("客户","customer__name"),
+                      ("方式","get_sales_type_display"),("总数量","total_quantity"),
+                      ("含税售额","total_taxed"),("结转成本","total_cost"),("状态","get_status_display")]
     model = SalesOutbound
     template_name = "sales/outbound_list.html"
     context_object_name = "docs"

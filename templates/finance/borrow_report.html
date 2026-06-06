@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}借调往来余额表 · 库存 ERP{% endblock %}
 {% block content %}
-<h4 class="mb-3">借调往来余额表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">借调往来余额表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a href="?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
+</div>
 <p class="text-muted">余额 = 借入金额 − 归还金额（性质类其他应付，不涉税）。</p>
 <div class="card">
   <div class="table-responsive">

@@ -82,3 +82,17 @@ class InboundListFilterTests(TestCase):
 
     def test_no_filter_returns_all(self):
         self.assertEqual(len(self._docnos()), 2)
+
+    def test_export_xlsx_respects_filter(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        resp = self.client.get("/purchasing/inbound/", {"q": "乙供应商", "export": "xlsx"},
+                               SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("spreadsheetml", resp["Content-Type"])
+        wb = load_workbook(BytesIO(resp.content))
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        self.assertEqual(rows[0][0], "入库单号")          # 表头
+        self.assertEqual(len(rows), 2)                     # 表头 + 1 行（筛选后）
+        self.assertEqual(rows[1][0], "RK-C1-20260620-001")
