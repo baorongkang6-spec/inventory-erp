@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}开具销售发票 · 库存 ERP{% endblock %}
+{% block title %}{{ title|default:"开具销售发票" }} · 库存 ERP{% endblock %}
 {% block content %}
-<h4 class="mb-3">开具销售发票<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<h4 class="mb-3">{{ title|default:"开具销售发票" }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
 
 <form method="get" class="card card-body mb-3">
   <div class="row g-2 align-items-end">
@@ -47,14 +47,15 @@
     <div class="table-responsive">
       <table class="table mb-0 align-middle">
         <thead class="table-light">
-          <tr><th style="width:30%">商品(可选)</th><th style="width:25%">摘要</th>
-              <th style="width:22%">不含税金额</th><th style="width:18%">税率</th><th></th></tr>
+          <tr><th style="width:26%">商品(可选)</th><th style="width:20%">摘要</th><th>数量</th>
+              <th style="width:20%">不含税金额</th><th style="width:14%">税率</th><th></th></tr>
         </thead>
         <tbody>
           {% for form in formset %}
           <tr>
-            <td>{{ form.product }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.product }}{{ form.source_outbound_line }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.description }}</td>
+            <td>{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.amount_untaxed }}{% for e in form.amount_untaxed.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.tax_rate }}{% for e in form.tax_rate.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td class="text-muted small">第 {{ forloop.counter }} 行</td>

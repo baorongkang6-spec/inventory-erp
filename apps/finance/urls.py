@@ -22,6 +22,7 @@ urlpatterns = [
     path("sales-invoices/", views.SalesInvoiceListView.as_view(), name="sales_invoice_list"),
     path("sales-invoices/new/", views.sales_invoice_create, name="sales_invoice_create"),
     path("sales-invoices/<int:pk>/", views.SalesInvoiceDetailView.as_view(), name="sales_invoice_detail"),
+    path("sales-invoices/<int:pk>/edit/", views.sales_invoice_edit, name="sales_invoice_edit"),
     # 收款登记 + 应收核销
     path("receipts/", views.ReceiptListView.as_view(), name="receipt_list"),
     path("receipts/new/", views.receipt_create, name="receipt_create"),

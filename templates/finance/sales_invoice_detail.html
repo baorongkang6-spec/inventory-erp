@@ -3,7 +3,12 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">销售发票 {{ inv.doc_no }}</h4>
-  <a href="{% url 'sales_invoice_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  <div class="d-flex gap-2">
+    {% if not inv.is_opening and inv.settled_amount == 0 and perms.finance.add_salesinvoice %}
+    <a href="{% url 'sales_invoice_edit' inv.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
+    {% endif %}
+    <a href="{% url 'sales_invoice_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
 </div>
 
 <div class="card mb-3">

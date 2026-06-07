@@ -176,6 +176,7 @@ class SalesInvoiceLineForm(BootstrapForm):
         label="商品", queryset=Product.objects.none(), required=False, empty_label="—（可不选）"
     )
     description = forms.CharField(label="摘要", required=False, max_length=128)
+    quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3, min_value=0)
     amount_untaxed = forms.DecimalField(
         label="不含税金额", required=False, max_digits=18, decimal_places=2, min_value=0
     )
@@ -183,6 +184,8 @@ class SalesInvoiceLineForm(BootstrapForm):
         label="税率", required=False, max_digits=5, decimal_places=4,
         min_value=0, max_value=1, initial=DEFAULT_TAX_RATE,
     )
+    # 关联出库行 id（隐藏，「从出库单带入」时写入；用于成本匹配）
+    source_outbound_line = forms.IntegerField(required=False, widget=forms.HiddenInput)
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)

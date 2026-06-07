@@ -12,6 +12,8 @@ from decimal import Decimal
 
 from django.db.models import Sum
 
+from apps.core.money import round_money
+
 from apps.finance.models import (
     BankAccount,
     BankJournal,
@@ -403,11 +405,26 @@ def partner_ledger(company, partner, kind, dfrom, dto):
             "ending": opening + income - outgo}
 
 
+def _avg_cost_asof(company, product, date):
+    """商品在某业务日期的移动加权单价：取该日(含)前最后一笔流水的结存均价；
+    无则回退当前结存均价，再无则 0。供"提前开票、未关联出库"时估算成本。"""
+    if product is None:
+        return Z
+    m = (StockMove.objects.filter(company=company, product=product, date__lte=date)
+         .order_by("-date", "-id").first())
+    if m is not None:
+        return m.balance_price
+    bal = StockBalance.objects.filter(company=company, product=product).first()
+    return bal.avg_price if bal else Z
+
+
 def sales_revenue_cost(company, dfrom, dto):
     """销售收入成本计算表（按开票口径，按商品）。
 
-    收入=期间内销售发票(开票日,不含期初)的不含税金额；成本/数量来自发票行关联的来源出库行
-    (移动加权结转成本)。独立发票(无关联出库)无对应成本，另行提示。
+    收入=期间内销售发票(开票日,不含期初)的不含税金额。成本：
+    - 关联了出库行 → 取出库行实际结转成本(移动加权)；
+    - 未关联(提前开票)但填了商品+数量 → 取该商品开票日的移动加权单价 × 数量 估算；
+    - 未关联且无数量/商品 → 无法估算，另行提示。
     """
     ZQ = Decimal("0.000")
     invoices = (SalesInvoice.objects
@@ -416,8 +433,9 @@ def sales_revenue_cost(company, dfrom, dto):
                 .prefetch_related("lines__source_outbound_line", "lines__product"))
     data = {}
     seen_ob = set()
-    indep_count = 0
-    indep_amount = Z
+    est_count = 0       # 按移动加权估算成本的行数
+    gap_count = 0       # 仍无法算成本(无数量/商品)的行数
+    gap_amount = Z
     for inv in invoices:
         for ln in inv.lines.all():
             prod = ln.product
@@ -425,20 +443,27 @@ def sales_revenue_cost(company, dfrom, dto):
             d = data.setdefault(key, {"product": prod, "qty": ZQ, "revenue": Z, "cost": Z})
             d["revenue"] += ln.amount_untaxed
             ob = ln.source_outbound_line
-            if ob is not None and ob.pk not in seen_ob:
-                seen_ob.add(ob.pk)
-                d["cost"] += ob.amount
-                d["qty"] += ob.quantity
-            elif ob is None:
-                indep_count += 1
-                indep_amount += ln.amount_untaxed
+            if ob is not None:
+                if ob.pk not in seen_ob:           # 关联出库：实际结转成本
+                    seen_ob.add(ob.pk)
+                    d["cost"] += ob.amount
+                    d["qty"] += ob.quantity
+            elif prod is not None and ln.quantity and ln.quantity > 0:
+                # 未关联但有商品+数量：按移动加权单价估算
+                d["cost"] += round_money(ln.quantity * _avg_cost_asof(company, prod, inv.doc_date))
+                d["qty"] += ln.quantity
+                est_count += 1
+            else:
+                gap_count += 1
+                gap_amount += ln.amount_untaxed
     rows = []
     for d in sorted(data.values(), key=lambda x: x["product"].code if x["product"] else ""):
         profit = d["revenue"] - d["cost"]
         margin = (profit / d["revenue"] * 100).quantize(Decimal("0.1")) if d["revenue"] else Z
         rows.append({"product": d["product"], "qty": d["qty"], "revenue": d["revenue"],
                      "cost": d["cost"], "profit": profit, "margin": margin})
-    return {"rows": rows, "indep_count": indep_count, "indep_amount": indep_amount}
+    return {"rows": rows, "est_count": est_count,
+            "gap_count": gap_count, "gap_amount": gap_amount}
 
 
 def receivable_notes_balance(company, dfrom, dto):

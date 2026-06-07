@@ -551,18 +551,35 @@ class SalesRevenueCostTests(TestCase):
         self.assertEqual(r["revenue"], Decimal("450.00"))      # 30×15
         self.assertEqual(r["cost"], Decimal("300.00"))         # 30×10 移动加权
         self.assertEqual(r["profit"], Decimal("150.00"))
-        self.assertEqual(d["indep_count"], 0)
+        self.assertEqual(d["est_count"], 0)
+        self.assertEqual(d["gap_count"], 0)
 
-    def test_independent_invoice_flagged(self):
+    def test_independent_with_quantity_estimates_cost(self):
+        # 提前开票：未关联出库，但填了商品+数量 → 按移动加权单价(=10)估算成本
+        from datetime import date
+        from apps.finance.services import create_sales_invoice
+        from apps.opening.reports import sales_revenue_cost
+        create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 20), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "quantity": Decimal("5"),
+                    "amount_untaxed": Decimal("80"), "tax_rate": Decimal("0")}])
+        d = sales_revenue_cost(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        r = d["rows"][0]
+        # 关联那张 30×10=300 + 估算 5×10=50 = 350 成本；数量 35
+        self.assertEqual(r["cost"], Decimal("350.00"))
+        self.assertEqual(r["qty"], Decimal("35.000"))
+        self.assertEqual(d["est_count"], 1)
+        self.assertEqual(d["gap_count"], 0)
+
+    def test_gap_when_no_quantity(self):
         from datetime import date
         from apps.finance.services import create_sales_invoice
         from apps.opening.reports import sales_revenue_cost
         create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 15), customer=self.cust,
             lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("100"),
-                    "tax_rate": Decimal("0")}])  # 无 source_outbound_line
+                    "tax_rate": Decimal("0")}])  # 无关联、无数量
         d = sales_revenue_cost(self.c1, date(2026, 6, 1), date(2026, 6, 30))
-        self.assertEqual(d["indep_count"], 1)
-        self.assertEqual(d["indep_amount"], Decimal("100.00"))
+        self.assertEqual(d["gap_count"], 1)
+        self.assertEqual(d["gap_amount"], Decimal("100.00"))
 
 
 class PartnerDrilldownTests(TestCase):

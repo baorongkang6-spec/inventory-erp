@@ -300,6 +300,14 @@ class SalesInvoiceDetailView(CompanyScopedMixin, DetailView):
         return super().get_queryset().select_related("customer")
 
 
+def _resolve_outbound_line(company, line_id):
+    """把表单里的出库行 id 解析成 SalesOutboundLine（限本账套），无效返回 None。"""
+    if not line_id:
+        return None
+    from apps.sales.models import SalesOutboundLine
+    return SalesOutboundLine.objects.filter(pk=line_id, outbound__company=company).first()
+
+
 def _outbound_prefill(company, outbound_id):
     outbound = SalesOutbound.objects.filter(company=company, pk=outbound_id).first()
     if not outbound:
@@ -308,8 +316,10 @@ def _outbound_prefill(company, outbound_id):
         {
             "product": ln.product_id,
             "description": ln.product.name,
+            "quantity": ln.quantity,
             "amount_untaxed": ln.amount_untaxed,   # 直接引出库单行的售价不含税金额
             "tax_rate": ln.tax_rate,
+            "source_outbound_line": ln.pk,         # 关联出库行，供成本匹配
         }
         for ln in outbound.lines.select_related("product")
     ]
@@ -331,7 +341,9 @@ def sales_invoice_create(request):
         if header.is_valid() and formset.is_valid():
             lines = [
                 {"product": cd.get("product"), "description": cd.get("description", ""),
-                 "amount_untaxed": cd["amount_untaxed"], "tax_rate": cd["tax_rate"]}
+                 "quantity": cd.get("quantity"), "amount_untaxed": cd["amount_untaxed"],
+                 "tax_rate": cd["tax_rate"],
+                 "source_outbound_line": _resolve_outbound_line(company, cd.get("source_outbound_line"))}
                 for cd in formset.valid_lines
             ]
             inv = create_sales_invoice(
@@ -358,6 +370,57 @@ def sales_invoice_create(request):
     outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
     return render(request, "finance/sales_invoice_form.html",
                   {"header": header, "formset": formset, "outbounds": outbounds, "title": "销售发票"})
+
+
+@login_required
+@permission_required("finance.add_salesinvoice", raise_exception=True)
+def sales_invoice_edit(request, pk):
+    """修改销售发票（保留单号、重设关联出库单）。未核销、本月、非期初方可改。"""
+    from .services import sales_invoice_edit_block_reason, update_sales_invoice
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    inv = get_object_or_404(SalesInvoice, pk=pk, company=company)
+    reason = sales_invoice_edit_block_reason(inv, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect("sales_invoice_detail", pk=inv.pk)
+
+    if request.method == "POST":
+        header = SalesInvoiceHeaderForm(request.POST, company=company)
+        formset = SalesInvoiceLineFormSet(request.POST, company=company)
+        if header.is_valid() and formset.is_valid():
+            lines = [
+                {"product": cd.get("product"), "description": cd.get("description", ""),
+                 "quantity": cd.get("quantity"), "amount_untaxed": cd["amount_untaxed"],
+                 "tax_rate": cd["tax_rate"],
+                 "source_outbound_line": _resolve_outbound_line(company, cd.get("source_outbound_line"))}
+                for cd in formset.valid_lines
+            ]
+            try:
+                update_sales_invoice(
+                    inv, user=request.user, doc_date=header.cleaned_data["doc_date"],
+                    customer=header.cleaned_data["customer"],
+                    invoice_no=header.cleaned_data.get("invoice_no", ""),
+                    remark=header.cleaned_data.get("remark", ""), lines=lines)
+            except SettlementError as e:
+                messages.error(request, f"修改失败：{e}")
+            else:
+                messages.success(request, f"销售发票已修改：{inv.doc_no}")
+                return redirect("sales_invoice_detail", pk=inv.pk)
+    else:
+        header = SalesInvoiceHeaderForm(company=company, initial={
+            "doc_date": inv.doc_date, "customer": inv.customer_id,
+            "invoice_no": inv.invoice_no, "remark": inv.remark})
+        line_init = [{
+            "product": ln.product_id, "description": ln.description, "quantity": ln.quantity,
+            "amount_untaxed": ln.amount_untaxed, "tax_rate": ln.tax_rate,
+            "source_outbound_line": ln.source_outbound_line_id,
+        } for ln in inv.lines.all()]
+        formset = SalesInvoiceLineFormSet(company=company, initial=line_init)
+
+    outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
+    return render(request, "finance/sales_invoice_form.html",
+                  {"header": header, "formset": formset, "outbounds": outbounds,
+                   "title": f"修改销售发票 {inv.doc_no}"})
 
 
 class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
@@ -744,7 +807,8 @@ def sales_revenue_cost_report(request):
     today = timezone.localdate()
     dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
     dto = _parse_date(request.GET.get("to")) or today
-    data = sales_revenue_cost(company, dfrom, dto) if company else {"rows": [], "indep_count": 0, "indep_amount": Decimal("0.00")}
+    data = (sales_revenue_cost(company, dfrom, dto) if company
+            else {"rows": [], "est_count": 0, "gap_count": 0, "gap_amount": Decimal("0.00")})
     rows = data["rows"]
     totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("revenue", "cost", "profit")}
     totals["margin"] = (totals["profit"] / totals["revenue"] * 100).quantize(Decimal("0.1")) \
@@ -760,7 +824,8 @@ def sales_revenue_cost_report(request):
     return render(request, "finance/sales_revenue_cost.html", {
         "rows": rows, "totals": totals, "active_company": company,
         "date_from": dfrom, "date_to": dto,
-        "indep_count": data["indep_count"], "indep_amount": data["indep_amount"]})
+        "est_count": data["est_count"],
+        "gap_count": data["gap_count"], "gap_amount": data["gap_amount"]})
 
 
 @login_required

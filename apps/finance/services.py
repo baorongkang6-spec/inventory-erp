@@ -4,7 +4,7 @@ from django.db import transaction
 
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
-from apps.core.money import ZERO_MONEY, round_money
+from apps.core.money import ZERO_MONEY, ZERO_QTY, round_money
 
 from .models import (
     BankJournal,
@@ -154,6 +154,52 @@ def allocate_payment(*, payment, allocations, user=None):
     return payment
 
 
+@transaction.atomic
+def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="", remark=""):
+    """修改销售发票（保留单号）：未核销才可改；替换明细并重算应收。"""
+    if inv.is_opening:
+        raise SettlementError("期初发票不可在此修改")
+    if inv.settled_amount > 0:
+        raise SettlementError("已核销（或部分核销）的发票不可修改，请先撤销核销")
+    inv.lines.all().delete()
+    inv.doc_date = doc_date
+    inv.customer = customer
+    inv.invoice_no = invoice_no
+    inv.remark = remark
+    total_untaxed = total_tax = total_taxed = ZERO_MONEY
+    for ln in lines:
+        untaxed = round_money(ln["amount_untaxed"])
+        rate = ln["tax_rate"]
+        tax, taxed = compute_tax(untaxed, rate)
+        SalesInvoiceLine.objects.create(
+            invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
+            quantity=ln.get("quantity") or ZERO_QTY,
+            amount_untaxed=untaxed, tax_rate=rate, tax_amount=tax, amount_taxed=taxed,
+            source_outbound_line=ln.get("source_outbound_line"))
+        total_untaxed += untaxed
+        total_tax += tax
+        total_taxed += taxed
+    inv.amount_untaxed = total_untaxed
+    inv.tax_amount = total_tax
+    inv.amount_taxed = total_taxed
+    inv.save(update_fields=["doc_date", "customer", "invoice_no", "remark",
+                            "amount_untaxed", "tax_amount", "amount_taxed"])
+    AuditLog.record(actor=user, company=inv.company, action=AuditLog.Action.UPDATE, target=inv,
+                    summary=f"修改销售发票 {inv.doc_no} 含税 {total_taxed}")
+    return inv
+
+
+def sales_invoice_edit_block_reason(inv, today):
+    """返回不可修改原因；可改返回 None。规则：非期初、未核销、本月。"""
+    if inv.is_opening:
+        return "期初发票不可修改"
+    if inv.settled_amount > 0:
+        return "已核销（或部分核销）不可修改，请先撤销核销"
+    if (inv.doc_date.year, inv.doc_date.month) != (today.year, today.month):
+        return "跨月发票不可修改"
+    return None
+
+
 # ============================= 销售侧（镜像采购侧）=============================
 @transaction.atomic
 def create_sales_invoice(*, company, user, doc_date, customer, lines,
@@ -171,6 +217,7 @@ def create_sales_invoice(*, company, user, doc_date, customer, lines,
         tax, taxed = compute_tax(untaxed, rate)
         SalesInvoiceLine.objects.create(
             invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
+            quantity=ln.get("quantity") or ZERO_QTY,
             amount_untaxed=untaxed, tax_rate=rate, tax_amount=tax, amount_taxed=taxed,
             source_outbound_line=ln.get("source_outbound_line"),
         )

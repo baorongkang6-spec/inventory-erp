@@ -6,7 +6,8 @@
   <a class="btn btn-outline-success btn-sm"
      href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
-<p class="text-muted">口径：按开票（开票日落在区间的销售发票，不含期初）；成本/数量取自发票关联的出库行（移动加权结转成本）。金额单位元。</p>
+<p class="text-muted">口径：按开票（开票日落在区间的销售发票，不含期初）。成本：关联出库的取实际结转成本；
+  未关联(提前开票)但填了商品+数量的，按开票日移动加权单价估算。金额单位元。</p>
 
 <form method="get" class="row g-2 mb-3 align-items-end">
   <div class="col-auto"><label class="form-label">起始日期</label>
@@ -44,8 +45,11 @@
     </table>
   </div>
 </div>
-{% if indep_count %}
-<p class="text-danger small mt-2">注：有 {{ indep_count }} 张（笔）独立录入、未关联出库单的发票行，金额合计 {{ indep_amount }} 元，
-  系统无对应成本，未计入上表成本（其收入已计入）。如需准确成本，请将这些发票关联到出库单或核对。</p>
+{% if est_count %}
+<p class="text-muted small mt-2">说明：有 {{ est_count }} 行未关联出库单（提前开票），成本已按开票日<b>移动加权单价×数量</b>估算计入。</p>
+{% endif %}
+{% if gap_count %}
+<p class="text-danger small mt-1">注：有 {{ gap_count }} 行未关联出库、且无商品或数量，金额合计 {{ gap_amount }} 元，成本无法估算（仅收入计入）。
+  建议补填数量、或将发票关联到出库单。</p>
 {% endif %}
 {% endblock %}
