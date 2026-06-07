@@ -126,13 +126,23 @@ def _inbound_prefill(company, inbound_id):
         {
             "product": ln.product_id,
             "description": ln.product.name,
+            "quantity": ln.quantity,
             "amount_untaxed": ln.amount_untaxed,   # 直接引入库单行的不含税金额
             "tax_rate": ln.tax_rate,
+            "source_inbound_line": ln.pk,          # 关联入库行，供暂估匹配
         }
         for ln in inbound.lines.select_related("product")
     ]
     header = {"supplier": inbound.supplier_id, "doc_date": inbound.doc_date}
     return header, lines, inbound
+
+
+def _resolve_inbound_line(company, line_id):
+    """把表单里的入库行 id 解析成 PurchaseInboundLine（限本账套），无效返回 None。"""
+    if not line_id:
+        return None
+    from apps.purchasing.models import PurchaseInboundLine
+    return PurchaseInboundLine.objects.filter(pk=line_id, inbound__company=company).first()
 
 
 @login_required
@@ -151,8 +161,10 @@ def purchase_invoice_create(request):
                 {
                     "product": cd.get("product"),
                     "description": cd.get("description", ""),
+                    "quantity": cd.get("quantity"),
                     "amount_untaxed": cd["amount_untaxed"],
                     "tax_rate": cd["tax_rate"],
+                    "source_inbound_line": _resolve_inbound_line(company, cd.get("source_inbound_line")),
                 }
                 for cd in formset.valid_lines
             ]
@@ -908,6 +920,41 @@ def shipped_uninvoiced_report(request):
         return xlsx_response("已出库未开具发票明细表", headers, out,
                              company=company_arg, period=(dfrom, dto) if (dfrom or dto) else None)
     return render(request, "finance/shipped_uninvoiced.html", {
+        "rows": rows, "totals": totals, "visible_companies": visible,
+        "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto})
+
+
+@login_required
+@permission_required("finance.view_purchaseinvoice", raise_exception=True)
+def received_uninvoiced_report(request):
+    """已入库未收到发票明细表（入库数量 − 已收票数量 ≠ 0），支持多公司联合查询。
+
+    作为库存商品暂估的依据。
+    """
+    from apps.opening.reports import received_uninvoiced
+    visible = list(get_visible_companies(request.user))
+    dfrom = _parse_date(request.GET.get("from"))
+    dto = _parse_date(request.GET.get("to"))
+    sel_ids = request.GET.getlist("company")
+    if sel_ids:
+        chosen = [c for c in visible if str(c.pk) in sel_ids]
+    else:
+        chosen = list(visible)   # 未选则默认全部可见公司
+    rows = received_uninvoiced(chosen, dfrom, dto)
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("untaxed", "taxed")}
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["公司", "供应商", "入库单号", "入库日期", "商品", "入库数量", "已收票数量",
+                   "未收票数量", "未收票不含税", "未收票含税"]
+        out = [[r["company"].short_name or str(r["company"]), str(r["supplier"] or ""),
+                r["inbound"].doc_no, r["inbound"].doc_date, str(r["product"] or ""),
+                r["in_qty"], r["billed_qty"], r["remain_qty"], r["untaxed"], r["taxed"]]
+               for r in rows]
+        out.append(["合计", "", "", "", "", "", "", "", totals["untaxed"], totals["taxed"]])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("已入库未收到发票明细表", headers, out,
+                             company=company_arg, period=(dfrom, dto) if (dfrom or dto) else None)
+    return render(request, "finance/received_uninvoiced.html", {
         "rows": rows, "totals": totals, "visible_companies": visible,
         "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto})
 

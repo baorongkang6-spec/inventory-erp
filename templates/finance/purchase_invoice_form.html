@@ -41,14 +41,15 @@
     <div class="table-responsive">
       <table class="table table-sm mb-0 align-middle">
         <thead class="table-light">
-          <tr><th style="width:26%">商品(可选)</th><th style="width:18%">摘要</th>
+          <tr><th style="width:22%">商品(可选)</th><th style="width:16%">摘要</th><th>数量</th>
               <th>不含税金额</th><th>税率</th><th class="text-end">税额</th><th class="text-end">含税金额</th><th></th></tr>
         </thead>
         <tbody>
           {% for form in formset %}
           <tr class="inv-line">
-            <td>{{ form.product }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.product }}{{ form.source_inbound_line }}{% for e in form.product.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.description }}</td>
+            <td>{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.amount_untaxed }}{% for e in form.amount_untaxed.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.tax_rate }}{% for e in form.tax_rate.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td class="text-end cell-tax">0.00</td>
@@ -58,7 +59,7 @@
           {% endfor %}
         </tbody>
         <tfoot class="table-secondary" id="inv-tot">
-          <tr><th colspan="2" class="text-end">合计</th><th class="text-end t-untaxed">0.00</th><th></th>
+          <tr><th colspan="3" class="text-end">合计</th><th class="text-end t-untaxed">0.00</th><th></th>
               <th class="text-end t-tax">0.00</th><th class="text-end t-taxed">0.00</th><th></th></tr>
         </tfoot>
       </table>

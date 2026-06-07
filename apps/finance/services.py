@@ -58,6 +58,7 @@ def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
         tax, taxed = compute_tax(untaxed, rate)
         PurchaseInvoiceLine.objects.create(
             invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
+            quantity=ln.get("quantity") or ZERO_QTY,
             amount_untaxed=untaxed, tax_rate=rate, tax_amount=tax, amount_taxed=taxed,
             source_inbound_line=ln.get("source_inbound_line"),
         )

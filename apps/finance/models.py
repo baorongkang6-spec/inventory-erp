@@ -87,6 +87,7 @@ class PurchaseInvoiceLine(models.Model):
         Product, on_delete=models.PROTECT, null=True, blank=True, verbose_name="商品"
     )
     description = models.CharField("摘要", max_length=128, blank=True)
+    quantity = models.DecimalField("数量", max_digits=18, decimal_places=3, default=ZERO_QTY)
     amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2)
     tax_rate = models.DecimalField("税率", max_digits=5, decimal_places=4, default=DEFAULT_TAX_RATE)
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)

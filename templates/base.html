@@ -93,6 +93,7 @@
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_revenue_cost_report' %}">销售收入成本表（按开票）</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_cost_by_outbound_report' %}">销售收入成本表（按出库）</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'shipped_uninvoiced_report' %}">已出库未开票明细表</a></li>{% endif %}
+            {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'received_uninvoiced_report' %}">已入库未收票明细表</a></li>{% endif %}
             {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'notes_balance_report' %}">票据余额表</a></li>{% endif %}
             {% if perms.finance.view_borrowtransaction %}<li><a class="dropdown-item" href="{% url 'borrow_report' %}">借调往来余额表</a></li>{% endif %}
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'reconciliation' %}">月底对账</a></li>{% endif %}

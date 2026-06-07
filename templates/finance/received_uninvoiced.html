@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}已入库未收到发票明细表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">已入库未收到发票明细表</h4>
+</div>
+<p class="text-muted">列出采购入库行中「入库数量 − 已收票数量 ≠ 0」的明细，作为库存商品暂估的依据；
+  金额为未收票部分(按入库单价换算)。支持多公司联合查询；日期区间可选，留空=全部。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-12">
+    <label class="form-label mb-1">公司（可多选，不选=全部）</label>
+    <div>
+      {% for c in visible_companies %}
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="checkbox" name="company" value="{{ c.pk }}"
+               id="co{{ c.pk }}" {% if c.pk in chosen_ids %}checked{% endif %}>
+        <label class="form-check-label" for="co{{ c.pk }}">{{ c }}</label>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="col-auto"><label class="form-label">入库起始日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">入库截止日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button>
+    <button type="submit" name="export" value="xlsx" class="btn btn-outline-success">导出 Excel</button></div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>公司</th><th>供应商</th><th>入库单号</th><th>入库日期</th><th>商品</th>
+            <th class="text-end">入库数量</th><th class="text-end">已收票数量</th><th class="text-end">未收票数量</th>
+            <th class="text-end">未收票不含税</th><th class="text-end">未收票含税</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.company.short_name|default:r.company }}</td>
+          <td>{{ r.supplier|default:"—" }}</td>
+          <td><a href="{% url 'inbound_detail' r.inbound.pk %}">{{ r.inbound.doc_no }}</a></td>
+          <td>{{ r.inbound.doc_date|date:"Y-m-d" }}</td>
+          <td>{% if r.product %}{{ r.product.code }} {{ r.product.name }}{% else %}—{% endif %}</td>
+          <td class="text-end">{{ r.in_qty }}</td>
+          <td class="text-end">{{ r.billed_qty }}</td>
+          <td class="text-end fw-semibold">{{ r.remain_qty }}</td>
+          <td class="text-end">{{ r.untaxed }}</td>
+          <td class="text-end">{{ r.taxed }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="10" class="text-center text-muted py-4">没有已入库未收票的明细</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th colspan="8" class="text-end">合计</th>
+            <th class="text-end">{{ totals.untaxed }}</th><th class="text-end">{{ totals.taxed }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

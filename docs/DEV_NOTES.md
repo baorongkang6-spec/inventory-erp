@@ -100,3 +100,11 @@
 - **机制=冲正重过账**：`update_and_repost_*` 在事务内"反向冲减原过账→按新明细在同一张单上重过账"(保留单号)，避免改移动加权历史的复杂重算；创建/修改共用 `_apply_*_lines` 抽出的过账逻辑。
 - **可改性守卫**(`*_edit_block_reason`)：①本人或管理员(管理员=超管或有 void 权限)；②本月内(跨月不可改，会计期间控制)；③未被下游引用(已开发票/关联镜像 → 拒绝，提示作废重录)。镜像生成的入库单、已生成镜像的出库单都不可直接改。
 - **审计**：修改记 `AuditLog.UPDATE`。入口：单据详情页「修改」按钮；列表(带筛选)→单号→详情→修改即"查询界面可改"。
+
+## 十一、发票×单据数量勾稽（已出库未开票 / 已入库未收票明细表）
+
+- **背景**：发票要能按"出库/入库数量 − 已开票/已收票数量"算未结差额，必须让发票行存数量并真正关联源单据行。早期销售发票行只复制金额、不写 `source_outbound_line`，导致全部当"独立"无成本——这是大坑，采购侧同理。
+- **数据模型**：`SalesInvoiceLine` / `PurchaseInvoiceLine` 各加 `quantity`(decimal 18,3, 默认 0) + 已有的 `source_*_line` 外键(SET_NULL，独立录入时空)。两侧完全对称。
+- **联动链路**(改一处必改全链)：①`_*_prefill` 带出 `quantity` + `source_*_line=ln.pk`；②表单加 `quantity` 字段 + 隐藏 `source_*_line`(IntegerField/HiddenInput)；③模板渲染数量列 + `{{ form.source_*_line }}`；④视图 `_resolve_*_line(company, id)` 把 id 解析成限本账套的行对象，create/update 写入；⑤service `create_*_invoice` 存 `quantity=ln.get("quantity") or ZERO_QTY`。
+- **报表**：`shipped_uninvoiced` / `received_uninvoiced`(opening/reports.py) 对称——遍历出库/入库行，已开票/收票数量=关联本行的发票行 `quantity` 之和(排除作废发票)，差额≠0 才列出；金额按源单行单价×未结数量换算不含税/含税(`round_money`)。`received_uninvoiced` 作为库存**暂估**依据。
+- **多公司**：视图收 `request.GET.getlist("company")`，不选=全部可见公司；导出仅单公司时才把 company 传给 `xlsx_response`(影响编制单位)。权限：销售侧 `view_salesinvoice`，采购侧 `view_purchaseinvoice`。

@@ -483,6 +483,56 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
     return rows
 
 
+def received_uninvoiced(companies, dfrom=None, dto=None):
+    """已入库未收到发票明细：采购入库行中「入库数量 − 已收票数量 ≠ 0」的行。
+
+    作为库存商品「暂估」的依据。companies 为公司列表（支持多公司联合查询）。
+    已收票数量 = 关联该入库行的采购发票行数量之和(不含作废)。金额取未收票部分
+    (按入库行单价×未收票数量换算不含税/含税)。可按入库日期区间过滤。
+    """
+    from django.db.models import Sum
+
+    from apps.finance.models import PurchaseInvoice, PurchaseInvoiceLine
+    from apps.purchasing.models import PurchaseInbound, PurchaseInboundLine
+    ZQ = Decimal("0.000")
+    one = Decimal(1)
+    companies = list(companies)
+    if not companies:
+        return []
+    qs = (PurchaseInboundLine.objects
+          .filter(inbound__company__in=companies,
+                  inbound__purchase_type=PurchaseInbound.PurchaseType.EXTERNAL)
+          .exclude(inbound__status=PurchaseInbound.Status.VOID)
+          .select_related("inbound", "inbound__company", "inbound__supplier", "product"))
+    if dfrom:
+        qs = qs.filter(inbound__doc_date__gte=dfrom)
+    if dto:
+        qs = qs.filter(inbound__doc_date__lte=dto)
+
+    invoiced = {r["source_inbound_line"]: (r["q"] or ZQ) for r in
+                PurchaseInvoiceLine.objects.filter(source_inbound_line__in=qs)
+                .exclude(invoice__status=PurchaseInvoice.Status.VOID)
+                .values("source_inbound_line").annotate(q=Sum("quantity"))}
+
+    rows = []
+    for ln in qs.order_by("inbound__company__code", "inbound__supplier__code",
+                          "inbound__doc_no", "id"):
+        billed = invoiced.get(ln.pk, ZQ)
+        remain = ln.quantity - billed
+        if remain == 0:
+            continue
+        unit_u = (ln.amount_untaxed / ln.quantity) if ln.quantity else Z
+        ru = round_money(remain * unit_u)
+        rt = round_money(ru * (one + ln.tax_rate))
+        rows.append({
+            "company": ln.inbound.company, "supplier": ln.inbound.supplier,
+            "inbound": ln.inbound, "product": ln.product,
+            "in_qty": ln.quantity, "billed_qty": billed, "remain_qty": remain,
+            "untaxed": ru, "taxed": rt,
+        })
+    return rows
+
+
 def _avg_cost_asof(company, product, date):
     """商品在某业务日期的移动加权单价：取该日(含)前最后一笔流水的结存均价；
     无则回退当前结存均价，再无则 0。供"提前开票、未关联出库"时估算成本。"""
