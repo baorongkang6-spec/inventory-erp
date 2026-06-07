@@ -1,0 +1,39 @@
+{# 发票明细：不含税金额×税率 → 自动算税额/含税金额 + 合计；并阻止回车提交 #}
+<script>
+(function () {
+  function num(el) { return el ? (parseFloat(el.value) || 0) : 0; }
+  function q(row, suf) { return row.querySelector('[name$="' + suf + '"]'); }
+  var rows = document.querySelectorAll("tr.inv-line");
+  function recalc() {
+    var tu = 0, tx = 0, tt = 0;
+    rows.forEach(function (r) {
+      var u = num(q(r, "-amount_untaxed")), rate = num(q(r, "-tax_rate"));
+      var tax = u * rate, taxed = u + tax;
+      var ct = r.querySelector(".cell-tax"), cd = r.querySelector(".cell-taxed");
+      if (ct) ct.textContent = tax.toFixed(2);
+      if (cd) cd.textContent = taxed.toFixed(2);
+      tu += u; tx += tax; tt += taxed;
+    });
+    var f = document.getElementById("inv-tot");
+    if (f) {
+      f.querySelector(".t-untaxed").textContent = tu.toFixed(2);
+      f.querySelector(".t-tax").textContent = tx.toFixed(2);
+      f.querySelector(".t-taxed").textContent = tt.toFixed(2);
+    }
+  }
+  rows.forEach(function (r) {
+    ["-amount_untaxed", "-tax_rate"].forEach(function (suf) {
+      var el = q(r, suf);
+      if (el) el.addEventListener("input", recalc);
+    });
+  });
+  recalc();
+  var form = document.getElementById("invform");
+  if (form) form.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA"
+        && !(e.target.type === "submit" || e.target.tagName === "BUTTON")) {
+      e.preventDefault();
+    }
+  });
+})();
+</script>

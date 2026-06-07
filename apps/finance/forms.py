@@ -121,7 +121,7 @@ class BasePurchaseInvoiceLineFormSet(forms.BaseFormSet):
 
 
 PurchaseInvoiceLineFormSet = forms.formset_factory(
-    PurchaseInvoiceLineForm, formset=BasePurchaseInvoiceLineFormSet, extra=8
+    PurchaseInvoiceLineForm, formset=BasePurchaseInvoiceLineFormSet, extra=3
 )
 
 
@@ -232,7 +232,7 @@ class BaseSalesInvoiceLineFormSet(forms.BaseFormSet):
 
 
 SalesInvoiceLineFormSet = forms.formset_factory(
-    SalesInvoiceLineForm, formset=BaseSalesInvoiceLineFormSet, extra=8
+    SalesInvoiceLineForm, formset=BaseSalesInvoiceLineFormSet, extra=3
 )
 
 

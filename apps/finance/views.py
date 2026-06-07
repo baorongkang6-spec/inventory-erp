@@ -181,7 +181,8 @@ def purchase_invoice_create(request):
     # 可选择的入库单（供「从入库单带入」下拉）
     inbounds = PurchaseInbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
     return render(request, "finance/purchase_invoice_form.html",
-                  {"header": header, "formset": formset, "inbounds": inbounds, "title": "采购发票"})
+                  {"header": header, "formset": formset, "inbounds": inbounds, "title": "采购发票",
+                   "selected_inbound_id": request.GET.get("inbound", "")})
 
 
 # --- 付款登记（自动生成银行日记账）------------------------------------------
@@ -370,7 +371,8 @@ def sales_invoice_create(request):
 
     outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
     return render(request, "finance/sales_invoice_form.html",
-                  {"header": header, "formset": formset, "outbounds": outbounds, "title": "销售发票"})
+                  {"header": header, "formset": formset, "outbounds": outbounds, "title": "销售发票",
+                   "selected_outbound_id": request.GET.get("outbound", "")})
 
 
 @require_POST
@@ -451,9 +453,11 @@ def sales_invoice_edit(request, pk):
         formset = SalesInvoiceLineFormSet(company=company, initial=line_init)
 
     outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
+    linked = inv.lines.exclude(source_outbound_line=None).first()
+    sel_ob = linked.source_outbound_line.outbound_id if linked else ""
     return render(request, "finance/sales_invoice_form.html",
                   {"header": header, "formset": formset, "outbounds": outbounds,
-                   "title": f"修改销售发票 {inv.doc_no}"})
+                   "title": f"修改销售发票 {inv.doc_no}", "selected_outbound_id": sel_ob})
 
 
 class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
