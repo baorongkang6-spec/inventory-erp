@@ -189,6 +189,34 @@ def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="",
     return inv
 
 
+@transaction.atomic
+def void_sales_invoice(inv, user=None):
+    """作废销售发票：未核销才可作废；作废后从应收剔除（报表按已开具过滤）。"""
+    if inv.status == SalesInvoice.Status.VOID:
+        raise SettlementError("该发票已作废")
+    if inv.settled_amount > 0:
+        raise SettlementError("已核销（或被票据抵冲）的发票不可作废，请先撤销核销")
+    inv.status = SalesInvoice.Status.VOID
+    inv.save(update_fields=["status"])
+    AuditLog.record(actor=user, company=inv.company, action=AuditLog.Action.VOID, target=inv,
+                    summary=f"作废销售发票 {inv.doc_no}（撤销应收 {inv.amount_taxed}）")
+    return inv
+
+
+@transaction.atomic
+def void_purchase_invoice_doc(inv, user=None):
+    """作废采购发票：未核销才可作废；作废后从应付剔除。"""
+    if inv.status == PurchaseInvoice.Status.VOID:
+        raise SettlementError("该发票已作废")
+    if inv.settled_amount > 0:
+        raise SettlementError("已核销（或被票据抵冲）的发票不可作废，请先撤销核销")
+    inv.status = PurchaseInvoice.Status.VOID
+    inv.save(update_fields=["status"])
+    AuditLog.record(actor=user, company=inv.company, action=AuditLog.Action.VOID, target=inv,
+                    summary=f"作废采购发票 {inv.doc_no}（撤销应付 {inv.amount_taxed}）")
+    return inv
+
+
 def sales_invoice_edit_block_reason(inv, today):
     """返回不可修改原因；可改返回 None。规则：非期初、未核销、本月。"""
     if inv.is_opening:

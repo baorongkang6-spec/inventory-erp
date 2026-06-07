@@ -2,8 +2,15 @@
 {% block title %}{{ inv.doc_no }} · 采购发票{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">采购发票 {{ inv.doc_no }}</h4>
-  <a href="{% url 'purchase_invoice_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  <h4 class="mb-0">采购发票 {{ inv.doc_no }}{% if inv.status == 'void' %} <span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
+  <div class="d-flex gap-2">
+    {% if inv.status != 'void' and not inv.is_opening and inv.settled_amount == 0 and perms.finance.add_purchaseinvoice %}
+    <form method="post" action="{% url 'purchase_invoice_void' inv.pk %}" onsubmit="return confirm('确认作废本采购发票？将撤销对应应付。');">
+      {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'purchase_invoice_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
 </div>
 
 <div class="card mb-3">

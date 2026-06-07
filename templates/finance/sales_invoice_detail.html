@@ -2,10 +2,13 @@
 {% block title %}{{ inv.doc_no }} · 销售发票{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">销售发票 {{ inv.doc_no }}</h4>
+  <h4 class="mb-0">销售发票 {{ inv.doc_no }}{% if inv.status == 'void' %} <span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
   <div class="d-flex gap-2">
-    {% if not inv.is_opening and inv.settled_amount == 0 and perms.finance.add_salesinvoice %}
+    {% if inv.status != 'void' and not inv.is_opening and inv.settled_amount == 0 and perms.finance.add_salesinvoice %}
     <a href="{% url 'sales_invoice_edit' inv.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
+    <form method="post" action="{% url 'sales_invoice_void' inv.pk %}" onsubmit="return confirm('确认作废本销售发票？将撤销对应应收。');">
+      {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>
+    </form>
     {% endif %}
     <a href="{% url 'sales_invoice_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
   </div>

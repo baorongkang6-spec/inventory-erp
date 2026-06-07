@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
 from apps.core.crud import (
@@ -370,6 +371,38 @@ def sales_invoice_create(request):
     outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
     return render(request, "finance/sales_invoice_form.html",
                   {"header": header, "formset": formset, "outbounds": outbounds, "title": "销售发票"})
+
+
+@require_POST
+@login_required
+@permission_required("finance.add_salesinvoice", raise_exception=True)
+def sales_invoice_void(request, pk):
+    from .services import void_sales_invoice
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    inv = get_object_or_404(SalesInvoice, pk=pk, company=company)
+    try:
+        void_sales_invoice(inv, request.user)
+    except SettlementError as e:
+        messages.error(request, f"作废失败：{e}")
+    else:
+        messages.success(request, f"已作废销售发票 {inv.doc_no}")
+    return redirect("sales_invoice_detail", pk=inv.pk)
+
+
+@require_POST
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def purchase_invoice_void(request, pk):
+    from .services import void_purchase_invoice_doc
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    inv = get_object_or_404(PurchaseInvoice, pk=pk, company=company)
+    try:
+        void_purchase_invoice_doc(inv, request.user)
+    except SettlementError as e:
+        messages.error(request, f"作废失败：{e}")
+    else:
+        messages.success(request, f"已作废采购发票 {inv.doc_no}")
+    return redirect("purchase_invoice_detail", pk=inv.pk)
 
 
 @login_required

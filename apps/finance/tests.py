@@ -517,6 +517,43 @@ class BankReconcileTests(TestCase):
         self.assertEqual(r["batch"].system_only_count, 1)  # 税费 200(06-06)
 
 
+class InvoiceVoidTests(TestCase):
+    """发票作废：未核销可作废(从应收/应付剔除)，已核销不可。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供A")
+
+    def test_void_unsettled_purchase_invoice(self):
+        from apps.finance.services import create_purchase_invoice, void_purchase_invoice_doc
+        from apps.opening.reports import payable_partners_balance
+        inv = create_purchase_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            supplier=self.sup, lines=[{"product": None, "description": "货",
+                                       "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0.13")}])
+        void_purchase_invoice_doc(inv, None)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "void")
+        # 作废后从应付剔除
+        rows = payable_partners_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(rows, [])
+
+    def test_cannot_void_settled(self):
+        from apps.finance.services import (create_purchase_invoice, create_payment,
+            allocate_payment, void_purchase_invoice_doc, SettlementError)
+        from apps.finance.models import BankAccount
+        acc = BankAccount.objects.create(company=self.c1, name="基本户")
+        inv = create_purchase_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            supplier=self.sup, lines=[{"product": None, "description": "货",
+                                       "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
+        pay = create_payment(company=self.c1, user=None, doc_date=date(2026, 6, 6),
+                             bank_account=acc, supplier=self.sup, amount=Decimal("1000"))
+        allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        inv.refresh_from_db()
+        with self.assertRaises(SettlementError):
+            void_purchase_invoice_doc(inv, None)
+
+
 class SalesRevenueCostTests(TestCase):
     """销售收入成本计算表（按开票口径、按商品）。"""
 
