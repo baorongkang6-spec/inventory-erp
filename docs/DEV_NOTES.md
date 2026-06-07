@@ -130,3 +130,10 @@
 - **通用过滤片段**：`templates/_company_filter.html`（需 `visible_companies`+`chosen_ids`），各报表 `{% include %}`；导出链接统一 `?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}export=xlsx` 以保留多选。
 - **分组**：应付/应收按 (公司, 往来对象) 分组（`_outstanding_balance_report` 通用化 payable/receivable）；借调按 (公司, 对手单位) 聚合；票据按公司排序平铺。导出仅单公司时才把 company 传 `xlsx_response`（影响编制单位）。
 - **未动**：M9 从总览下钻的 `payable_partners_report`/`receivable_partners_report`/`receivable_notes_report` 仍是单公司下钻（带 company_id + 返回链接），与跨公司总览配套，不混入多选。
+
+## 十五、菜单版应付/应收余额表改为余额式 + 明细账下钻
+
+- **变更**：「报表」菜单的应付/应收账款余额表由「未核销发票清单」改为「按公司·往来对象的 期初/本期增加/本期减少/期末余额」，加日期区间，点供应商/客户进该公司该对象的往来明细账。与 M9 总览下钻同形态，但**多公司联合**。
+- **复用**：直接调 `payable_partners_balance/receivable_partners_balance(company,dfrom,dto)` 逐公司汇总再合并（这俩本就返回 opening/income/outgo/ending + partner 对象）；明细账复用既有 `payable_partner_ledger/receivable_partner_ledger`（`resolve_company` 已支持 `?company=`，故跨公司下钻无需改后端）。
+- **共用明细账两入口**：ledger 加 `src=menu` 区分来源——决定「返回余额表」回菜单报表还是 M9 总览下钻报表；`src` 在 ledger 自身的查询表单/导出链接里透传。
+- **模板**：新增 `partner_balance_multi.html`（公司列 + 多选 + 合计）；旧 `balance_report.html` 及 `_outstanding_balance_report` 的发票清单实现删除。

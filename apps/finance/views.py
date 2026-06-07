@@ -715,58 +715,54 @@ def bank_journal_report(request):
 @login_required
 @permission_required("finance.view_purchaseinvoice", raise_exception=True)
 def payables_report(request):
-    """应付余额表：按公司·供应商汇总未核销的采购发票。支持多公司联合查询。"""
+    """应付账款余额表：按公司·供应商列 期初/本期增加/本期减少/期末，点供应商进明细账。"""
     return _outstanding_balance_report(
-        request, model=PurchaseInvoice, partner_attr="supplier",
-        title="应付账款余额表", partner_label="供应商", kind="应付")
+        request, kind="payable", title="应付账款余额表", partner_label="供应商",
+        ledger_url="payable_partner_ledger", inc_label="本期增加", dec_label="本期减少")
 
 
-def _outstanding_balance_report(request, *, model, partner_attr, title, partner_label, kind):
-    """应付/应收余额表通用：公司多选(不选=全部)，按 公司·往来对象 分组列未核销发票。"""
+def _outstanding_balance_report(request, *, kind, title, partner_label, ledger_url,
+                                inc_label, dec_label):
+    """应付/应收余额表（多公司联合）：按 公司·往来对象 列 期初/本期增/本期减/期末。
+
+    公司不选=全部可见公司；日期区间默认月初~今天；点往来对象进该公司该对象明细账。
+    """
+    from apps.opening.reports import payable_partners_balance, receivable_partners_balance
     visible, chosen = _company_scope(request)
-    invoices = (model.objects
-                .filter(company__in=chosen, status=model.Status.REGISTERED)
-                .select_related(partner_attr, "company")
-                .order_by("company__code", f"{partner_attr}__code", "doc_date"))
-    groups = {}
-    for inv in invoices:
-        if inv.outstanding <= 0:
-            continue
-        partner = getattr(inv, partner_attr)
-        key = (inv.company_id, getattr(inv, f"{partner_attr}_id"))
-        g = groups.setdefault(key, {"company": inv.company, "partner": partner,
-                                    "items": [], "total": Decimal("0.00")})
-        g["items"].append(inv)
-        g["total"] += inv.outstanding
-    groups = sorted(groups.values(),
-                    key=lambda g: (g["company"].code, getattr(g["partner"], "code", "")))
-    grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    balance_fn = payable_partners_balance if kind == "payable" else receivable_partners_balance
+    rows = []
+    for company in chosen:
+        for r in balance_fn(company, dfrom, dto):
+            rows.append({**r, "company": company})
+    rows.sort(key=lambda r: (r["company"].code, getattr(r["partner"], "code", "")))
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("opening", "income", "outgo", "ending")}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
-        headers = ["公司", partner_label, "单据编号", "开票日期", "发票号码", f"未核销({kind})"]
-        rows = []
-        for g in groups:
-            cname = g["company"].short_name or str(g["company"])
-            for inv in g["items"]:
-                rows.append([cname, str(g["partner"]), inv.doc_no, inv.doc_date,
-                             inv.invoice_no, inv.outstanding])
-            rows.append([cname, f"{g['partner']} 小计", "", "", "", g["total"]])
-        rows.append(["合计", "", "", "", "", grand])
+        headers = ["公司", partner_label, "期初余额", inc_label, dec_label, "期末余额"]
+        data = [[r["company"].short_name or str(r["company"]), str(r["partner"]),
+                 r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
+        data.append(["合计", "", totals["opening"], totals["income"], totals["outgo"], totals["ending"]])
         company_arg = chosen[0] if len(chosen) == 1 else None
-        return xlsx_response(title, headers, rows, company=company_arg)
-    return render(request, "finance/balance_report.html", {
-        "title": title, "kind": kind, "groups": groups, "grand": grand,
+        return xlsx_response(title, headers, data, company=company_arg, period=(dfrom, dto))
+    return render(request, "finance/partner_balance_multi.html", {
+        "title": title, "partner_label": partner_label, "ledger_url": ledger_url,
+        "inc_label": inc_label, "dec_label": dec_label, "rows": rows, "totals": totals,
         "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "date_from": dfrom, "date_to": dto,
     })
 
 
 @login_required
 @permission_required("finance.view_salesinvoice", raise_exception=True)
 def receivables_report(request):
-    """应收余额表：按公司·客户汇总未核销的销售发票。支持多公司联合查询。"""
+    """应收账款余额表：按公司·客户列 期初/本期增加/本期减少/期末，点客户进明细账。"""
     return _outstanding_balance_report(
-        request, model=SalesInvoice, partner_attr="customer",
-        title="应收账款余额表", partner_label="客户", kind="应收")
+        request, kind="receivable", title="应收账款余额表", partner_label="客户",
+        ledger_url="receivable_partner_ledger", inc_label="本期增加", dec_label="本期减少")
 
 
 # ===== 往来余额表 + 往来明细账（M9-2/M9-3，总览应付/应收两级下钻）=============
@@ -809,8 +805,15 @@ def _partner_ledger_page(request, kind):
     model = Supplier if kind == "payable" else Customer
     partner = get_object_or_404(model, pk=request.GET.get("partner"), company=company)
     data = partner_ledger(company, partner, kind, dfrom, dto)
-    cfg = ({"title": "供应商往来明细账", "back_url": "payable_partners_report"} if kind == "payable"
-           else {"title": "客户往来明细账", "back_url": "receivable_partners_report"})
+    # src=menu → 从「报表」菜单的应付/应收余额表进入，返回到对应菜单报表；
+    # 默认从总览下钻进入，返回到 M9 按往来对象的余额表。
+    menu = request.GET.get("src") == "menu"
+    if kind == "payable":
+        cfg = {"title": "供应商往来明细账",
+               "back_url": "payables_report" if menu else "payable_partners_report"}
+    else:
+        cfg = {"title": "客户往来明细账",
+               "back_url": "receivables_report" if menu else "receivable_partners_report"}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
         headers = ["日期", "类型", "单号", "增加", "减少", "余额"]
@@ -822,7 +825,7 @@ def _partner_ledger_page(request, kind):
     return render(request, "finance/partner_ledger.html", {
         "partner": partner, "data": data, "active_company": company,
         "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", ""),
-        **cfg})
+        "src": "menu" if menu else "", **cfg})
 
 
 @login_required

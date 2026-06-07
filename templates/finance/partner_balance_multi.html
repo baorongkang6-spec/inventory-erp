@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">{{ title }}</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">点{{ partner_label }}行可进入该期间往来明细账；当期无发生也显示期末余额。支持多公司联合查询（不选=全部）。默认月初~今天。</p>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">期初日期</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><label class="form-label">期末日期</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">公司</th><th class="text-start">{{ partner_label }}</th>
+            <th>期初余额</th><th>{{ inc_label }}</th><th>{{ dec_label }}</th><th>期末余额</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="text-start">{{ r.company.short_name|default:r.company }}</td>
+          <td class="text-start">
+            <a href="{% url ledger_url %}?company={{ r.company.pk }}&partner={{ r.partner.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&src=menu">{{ r.partner }}</a>
+          </td>
+          <td>{{ r.opening }}</td>
+          <td>{{ r.income }}</td>
+          <td>{{ r.outgo }}</td>
+          <td class="fw-semibold">{{ r.ending }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-muted py-4">所选公司当期无往来</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th class="text-start" colspan="2">合计</th><th>{{ totals.opening }}</th><th>{{ totals.income }}</th>
+            <th>{{ totals.outgo }}</th><th>{{ totals.ending }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

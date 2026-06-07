@@ -5,9 +5,9 @@
   <h4 class="mb-0">{{ title }}<small class="text-muted fs-6 ms-2">{{ active_company }} · {{ partner }}</small></h4>
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary btn-sm"
-       href="{% url back_url %}{% if company_id %}?company={{ company_id }}{% endif %}">返回余额表</a>
+       href="{% url back_url %}?{% if company_id %}company={{ company_id }}&{% endif %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">返回余额表</a>
     <a class="btn btn-outline-success btn-sm"
-       href="?{% if company_id %}company={{ company_id }}&{% endif %}partner={{ partner.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+       href="?{% if company_id %}company={{ company_id }}&{% endif %}{% if src %}src={{ src }}&{% endif %}partner={{ partner.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
   </div>
 </div>
 <p class="text-muted">增=发票，减=核销/票据抵付；按业务日期滚动余额。当期无发生也显示期末余额。</p>
