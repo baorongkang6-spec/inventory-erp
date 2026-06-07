@@ -31,13 +31,18 @@
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>商品/摘要</th><th class="text-end">不含税</th><th class="text-end">税率</th>
+        <tr><th>商品/摘要</th><th>关联入库单</th><th class="text-end">不含税</th><th class="text-end">税率</th>
             <th class="text-end">税额</th><th class="text-end">含税</th></tr>
       </thead>
       <tbody>
         {% for ln in inv.lines.all %}
         <tr>
           <td>{{ ln.product|default:ln.description|default:"—" }}</td>
+          <td>
+            {% if ln.source_inbound_line %}
+            <a href="{% url 'inbound_detail' ln.source_inbound_line.inbound_id %}">{{ ln.source_inbound_line.inbound.doc_no }}</a>
+            {% else %}<span class="text-muted">—（未关联）</span>{% endif %}
+          </td>
           <td class="text-end">{{ ln.amount_untaxed }}</td>
           <td class="text-end">{{ ln.tax_rate }}</td>
           <td class="text-end">{{ ln.tax_amount }}</td>
@@ -46,7 +51,7 @@
         {% endfor %}
       </tbody>
       <tfoot class="table-light">
-        <tr><th>合计</th><th class="text-end">{{ inv.amount_untaxed }}</th><th></th>
+        <tr><th>合计</th><th></th><th class="text-end">{{ inv.amount_untaxed }}</th><th></th>
             <th class="text-end">{{ inv.tax_amount }}</th><th class="text-end">{{ inv.amount_taxed }}</th></tr>
       </tfoot>
     </table>
