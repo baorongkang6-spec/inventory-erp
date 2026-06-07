@@ -736,6 +736,34 @@ def receivable_note_ledger(request):
 
 
 @login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
+def sales_revenue_cost_report(request):
+    """销售收入成本计算表（按开票口径、按商品；期间可选，默认本月）。"""
+    from apps.opening.reports import sales_revenue_cost
+    company = resolve_company(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    data = sales_revenue_cost(company, dfrom, dto) if company else {"rows": [], "indep_count": 0, "indep_amount": Decimal("0.00")}
+    rows = data["rows"]
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("revenue", "cost", "profit")}
+    totals["margin"] = (totals["profit"] / totals["revenue"] * 100).quantize(Decimal("0.1")) \
+        if totals["revenue"] else Decimal("0.0")
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["商品编码", "商品名称", "销售数量", "销售收入(不含税)", "销售成本", "销售毛利", "毛利率%"]
+        out = [[(r["product"].code if r["product"] else ""),
+                (r["product"].name if r["product"] else "（未指定商品）"),
+                r["qty"], r["revenue"], r["cost"], r["profit"], r["margin"]] for r in rows]
+        out.append(["合计", "", "", totals["revenue"], totals["cost"], totals["profit"], totals["margin"]])
+        return xlsx_response("销售收入成本计算表", headers, out, company=company, period=(dfrom, dto))
+    return render(request, "finance/sales_revenue_cost.html", {
+        "rows": rows, "totals": totals, "active_company": company,
+        "date_from": dfrom, "date_to": dto,
+        "indep_count": data["indep_count"], "indep_amount": data["indep_amount"]})
+
+
+@login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_export(request):
     """导出当前账户/期间的银行存款日记账为 Excel。"""

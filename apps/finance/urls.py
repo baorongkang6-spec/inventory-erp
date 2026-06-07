@@ -38,6 +38,7 @@ urlpatterns = [
     path("other-cashflow/<int:pk>/delete/", views.other_cashflow_delete, name="other_cashflow_delete"),
     path("reports/payables/", views.payables_report, name="payables_report"),
     path("reports/receivables/", views.receivables_report, name="receivables_report"),
+    path("reports/sales-revenue-cost/", views.sales_revenue_cost_report, name="sales_revenue_cost_report"),
     path("reports/payable-partners/", views.payable_partners_report, name="payable_partners_report"),
     path("reports/payable-ledger/", views.payable_partner_ledger, name="payable_partner_ledger"),
     path("reports/receivable-partners/", views.receivable_partners_report, name="receivable_partners_report"),

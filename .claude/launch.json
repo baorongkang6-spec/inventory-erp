@@ -4,7 +4,7 @@
     {
       "name": "erp-dev",
       "runtimeExecutable": "/opt/homebrew/bin/uv",
-      "runtimeArgs": ["run", "python", "manage.py", "runserver", "127.0.0.1:8000"],
+      "runtimeArgs": ["run", "python", "manage.py", "runserver", "0.0.0.0:8000"],
       "port": 8000
     }
   ]

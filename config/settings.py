@@ -46,6 +46,11 @@ ALLOWED_HOSTS = [h.strip() for h in os.environ.get(
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get(
     "DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
 
+# 开发期（DEBUG 且非生产）：放开 ALLOWED_HOSTS，便于同一 WiFi 下手机用局域网 IP 直接访问。
+# 生产仍严格（走 DJANGO_ALLOWED_HOSTS env）。
+if DEBUG and not PRODUCTION:
+    ALLOWED_HOSTS = ["*"]
+
 # 生产 fail-fast：禁止用开发默认密钥 / 关 DEBUG
 if PRODUCTION:
     from django.core.exceptions import ImproperlyConfigured

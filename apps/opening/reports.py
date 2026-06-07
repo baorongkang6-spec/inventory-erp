@@ -403,6 +403,44 @@ def partner_ledger(company, partner, kind, dfrom, dto):
             "ending": opening + income - outgo}
 
 
+def sales_revenue_cost(company, dfrom, dto):
+    """销售收入成本计算表（按开票口径，按商品）。
+
+    收入=期间内销售发票(开票日,不含期初)的不含税金额；成本/数量来自发票行关联的来源出库行
+    (移动加权结转成本)。独立发票(无关联出库)无对应成本，另行提示。
+    """
+    ZQ = Decimal("0.000")
+    invoices = (SalesInvoice.objects
+                .filter(company=company, status=SalesInvoice.Status.REGISTERED,
+                        is_opening=False, doc_date__gte=dfrom, doc_date__lte=dto)
+                .prefetch_related("lines__source_outbound_line", "lines__product"))
+    data = {}
+    seen_ob = set()
+    indep_count = 0
+    indep_amount = Z
+    for inv in invoices:
+        for ln in inv.lines.all():
+            prod = ln.product
+            key = prod.pk if prod else 0
+            d = data.setdefault(key, {"product": prod, "qty": ZQ, "revenue": Z, "cost": Z})
+            d["revenue"] += ln.amount_untaxed
+            ob = ln.source_outbound_line
+            if ob is not None and ob.pk not in seen_ob:
+                seen_ob.add(ob.pk)
+                d["cost"] += ob.amount
+                d["qty"] += ob.quantity
+            elif ob is None:
+                indep_count += 1
+                indep_amount += ln.amount_untaxed
+    rows = []
+    for d in sorted(data.values(), key=lambda x: x["product"].code if x["product"] else ""):
+        profit = d["revenue"] - d["cost"]
+        margin = (profit / d["revenue"] * 100).quantize(Decimal("0.1")) if d["revenue"] else Z
+        rows.append({"product": d["product"], "qty": d["qty"], "revenue": d["revenue"],
+                     "cost": d["cost"], "profit": profit, "margin": margin})
+    return {"rows": rows, "indep_count": indep_count, "indep_amount": indep_amount}
+
+
 def receivable_notes_balance(company, dfrom, dto):
     """某公司各应收票据 期初/本期增(出票)/本期减(使用)/期末（未用额，带 note 对象，供下钻）。"""
     notes = NoteReceivable.objects.filter(company=company).exclude(

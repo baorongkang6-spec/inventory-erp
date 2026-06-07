@@ -517,6 +517,54 @@ class BankReconcileTests(TestCase):
         self.assertEqual(r["batch"].system_only_count, 1)  # 税费 200(06-06)
 
 
+class SalesRevenueCostTests(TestCase):
+    """销售收入成本计算表（按开票口径、按商品）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from datetime import date
+        from apps.inventory.services import post_inbound
+        from apps.sales.services import create_and_post_outbound
+        from apps.finance.services import create_sales_invoice
+        from apps.masterdata.models import Customer
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        # 进货 100@10（成本10）
+        post_inbound(cls.c1, cls.p, Decimal("100"), Decimal("10"), date=date(2026, 6, 1))
+        # 出库 30，售价含税单价 15 不含税
+        ob = create_and_post_outbound(company=cls.c1, user=None, doc_date=date(2026, 6, 10),
+            customer=cls.cust, lines=[{"product": cls.p, "quantity": Decimal("30"),
+                                       "sale_unit_price": Decimal("15"), "tax_rate": Decimal("0")}])
+        obl = ob.lines.first()
+        # 发票关联该出库行（开票日 6/12）
+        create_sales_invoice(company=cls.c1, user=None, doc_date=date(2026, 6, 12), customer=cls.cust,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("450"),
+                    "tax_rate": Decimal("0"), "source_outbound_line": obl}])
+
+    def test_revenue_cost_by_product(self):
+        from datetime import date
+        from apps.opening.reports import sales_revenue_cost
+        d = sales_revenue_cost(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        r = d["rows"][0]
+        self.assertEqual(r["qty"], Decimal("30.000"))
+        self.assertEqual(r["revenue"], Decimal("450.00"))      # 30×15
+        self.assertEqual(r["cost"], Decimal("300.00"))         # 30×10 移动加权
+        self.assertEqual(r["profit"], Decimal("150.00"))
+        self.assertEqual(d["indep_count"], 0)
+
+    def test_independent_invoice_flagged(self):
+        from datetime import date
+        from apps.finance.services import create_sales_invoice
+        from apps.opening.reports import sales_revenue_cost
+        create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 15), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("100"),
+                    "tax_rate": Decimal("0")}])  # 无 source_outbound_line
+        d = sales_revenue_cost(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(d["indep_count"], 1)
+        self.assertEqual(d["indep_amount"], Decimal("100.00"))
+
+
 class PartnerDrilldownTests(TestCase):
     """往来两级下钻（M9-2/M9-3）：供应商应付余额表 + 往来明细账。"""
 
