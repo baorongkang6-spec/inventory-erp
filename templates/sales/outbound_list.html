@@ -17,7 +17,7 @@
         <tr><th>单据编号</th><th>日期</th><th>客户</th><th>方式</th>
             <th class="text-end">总数量</th><th class="text-end">含税售额</th>
             {% if perms.inventory.view_amount %}<th class="text-end">结转成本</th>{% endif %}
-            <th>状态</th></tr>
+            <th>状态</th><th class="text-end">操作</th></tr>
       </thead>
       <tbody>
         {% for doc in docs %}
@@ -30,9 +30,14 @@
           <td class="text-end">{{ doc.total_taxed }}</td>
           {% if perms.inventory.view_amount %}<td class="text-end">{{ doc.total_cost }}</td>{% endif %}
           <td>{{ doc.get_status_display }}</td>
+          <td class="text-end">
+            {% if doc.status != 'void' and perms.finance.add_salesinvoice %}
+            <a href="{% url 'sales_invoice_create' %}?outbound={{ doc.pk }}" class="btn btn-sm btn-outline-success py-0">开具发票</a>
+            {% else %}—{% endif %}
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="text-center text-muted py-4">当前账套暂无出库单</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-4">当前账套暂无出库单</td></tr>
         {% endfor %}
       </tbody>
     </table>

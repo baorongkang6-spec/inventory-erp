@@ -6,6 +6,9 @@
     {% if doc.status == 'void' %}<span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
   <div class="d-flex gap-2">
     <a href="{% url 'outbound_print' doc.pk %}" target="_blank" class="btn btn-outline-primary btn-sm">打印</a>
+    {% if doc.status != 'void' and perms.finance.add_salesinvoice %}
+    <a href="{% url 'sales_invoice_create' %}?outbound={{ doc.pk }}" class="btn btn-success btn-sm">开具发票</a>
+    {% endif %}
     {% if doc.status != 'void' and not doc.mirror_inbound_id and perms.sales.add_salesoutbound %}
     <a href="{% url 'outbound_edit' doc.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
     {% endif %}
