@@ -32,7 +32,11 @@
           <td>{{ doc.get_status_display }}</td>
           <td class="text-end">
             {% if doc.status != 'void' and perms.finance.add_salesinvoice %}
-            <a href="{% url 'sales_invoice_create' %}?outbound={{ doc.pk }}" class="btn btn-sm btn-outline-success py-0">开具发票</a>
+              {% if doc.pk in fully_invoiced_ids %}
+              <span class="text-success small">发票已开具</span>
+              {% else %}
+              <a href="{% url 'sales_invoice_create' %}?outbound={{ doc.pk }}" class="btn btn-sm btn-outline-success py-0">开具发票</a>
+              {% endif %}
             {% else %}—{% endif %}
           </td>
         </tr>

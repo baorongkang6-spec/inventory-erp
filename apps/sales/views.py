@@ -33,6 +33,34 @@ class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     def get_queryset(self):
         return super().get_queryset().select_related("customer")
 
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["fully_invoiced_ids"] = _fully_invoiced_outbound_ids(ctx["docs"])
+        return ctx
+
+
+def _fully_invoiced_outbound_ids(outbounds):
+    """返回「各行已开票数量 ≥ 出库数量」的出库单 id 集合（用于列表显示发票已开具）。"""
+    from django.db.models import Sum
+    from apps.finance.models import SalesInvoice, SalesInvoiceLine
+    from .models import SalesOutboundLine
+    ids = [o.pk for o in outbounds]
+    if not ids:
+        return set()
+    lines = list(SalesOutboundLine.objects.filter(outbound_id__in=ids)
+                 .values("pk", "outbound_id", "quantity"))
+    invoiced = {r["source_outbound_line"]: (r["q"] or 0) for r in
+                SalesInvoiceLine.objects.filter(source_outbound_line__outbound_id__in=ids)
+                .exclude(invoice__status=SalesInvoice.Status.VOID)
+                .values("source_outbound_line").annotate(q=Sum("quantity"))}
+    under = set()  # 有任一行未开满
+    for ln in lines:
+        if invoiced.get(ln["pk"], 0) < ln["quantity"]:
+            under.add(ln["outbound_id"])
+    # 全开 = 有明细行 且 无欠开行
+    with_lines = {ln["outbound_id"] for ln in lines}
+    return with_lines - under
+
 
 @login_required
 @permission_required("sales.view_salesoutbound", raise_exception=True)
