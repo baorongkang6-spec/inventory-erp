@@ -442,19 +442,34 @@ def sales_invoice_edit(request, pk):
                 messages.success(request, f"销售发票已修改：{inv.doc_no}")
                 return redirect("sales_invoice_detail", pk=inv.pk)
     else:
-        header = SalesInvoiceHeaderForm(company=company, initial={
-            "doc_date": inv.doc_date, "customer": inv.customer_id,
-            "invoice_no": inv.invoice_no, "remark": inv.remark})
-        line_init = [{
-            "product": ln.product_id, "description": ln.description, "quantity": ln.quantity,
-            "amount_untaxed": ln.amount_untaxed, "tax_rate": ln.tax_rate,
-            "source_outbound_line": ln.source_outbound_line_id,
-        } for ln in inv.lines.all()]
-        formset = SalesInvoiceLineFormSet(company=company, initial=line_init)
+        outbound_id = request.GET.get("outbound")
+        if outbound_id:
+            # 修改时也支持「从出库单带入」：用所选出库单覆盖明细并建立关联
+            h, line_init, outbound = _outbound_prefill(company, outbound_id)
+            header_initial = {"doc_date": inv.doc_date, "customer": inv.customer_id,
+                              "invoice_no": inv.invoice_no, "remark": inv.remark}
+            if outbound:
+                header_initial.update(h)
+                messages.info(request, f"已从出库单 {outbound.doc_no} 带出明细，请核对后保存")
+            header = SalesInvoiceHeaderForm(company=company, initial=header_initial)
+            formset = SalesInvoiceLineFormSet(company=company, initial=line_init)
+        else:
+            header = SalesInvoiceHeaderForm(company=company, initial={
+                "doc_date": inv.doc_date, "customer": inv.customer_id,
+                "invoice_no": inv.invoice_no, "remark": inv.remark})
+            line_init = [{
+                "product": ln.product_id, "description": ln.description, "quantity": ln.quantity,
+                "amount_untaxed": ln.amount_untaxed, "tax_rate": ln.tax_rate,
+                "source_outbound_line": ln.source_outbound_line_id,
+            } for ln in inv.lines.all()]
+            formset = SalesInvoiceLineFormSet(company=company, initial=line_init)
 
     outbounds = SalesOutbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
-    linked = inv.lines.exclude(source_outbound_line=None).first()
-    sel_ob = linked.source_outbound_line.outbound_id if linked else ""
+    if request.GET.get("outbound"):
+        sel_ob = request.GET.get("outbound")
+    else:
+        linked = inv.lines.exclude(source_outbound_line=None).first()
+        sel_ob = linked.source_outbound_line.outbound_id if linked else ""
     return render(request, "finance/sales_invoice_form.html",
                   {"header": header, "formset": formset, "outbounds": outbounds,
                    "title": f"修改销售发票 {inv.doc_no}", "selected_outbound_id": sel_ob})
