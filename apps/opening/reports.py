@@ -435,6 +435,49 @@ def sales_revenue_cost_by_outbound(company, dfrom, dto):
     return rows
 
 
+def shipped_uninvoiced(company, dfrom=None, dto=None):
+    """已出库未开具发票明细：销售出库行中「出库数量 − 已开票数量 ≠ 0」的行。
+
+    已开票数量 = 关联到该出库行的销售发票行数量之和(不含作废发票)。
+    金额取未开票部分(按出库行单价×未开票数量换算不含税/含税)。可按出库日期区间过滤。
+    """
+    from django.db.models import Sum
+
+    from apps.finance.models import SalesInvoice, SalesInvoiceLine
+    from apps.sales.models import SalesOutbound, SalesOutboundLine
+    ZQ = Decimal("0.000")
+    one = Decimal(1)
+    qs = (SalesOutboundLine.objects
+          .filter(outbound__company=company, outbound__sales_type=SalesOutbound.SalesType.SALE)
+          .exclude(outbound__status=SalesOutbound.Status.VOID)
+          .select_related("outbound", "outbound__customer", "product"))
+    if dfrom:
+        qs = qs.filter(outbound__doc_date__gte=dfrom)
+    if dto:
+        qs = qs.filter(outbound__doc_date__lte=dto)
+
+    invoiced = {r["source_outbound_line"]: (r["q"] or ZQ) for r in
+                SalesInvoiceLine.objects.filter(source_outbound_line__in=qs)
+                .exclude(invoice__status=SalesInvoice.Status.VOID)
+                .values("source_outbound_line").annotate(q=Sum("quantity"))}
+
+    rows = []
+    for ln in qs.order_by("outbound__customer__code", "outbound__doc_no", "id"):
+        billed = invoiced.get(ln.pk, ZQ)
+        remain = ln.quantity - billed
+        if remain == 0:
+            continue
+        unit_u = (ln.amount_untaxed / ln.quantity) if ln.quantity else Z
+        ru = round_money(remain * unit_u)
+        rt = round_money(ru * (one + ln.tax_rate))
+        rows.append({
+            "customer": ln.outbound.customer, "outbound": ln.outbound, "product": ln.product,
+            "out_qty": ln.quantity, "billed_qty": billed, "remain_qty": remain,
+            "untaxed": ru, "taxed": rt,
+        })
+    return rows
+
+
 def _avg_cost_asof(company, product, date):
     """商品在某业务日期的移动加权单价：取该日(含)前最后一笔流水的结存均价；
     无则回退当前结存均价，再无则 0。供"提前开票、未关联出库"时估算成本。"""

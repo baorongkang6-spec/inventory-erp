@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}已出库未开具发票明细表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">已出库未开具发票明细表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">列出销售出库行中「出库数量 − 已开票数量 ≠ 0」的明细；金额为未开票部分(按出库单价换算)。日期区间可选，留空=全部。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-auto"><label class="form-label">出库起始日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">出库截止日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>客户</th><th>出库单号</th><th>出库日期</th><th>商品</th>
+            <th class="text-end">出库数量</th><th class="text-end">已开票数量</th><th class="text-end">未开票数量</th>
+            <th class="text-end">未开票不含税</th><th class="text-end">未开票含税</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.customer|default:"—" }}</td>
+          <td><a href="{% url 'outbound_detail' r.outbound.pk %}">{{ r.outbound.doc_no }}</a></td>
+          <td>{{ r.outbound.doc_date|date:"Y-m-d" }}</td>
+          <td>{% if r.product %}{{ r.product.code }} {{ r.product.name }}{% else %}—{% endif %}</td>
+          <td class="text-end">{{ r.out_qty }}</td>
+          <td class="text-end">{{ r.billed_qty }}</td>
+          <td class="text-end fw-semibold">{{ r.remain_qty }}</td>
+          <td class="text-end">{{ r.untaxed }}</td>
+          <td class="text-end">{{ r.taxed }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="text-center text-muted py-4">没有已出库未开票的明细</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th colspan="7" class="text-end">合计</th>
+            <th class="text-end">{{ totals.untaxed }}</th><th class="text-end">{{ totals.taxed }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

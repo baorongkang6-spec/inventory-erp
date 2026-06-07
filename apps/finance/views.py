@@ -882,6 +882,31 @@ def sales_revenue_cost_report(request):
 
 @login_required
 @permission_required("finance.view_salesinvoice", raise_exception=True)
+def shipped_uninvoiced_report(request):
+    """已出库未开具发票明细表（出库数量 − 已开票数量 ≠ 0）。日期区间可选(默认全部)。"""
+    from apps.opening.reports import shipped_uninvoiced
+    company = resolve_company(request)
+    dfrom = _parse_date(request.GET.get("from"))
+    dto = _parse_date(request.GET.get("to"))
+    rows = shipped_uninvoiced(company, dfrom, dto) if company else []
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("untaxed", "taxed")}
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["客户", "出库单号", "出库日期", "商品", "出库数量", "已开票数量",
+                   "未开票数量", "未开票不含税", "未开票含税"]
+        out = [[str(r["customer"] or ""), r["outbound"].doc_no, r["outbound"].doc_date,
+                str(r["product"] or ""), r["out_qty"], r["billed_qty"], r["remain_qty"],
+                r["untaxed"], r["taxed"]] for r in rows]
+        out.append(["合计", "", "", "", "", "", "", totals["untaxed"], totals["taxed"]])
+        return xlsx_response("已出库未开具发票明细表", headers, out,
+                             company=company, period=(dfrom, dto) if (dfrom or dto) else None)
+    return render(request, "finance/shipped_uninvoiced.html", {
+        "rows": rows, "totals": totals, "active_company": company,
+        "date_from": dfrom, "date_to": dto})
+
+
+@login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
 def sales_cost_by_outbound_report(request):
     """销售收入成本计算表（按出库口径、按商品；期间可选，默认本月）。"""
     from apps.opening.reports import sales_revenue_cost_by_outbound
