@@ -435,11 +435,11 @@ def sales_revenue_cost_by_outbound(company, dfrom, dto):
     return rows
 
 
-def shipped_uninvoiced(company, dfrom=None, dto=None):
+def shipped_uninvoiced(companies, dfrom=None, dto=None):
     """已出库未开具发票明细：销售出库行中「出库数量 − 已开票数量 ≠ 0」的行。
 
-    已开票数量 = 关联到该出库行的销售发票行数量之和(不含作废发票)。
-    金额取未开票部分(按出库行单价×未开票数量换算不含税/含税)。可按出库日期区间过滤。
+    companies 为公司列表（支持多公司联合查询）。已开票数量 = 关联该出库行的销售发票行数量之和
+    (不含作废)。金额取未开票部分(按出库行单价×未开票数量换算不含税/含税)。可按出库日期区间过滤。
     """
     from django.db.models import Sum
 
@@ -447,10 +447,13 @@ def shipped_uninvoiced(company, dfrom=None, dto=None):
     from apps.sales.models import SalesOutbound, SalesOutboundLine
     ZQ = Decimal("0.000")
     one = Decimal(1)
+    companies = list(companies)
+    if not companies:
+        return []
     qs = (SalesOutboundLine.objects
-          .filter(outbound__company=company, outbound__sales_type=SalesOutbound.SalesType.SALE)
+          .filter(outbound__company__in=companies, outbound__sales_type=SalesOutbound.SalesType.SALE)
           .exclude(outbound__status=SalesOutbound.Status.VOID)
-          .select_related("outbound", "outbound__customer", "product"))
+          .select_related("outbound", "outbound__company", "outbound__customer", "product"))
     if dfrom:
         qs = qs.filter(outbound__doc_date__gte=dfrom)
     if dto:
@@ -462,7 +465,8 @@ def shipped_uninvoiced(company, dfrom=None, dto=None):
                 .values("source_outbound_line").annotate(q=Sum("quantity"))}
 
     rows = []
-    for ln in qs.order_by("outbound__customer__code", "outbound__doc_no", "id"):
+    for ln in qs.order_by("outbound__company__code", "outbound__customer__code",
+                          "outbound__doc_no", "id"):
         billed = invoiced.get(ln.pk, ZQ)
         remain = ln.quantity - billed
         if remain == 0:
@@ -471,7 +475,8 @@ def shipped_uninvoiced(company, dfrom=None, dto=None):
         ru = round_money(remain * unit_u)
         rt = round_money(ru * (one + ln.tax_rate))
         rows.append({
-            "customer": ln.outbound.customer, "outbound": ln.outbound, "product": ln.product,
+            "company": ln.outbound.company, "customer": ln.outbound.customer,
+            "outbound": ln.outbound, "product": ln.product,
             "out_qty": ln.quantity, "billed_qty": billed, "remain_qty": remain,
             "untaxed": ru, "taxed": rt,
         })

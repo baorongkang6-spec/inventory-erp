@@ -883,26 +883,33 @@ def sales_revenue_cost_report(request):
 @login_required
 @permission_required("finance.view_salesinvoice", raise_exception=True)
 def shipped_uninvoiced_report(request):
-    """已出库未开具发票明细表（出库数量 − 已开票数量 ≠ 0）。日期区间可选(默认全部)。"""
+    """已出库未开具发票明细表（出库数量 − 已开票数量 ≠ 0），支持多公司联合查询。"""
     from apps.opening.reports import shipped_uninvoiced
-    company = resolve_company(request)
+    visible = list(get_visible_companies(request.user))
     dfrom = _parse_date(request.GET.get("from"))
     dto = _parse_date(request.GET.get("to"))
-    rows = shipped_uninvoiced(company, dfrom, dto) if company else []
+    sel_ids = request.GET.getlist("company")
+    if sel_ids:
+        chosen = [c for c in visible if str(c.pk) in sel_ids]
+    else:
+        chosen = list(visible)   # 未选则默认全部可见公司
+    rows = shipped_uninvoiced(chosen, dfrom, dto)
     totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("untaxed", "taxed")}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
-        headers = ["客户", "出库单号", "出库日期", "商品", "出库数量", "已开票数量",
+        headers = ["公司", "客户", "出库单号", "出库日期", "商品", "出库数量", "已开票数量",
                    "未开票数量", "未开票不含税", "未开票含税"]
-        out = [[str(r["customer"] or ""), r["outbound"].doc_no, r["outbound"].doc_date,
-                str(r["product"] or ""), r["out_qty"], r["billed_qty"], r["remain_qty"],
-                r["untaxed"], r["taxed"]] for r in rows]
-        out.append(["合计", "", "", "", "", "", "", totals["untaxed"], totals["taxed"]])
+        out = [[r["company"].short_name or str(r["company"]), str(r["customer"] or ""),
+                r["outbound"].doc_no, r["outbound"].doc_date, str(r["product"] or ""),
+                r["out_qty"], r["billed_qty"], r["remain_qty"], r["untaxed"], r["taxed"]]
+               for r in rows]
+        out.append(["合计", "", "", "", "", "", "", "", totals["untaxed"], totals["taxed"]])
+        company_arg = chosen[0] if len(chosen) == 1 else None
         return xlsx_response("已出库未开具发票明细表", headers, out,
-                             company=company, period=(dfrom, dto) if (dfrom or dto) else None)
+                             company=company_arg, period=(dfrom, dto) if (dfrom or dto) else None)
     return render(request, "finance/shipped_uninvoiced.html", {
-        "rows": rows, "totals": totals, "active_company": company,
-        "date_from": dfrom, "date_to": dto})
+        "rows": rows, "totals": totals, "visible_companies": visible,
+        "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto})
 
 
 @login_required
