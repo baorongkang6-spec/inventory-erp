@@ -108,3 +108,10 @@
 - **联动链路**(改一处必改全链)：①`_*_prefill` 带出 `quantity` + `source_*_line=ln.pk`；②表单加 `quantity` 字段 + 隐藏 `source_*_line`(IntegerField/HiddenInput)；③模板渲染数量列 + `{{ form.source_*_line }}`；④视图 `_resolve_*_line(company, id)` 把 id 解析成限本账套的行对象，create/update 写入；⑤service `create_*_invoice` 存 `quantity=ln.get("quantity") or ZERO_QTY`。
 - **报表**：`shipped_uninvoiced` / `received_uninvoiced`(opening/reports.py) 对称——遍历出库/入库行，已开票/收票数量=关联本行的发票行 `quantity` 之和(排除作废发票)，差额≠0 才列出；金额按源单行单价×未结数量换算不含税/含税(`round_money`)。`received_uninvoiced` 作为库存**暂估**依据。
 - **多公司**：视图收 `request.GET.getlist("company")`，不选=全部可见公司；导出仅单公司时才把 company 传给 `xlsx_response`(影响编制单位)。权限：销售侧 `view_salesinvoice`，采购侧 `view_purchaseinvoice`。
+
+## 十二、移动加权下入库单不可乱改（精确反冲的边界）
+
+- **现象**：改一张入库单报"库存不足：现有100，需出库100"，数量明明相等却失败——误导。
+- **真因**：入库修改/作废走"精确反冲原过账"。`reverse_move` 反冲入库要从结存扣回**原数量+原金额**，判断 `move.quantity > bal.quantity or move.amount > bal.amount`。移动加权下，本批货若已被后续出库按**混合均价**卖出，其成本被摊出，结存金额(3820.58)会小于本批原值(4424.78)——**金额条件**触发失败，但旧报错只印数量，故看着是 100 vs 100。
+- **修法**：①`reverse_move` 金额/数量任一不足时，`InsufficientStockError` 用 `message=` 传**含金额的清晰提示**（保留子类型，兼容既有"镜像被消耗禁止作废"测试）；②`inbound_edit_block_reason` 加 `_inbound_reverse_block_reason(doc)` 预检（按商品聚合本单各 stock_move 的 qty/amount，与 `StockBalance` 比对），点「修改」即拦截并提示"请先作废引用本批货的出库单"，不必填完整张表才报错。
+- **结论**：这是设计边界不是 bug——一批货一旦被后续出库消耗就无法干净倒带；要改先作废下游出库单（顺序反向）。出库侧反冲是"加回库存"永不下溢，无此问题。

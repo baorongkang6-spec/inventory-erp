@@ -193,6 +193,36 @@ def inbound_edit_block_reason(doc, user, today, is_manager=False):
         return "跨月单据不可修改（请作废重录或在当月处理）"
     if PurchaseInvoiceLine.objects.filter(source_inbound_line__inbound=doc).exists():
         return "已被采购发票引用，不可修改（请先处理发票或作废重录）"
+    consumed = _inbound_reverse_block_reason(doc)
+    if consumed:
+        return consumed
+    return None
+
+
+def _inbound_reverse_block_reason(doc):
+    """若本单入库的商品/成本已被后续出库消耗，精确反冲会导致负库存/负金额，返回原因；否则 None。
+
+    修改/作废采购入库都依赖「精确反冲原过账」。移动加权下，一批货一旦被后续出库按混合
+    均价卖出，其成本已被摊出，无法干净倒带——此时应先作废相关出库单。
+    """
+    from collections import defaultdict
+
+    from apps.inventory.models import StockBalance, StockMove
+    need_q = defaultdict(lambda: Decimal("0"))
+    need_a = defaultdict(lambda: Decimal("0"))
+    for line in doc.lines.select_related("stock_move"):
+        sm = line.stock_move
+        if sm and sm.direction == StockMove.Direction.IN:
+            need_q[line.product_id] += sm.quantity
+            need_a[line.product_id] += sm.amount
+    for pid, q in need_q.items():
+        bal = StockBalance.objects.filter(company=doc.company, product_id=pid).first()
+        bq = bal.quantity if bal else Decimal("0")
+        ba = bal.amount if bal else Decimal("0")
+        if q > bq or need_a[pid] > ba:
+            return ("本单入库的部分商品已被后续出库消耗，无法直接修改"
+                    "（移动加权精确反冲会导致库存/成本为负）。"
+                    "请先作废引用本批货的出库单，再修改本单。")
     return None
 
 

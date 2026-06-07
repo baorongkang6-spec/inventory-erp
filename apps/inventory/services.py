@@ -27,12 +27,12 @@ class InventoryError(Exception):
 class InsufficientStockError(InventoryError):
     """库存不足（违反不允许负库存）。"""
 
-    def __init__(self, product: Product, available: Decimal, requested: Decimal):
+    def __init__(self, product: Product, available: Decimal, requested: Decimal, message: str = ""):
         self.product = product
         self.available = available
         self.requested = requested
         super().__init__(
-            f"库存不足：{product} 现有 {available}，需出库 {requested}"
+            message or f"库存不足：{product} 现有 {available}，需出库 {requested}"
         )
 
 
@@ -89,7 +89,15 @@ def reverse_move(move: StockMove, *, date=None, source_type="", source_id="", so
     bal = _get_balance_for_update(move.company, move.product)
     if move.direction == StockMove.Direction.IN:
         if move.quantity > bal.quantity or move.amount > bal.amount:
-            raise InsufficientStockError(move.product, bal.quantity, move.quantity)
+            raise InsufficientStockError(
+                move.product, bal.quantity, move.quantity,
+                message=(
+                    f"无法反冲入库：{move.product} 该批入库的商品/成本已被后续出库消耗。"
+                    f"原入库 {move.quantity} 件 / 金额 {move.amount}，"
+                    f"当前结存仅 {bal.quantity} 件 / 金额 {bal.amount}。"
+                    f"请先作废引用本批货的出库单，再修改或作废本入库单。"
+                ),
+            )
         bal.quantity = round_qty(bal.quantity - move.quantity)
         bal.amount = round_money(bal.amount - move.amount)
         new_dir = StockMove.Direction.OUT
