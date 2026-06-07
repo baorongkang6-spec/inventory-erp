@@ -33,6 +33,33 @@ class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     def get_queryset(self):
         return super().get_queryset().select_related("supplier")
 
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["fully_invoiced_ids"] = _fully_invoiced_inbound_ids(ctx["docs"])
+        return ctx
+
+
+def _fully_invoiced_inbound_ids(inbounds):
+    """返回「各行已收票数量 ≥ 入库数量」的入库单 id 集合（用于列表显示发票已收）。"""
+    from django.db.models import Sum
+    from apps.finance.models import PurchaseInvoice, PurchaseInvoiceLine
+    from .models import PurchaseInboundLine
+    ids = [d.pk for d in inbounds]
+    if not ids:
+        return set()
+    lines = list(PurchaseInboundLine.objects.filter(inbound_id__in=ids)
+                 .values("pk", "inbound_id", "quantity"))
+    invoiced = {r["source_inbound_line"]: (r["q"] or 0) for r in
+                PurchaseInvoiceLine.objects.filter(source_inbound_line__inbound_id__in=ids)
+                .exclude(invoice__status=PurchaseInvoice.Status.VOID)
+                .values("source_inbound_line").annotate(q=Sum("quantity"))}
+    under = set()  # 有任一行未收满
+    for ln in lines:
+        if invoiced.get(ln["pk"], 0) < ln["quantity"]:
+            under.add(ln["inbound_id"])
+    with_lines = {ln["inbound_id"] for ln in lines}
+    return with_lines - under
+
 
 @login_required
 @permission_required("purchasing.view_purchaseinbound", raise_exception=True)
@@ -53,6 +80,11 @@ class InboundDetailView(CompanyScopedMixin, DetailView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("supplier")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["fully_invoiced"] = self.object.pk in _fully_invoiced_inbound_ids([self.object])
+        return ctx
 
 
 @login_required

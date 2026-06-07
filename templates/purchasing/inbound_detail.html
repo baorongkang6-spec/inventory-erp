@@ -7,7 +7,11 @@
   <div class="d-flex gap-2">
     <a href="{% url 'inbound_print' doc.pk %}" target="_blank" class="btn btn-outline-primary btn-sm">打印</a>
     {% if doc.status != 'void' and perms.finance.add_purchaseinvoice %}
-    <a href="{% url 'purchase_invoice_create' %}?inbound={{ doc.pk }}" class="btn btn-success btn-sm">收到发票</a>
+      {% if fully_invoiced %}
+      <span class="btn btn-sm btn-light text-success disabled">发票已收</span>
+      {% else %}
+      <a href="{% url 'purchase_invoice_create' %}?inbound={{ doc.pk }}" class="btn btn-success btn-sm">收到发票</a>
+      {% endif %}
     {% endif %}
     {% if doc.status != 'void' and not doc.source_outbound_id and perms.purchasing.add_purchaseinbound %}
     <a href="{% url 'inbound_edit' doc.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
