@@ -42,6 +42,7 @@ urlpatterns = [
     path("reports/payables/", views.payables_report, name="payables_report"),
     path("reports/receivables/", views.receivables_report, name="receivables_report"),
     path("reports/sales-revenue-cost/", views.sales_revenue_cost_report, name="sales_revenue_cost_report"),
+    path("reports/sales-cost-by-outbound/", views.sales_cost_by_outbound_report, name="sales_cost_by_outbound_report"),
     path("reports/payable-partners/", views.payable_partners_report, name="payable_partners_report"),
     path("reports/payable-ledger/", views.payable_partner_ledger, name="payable_partner_ledger"),
     path("reports/receivable-partners/", views.receivable_partners_report, name="receivable_partners_report"),

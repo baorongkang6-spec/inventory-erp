@@ -1,13 +1,12 @@
 {% extends "base.html" %}
-{% block title %}销售收入成本表（按开票）· 库存 ERP{% endblock %}
+{% block title %}销售收入成本表（按出库）· 库存 ERP{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-1">
-  <h4 class="mb-0">销售收入成本计算表（按开票）<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <h4 class="mb-0">销售收入成本计算表（按出库）<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
   <a class="btn btn-outline-success btn-sm"
      href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
-<p class="text-muted">口径：按开票（开票日落在区间的销售发票，不含期初）。成本：关联出库的取实际结转成本；
-  未关联(提前开票)但填了商品+数量的，按开票日移动加权单价估算。金额单位元。</p>
+<p class="text-muted">口径：按出库（出库日落在区间、非作废、方式=销售）。收入=售价不含税，成本=移动加权结转成本，数量取出库数量。借出/归还不计入。金额单位元。</p>
 
 <form method="get" class="row g-2 mb-3 align-items-end">
   <div class="col-auto"><label class="form-label">起始日期</label>
@@ -27,7 +26,7 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="text-start">{% if r.product %}{{ r.product.code }} {{ r.product.name }}{% else %}（未指定商品）{% endif %}</td>
+          <td class="text-start">{% if r.product %}{{ r.product.code }} {{ r.product.name }}{% else %}—{% endif %}</td>
           <td>{{ r.qty }}</td>
           <td>{{ r.revenue }}</td>
           <td>{{ r.cost }}</td>
@@ -35,7 +34,7 @@
           <td>{{ r.margin }}%</td>
         </tr>
         {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-4">该期间无销售发票</td></tr>
+        <tr><td colspan="6" class="text-center text-muted py-4">该期间无销售出库</td></tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-secondary">
@@ -45,11 +44,4 @@
     </table>
   </div>
 </div>
-{% if est_count %}
-<p class="text-muted small mt-2">说明：有 {{ est_count }} 行未关联出库单（提前开票），成本已按开票日<b>移动加权单价×数量</b>估算计入。</p>
-{% endif %}
-{% if gap_count %}
-<p class="text-danger small mt-1">注：有 {{ gap_count }} 行未关联出库、且无商品或数量，金额合计 {{ gap_amount }} 元，成本无法估算（仅收入计入）。
-  建议补填数量、或将发票关联到出库单。</p>
-{% endif %}
 {% endblock %}

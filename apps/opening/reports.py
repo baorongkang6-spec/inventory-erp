@@ -405,6 +405,36 @@ def partner_ledger(company, partner, kind, dfrom, dto):
             "ending": opening + income - outgo}
 
 
+def sales_revenue_cost_by_outbound(company, dfrom, dto):
+    """销售收入成本计算表（按出库口径，按商品）。
+
+    以销售出库行(出库日落在区间、非作废、方式=销售)直接汇总：数量、销售收入(不含税)、
+    结转成本(移动加权)。出库行本身收入成本数量齐全，无缺口。借出/归还不计入。
+    """
+    from apps.sales.models import SalesOutbound, SalesOutboundLine
+    ZQ = Decimal("0.000")
+    lines = (SalesOutboundLine.objects
+             .filter(outbound__company=company,
+                     outbound__sales_type=SalesOutbound.SalesType.SALE,
+                     outbound__doc_date__gte=dfrom, outbound__doc_date__lte=dto)
+             .exclude(outbound__status=SalesOutbound.Status.VOID)
+             .select_related("product"))
+    data = {}
+    for ln in lines:
+        d = data.setdefault(ln.product_id, {"product": ln.product, "qty": ZQ,
+                                            "revenue": Z, "cost": Z})
+        d["qty"] += ln.quantity
+        d["revenue"] += ln.amount_untaxed
+        d["cost"] += ln.amount
+    rows = []
+    for d in sorted(data.values(), key=lambda x: x["product"].code if x["product"] else ""):
+        profit = d["revenue"] - d["cost"]
+        margin = (profit / d["revenue"] * 100).quantize(Decimal("0.1")) if d["revenue"] else Z
+        rows.append({"product": d["product"], "qty": d["qty"], "revenue": d["revenue"],
+                     "cost": d["cost"], "profit": profit, "margin": margin})
+    return rows
+
+
 def _avg_cost_asof(company, product, date):
     """商品在某业务日期的移动加权单价：取该日(含)前最后一笔流水的结存均价；
     无则回退当前结存均价，再无则 0。供"提前开票、未关联出库"时估算成本。"""
