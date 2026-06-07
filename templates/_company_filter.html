@@ -1,0 +1,13 @@
+{# 多公司报表通用：公司多选框。需要上下文 visible_companies + chosen_ids #}
+<div class="mb-2">
+  <label class="form-label mb-1">公司（可多选，不选=全部）</label>
+  <div>
+    {% for c in visible_companies %}
+    <div class="form-check form-check-inline">
+      <input class="form-check-input" type="checkbox" name="company" value="{{ c.pk }}"
+             id="cof{{ c.pk }}" {% if c.pk in chosen_ids %}checked{% endif %}>
+      <label class="form-check-label" for="cof{{ c.pk }}">{{ c }}</label>
+    </div>
+    {% endfor %}
+  </div>
+</div>

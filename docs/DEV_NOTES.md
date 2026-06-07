@@ -122,3 +122,11 @@
 - **多账户余额语义**：跨账户没有统一滚动余额。`_journal_rows_multi(accounts,…)` 对每个账户各自调 `_journal_rows` 内部滚动，再合并按「公司/账户/日期」排序；每行「余额」是**该账户**自身的滚动余额，期初/期末为所选账户**合计**。单选账户时退化为经典存折式（multi=False）。
 - **视图**：公司多选(getlist)不选=全部可见公司；账户下拉加「全部账户」(value="")。模板 `multi` 标志控制是否显示 公司/账户 两列及合并提示。
 - **导出**：单账户沿用 `export_bank_journal`(存折式)；全部账户走通用 `xlsx_response`，含 公司/银行账户 列与期初/合计/期末行。导出链接把 `chosen_ids` 一并带上保持口径一致。
+
+## 十四、余额类报表统一多公司
+
+- **范围**：账户余额表、应付/应收账款余额表、票据余额表、借调往来余额表全部支持多公司联合查询（公司不选=全部可见公司），各加「公司」列。
+- **统一作用域**：`finance/views.py` 加 `_company_scope(request)`→(visible, chosen)，所有余额报表共用；账户余额表在 `opening/views.py` 内联同款逻辑（其报表函数 `account_balance_table` 本就收公司列表）。
+- **通用过滤片段**：`templates/_company_filter.html`（需 `visible_companies`+`chosen_ids`），各报表 `{% include %}`；导出链接统一 `?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}export=xlsx` 以保留多选。
+- **分组**：应付/应收按 (公司, 往来对象) 分组（`_outstanding_balance_report` 通用化 payable/receivable）；借调按 (公司, 对手单位) 聚合；票据按公司排序平铺。导出仅单公司时才把 company 传 `xlsx_response`（影响编制单位）。
+- **未动**：M9 从总览下钻的 `payable_partners_report`/`receivable_partners_report`/`receivable_notes_report` 仍是单公司下钻（带 company_id + 返回链接），与跨公司总览配套，不混入多选。

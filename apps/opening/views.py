@@ -166,9 +166,9 @@ def query_center(request):
 # ============================= 账户余额表（M7-6 / #8）========================
 @login_required
 def account_balance(request):
-    """当前账套明细账户余额表：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
+    """明细账户余额表：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
 
-    跟随当前账套（与「报表」菜单其它项一致）；需跨三家公司请用「总览表」。
+    支持多公司联合查询（公司不选=全部可见公司）。
     口径：期初(区间前累计)+本期收入−本期发出=期末。默认月初~今天。
     """
     if not (_is_overview(request.user)
@@ -179,8 +179,9 @@ def account_balance(request):
     today = timezone.localdate()
     dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
     dto = _parse_date(request.GET.get("to")) or today
-    company = resolve_company(request)
-    companies = [company] if company else []
+    visible = list(get_visible_companies(request.user))
+    sel = request.GET.getlist("company")
+    companies = [c for c in visible if str(c.pk) in sel] if sel else list(visible)
     sections = account_balance_table(companies, dfrom, dto)
     blocks = [
         {"key": "bank", "label": "银行存款明细账户", "rows": sections["bank"]},
@@ -194,9 +195,11 @@ def account_balance(request):
         rows = [[b["label"], r["company"].short_name or str(r["company"]), r["name"],
                  r["opening"], r["income"], r["outgo"], r["ending"]]
                 for b in blocks for r in b["rows"]]
-        return xlsx_response("账户余额表", headers, rows, company=company, period=(dfrom, dto))
+        company_arg = companies[0] if len(companies) == 1 else None
+        return xlsx_response("账户余额表", headers, rows, company=company_arg, period=(dfrom, dto))
     return render(request, "opening/account_balance.html", {
-        "companies": companies, "blocks": blocks, "active_company": company,
+        "companies": companies, "blocks": blocks,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in companies},
         "date_from": dfrom, "date_to": dto,
     })
 

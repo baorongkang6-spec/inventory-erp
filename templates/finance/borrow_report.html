@@ -2,22 +2,26 @@
 {% block title %}借调往来余额表 · 库存 ERP{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">借调往来余额表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
-  <a href="?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
+  <h4 class="mb-0">借调往来余额表</h4>
+  <a href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
 </div>
-<p class="text-muted">余额 = 借入金额 − 归还金额（性质类其他应付，不涉税）。</p>
+<p class="text-muted">余额 = 借入金额 − 归还金额（性质类其他应付，不涉税）。支持多公司联合查询（不选=全部）。</p>
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <button class="btn btn-primary">查询</button>
+</form>
 <div class="card">
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle">
-      <thead class="table-light"><tr><th>对手单位</th><th class="text-end">借调往来余额</th></tr></thead>
+      <thead class="table-light"><tr><th>公司</th><th>对手单位</th><th class="text-end">借调往来余额</th></tr></thead>
       <tbody>
         {% for r in rows %}
-        <tr><td>{{ r.counterparty }}</td><td class="text-end fw-semibold">{{ r.balance }}</td></tr>
+        <tr><td>{{ r.company.short_name|default:r.company }}</td><td>{{ r.counterparty }}</td><td class="text-end fw-semibold">{{ r.balance }}</td></tr>
         {% empty %}
-        <tr><td colspan="2" class="text-center text-muted py-4">暂无借调往来</td></tr>
+        <tr><td colspan="3" class="text-center text-muted py-4">暂无借调往来</td></tr>
         {% endfor %}
       </tbody>
-      {% if rows %}<tfoot class="table-secondary"><tr><th>合计</th><th class="text-end">{{ total }}</th></tr></tfoot>{% endif %}
+      {% if rows %}<tfoot class="table-secondary"><tr><th colspan="2">合计</th><th class="text-end">{{ total }}</th></tr></tfoot>{% endif %}
     </table>
   </div>
 </div>

@@ -2,21 +2,27 @@
 {% block title %}{{ title }} · 库存 ERP{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">{{ title }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
-  <a href="?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
+  <h4 class="mb-0">{{ title }}</h4>
+  <a href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
 </div>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <button class="btn btn-primary">查询</button>
+</form>
 
 <div class="card">
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>往来单位</th><th>发票单号</th><th>开票日期</th>
+        <tr><th>公司</th><th>往来单位</th><th>发票单号</th><th>开票日期</th>
             <th class="text-end">含税</th><th class="text-end">已核销</th><th class="text-end">未核销</th></tr>
       </thead>
       <tbody>
         {% for g in groups %}
           {% for inv in g.items %}
           <tr>
+            <td>{% if forloop.first %}{{ g.company.short_name|default:g.company }}{% endif %}</td>
             <td>{% if forloop.first %}<strong>{{ g.partner }}</strong>{% endif %}</td>
             <td>{{ inv.doc_no }}</td>
             <td>{{ inv.doc_date }}</td>
@@ -26,16 +32,16 @@
           </tr>
           {% endfor %}
           <tr class="table-light">
-            <td colspan="5" class="text-end fw-semibold">{{ g.partner }} {{ kind }}小计</td>
+            <td colspan="6" class="text-end fw-semibold">{{ g.company.short_name|default:g.company }} · {{ g.partner }} {{ kind }}小计</td>
             <td class="text-end fw-semibold">{{ g.total }}</td>
           </tr>
         {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-4">无未核销{{ kind }}</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-4">无未核销{{ kind }}</td></tr>
         {% endfor %}
       </tbody>
       {% if groups %}
       <tfoot class="table-secondary">
-        <tr><th colspan="5" class="text-end">{{ kind }}合计</th><th class="text-end">{{ grand }}</th></tr>
+        <tr><th colspan="6" class="text-end">{{ kind }}合计</th><th class="text-end">{{ grand }}</th></tr>
       </tfoot>
       {% endif %}
     </table>

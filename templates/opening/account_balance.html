@@ -2,18 +2,21 @@
 {% block title %}账户余额表 · 库存 ERP{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-1">
-  <h4 class="mb-0">账户余额表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <h4 class="mb-0">账户余额表</h4>
   <a class="btn btn-outline-success btn-sm"
-     href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
-<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末；金额单位元。本表为<b>当前账套</b>，跨三家公司请用「总览表」。默认月初~今天。</p>
+<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末；金额单位元。支持多公司联合查询（不选=全部）。默认月初~今天。</p>
 
-<form method="get" class="row g-2 mb-3 align-items-end">
-  <div class="col-auto"><label class="form-label">期初日期</label>
-    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
-  <div class="col-auto"><label class="form-label">期末日期</label>
-    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
-  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">期初日期</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><label class="form-label">期末日期</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
 </form>
 
 {% for b in blocks %}

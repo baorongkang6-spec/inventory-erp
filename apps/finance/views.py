@@ -584,6 +584,17 @@ def _parse_date(s):
         return None
 
 
+def _company_scope(request):
+    """多公司报表统一作用域：返回 (visible, chosen)。
+
+    chosen = getlist('company') 命中的可见公司；未选=全部可见公司。
+    """
+    visible = list(get_visible_companies(request.user))
+    sel = request.GET.getlist("company")
+    chosen = [c for c in visible if str(c.pk) in sel] if sel else list(visible)
+    return visible, chosen
+
+
 def _journal_rows(company, account, date_from=None, date_to=None, entry_type=None):
     """返回 (期初余额, 明细行[带逐笔余额], 期末余额)。
 
@@ -704,63 +715,58 @@ def bank_journal_report(request):
 @login_required
 @permission_required("finance.view_purchaseinvoice", raise_exception=True)
 def payables_report(request):
-    """应付余额表：按供应商汇总未核销的采购发票。"""
-    company = resolve_company(request)
-    invoices = (PurchaseInvoice.objects
-                .filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
-                .select_related("supplier").order_by("supplier__code", "doc_date"))
+    """应付余额表：按公司·供应商汇总未核销的采购发票。支持多公司联合查询。"""
+    return _outstanding_balance_report(
+        request, model=PurchaseInvoice, partner_attr="supplier",
+        title="应付账款余额表", partner_label="供应商", kind="应付")
+
+
+def _outstanding_balance_report(request, *, model, partner_attr, title, partner_label, kind):
+    """应付/应收余额表通用：公司多选(不选=全部)，按 公司·往来对象 分组列未核销发票。"""
+    visible, chosen = _company_scope(request)
+    invoices = (model.objects
+                .filter(company__in=chosen, status=model.Status.REGISTERED)
+                .select_related(partner_attr, "company")
+                .order_by("company__code", f"{partner_attr}__code", "doc_date"))
     groups = {}
     for inv in invoices:
         if inv.outstanding <= 0:
             continue
-        g = groups.setdefault(inv.supplier, {"partner": inv.supplier, "items": [], "total": Decimal("0.00")})
+        partner = getattr(inv, partner_attr)
+        key = (inv.company_id, getattr(inv, f"{partner_attr}_id"))
+        g = groups.setdefault(key, {"company": inv.company, "partner": partner,
+                                    "items": [], "total": Decimal("0.00")})
         g["items"].append(inv)
         g["total"] += inv.outstanding
-    groups = sorted(groups.values(), key=lambda g: g["partner"].code)
+    groups = sorted(groups.values(),
+                    key=lambda g: (g["company"].code, getattr(g["partner"], "code", "")))
     grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
     if request.GET.get("export") == "xlsx":
-        return _export_balance_report("应付账款余额表", "供应商", "应付", groups, company=company)
+        from apps.core.exports import xlsx_response
+        headers = ["公司", partner_label, "单据编号", "开票日期", "发票号码", f"未核销({kind})"]
+        rows = []
+        for g in groups:
+            cname = g["company"].short_name or str(g["company"])
+            for inv in g["items"]:
+                rows.append([cname, str(g["partner"]), inv.doc_no, inv.doc_date,
+                             inv.invoice_no, inv.outstanding])
+            rows.append([cname, f"{g['partner']} 小计", "", "", "", g["total"]])
+        rows.append(["合计", "", "", "", "", grand])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response(title, headers, rows, company=company_arg)
     return render(request, "finance/balance_report.html", {
-        "title": "应付账款余额表", "kind": "应付", "groups": groups, "grand": grand,
-        "active_company": company,
+        "title": title, "kind": kind, "groups": groups, "grand": grand,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
     })
-
-
-def _export_balance_report(title, partner_label, kind, groups, company=None):
-    from apps.core.exports import xlsx_response
-    headers = [partner_label, "单据编号", "开票日期", "发票号码", f"未核销({kind})"]
-    rows = []
-    for g in groups:
-        for inv in g["items"]:
-            rows.append([str(g["partner"]), inv.doc_no, inv.doc_date,
-                         inv.invoice_no, inv.outstanding])
-        rows.append([f"{g['partner']} 小计", "", "", "", g["total"]])
-    return xlsx_response(title, headers, rows, company=company)
 
 
 @login_required
 @permission_required("finance.view_salesinvoice", raise_exception=True)
 def receivables_report(request):
-    """应收余额表：按客户汇总未核销的销售发票。"""
-    company = resolve_company(request)
-    invoices = (SalesInvoice.objects
-                .filter(company=company, status=SalesInvoice.Status.REGISTERED)
-                .select_related("customer").order_by("customer__code", "doc_date"))
-    groups = {}
-    for inv in invoices:
-        if inv.outstanding <= 0:
-            continue
-        g = groups.setdefault(inv.customer, {"partner": inv.customer, "items": [], "total": Decimal("0.00")})
-        g["items"].append(inv)
-        g["total"] += inv.outstanding
-    groups = sorted(groups.values(), key=lambda g: g["partner"].code)
-    grand = sum((g["total"] for g in groups), start=Decimal("0.00"))
-    if request.GET.get("export") == "xlsx":
-        return _export_balance_report("应收账款余额表", "客户", "应收", groups, company=company)
-    return render(request, "finance/balance_report.html", {
-        "title": "应收账款余额表", "kind": "应收", "groups": groups, "grand": grand,
-        "active_company": company,
-    })
+    """应收余额表：按公司·客户汇总未核销的销售发票。支持多公司联合查询。"""
+    return _outstanding_balance_report(
+        request, model=SalesInvoice, partner_attr="customer",
+        title="应收账款余额表", partner_label="客户", kind="应收")
 
 
 # ===== 往来余额表 + 往来明细账（M9-2/M9-3，总览应付/应收两级下钻）=============
@@ -1483,25 +1489,30 @@ def note_payable_import(request):
 @login_required
 @permission_required("finance.view_notereceivable", raise_exception=True)
 def notes_balance_report(request):
-    """票据余额表：在手/已开未用的应收、应付票据。"""
-    company = resolve_company(request)
-    ar = [n for n in NoteReceivable.objects.filter(company=company).select_related("customer")
+    """票据余额表：在手/已开未用的应收、应付票据。支持多公司联合查询。"""
+    visible, chosen = _company_scope(request)
+    ar = [n for n in NoteReceivable.objects.filter(company__in=chosen)
+          .select_related("customer", "company").order_by("company__code", "doc_no")
           if n.unused > 0 and n.status != NoteReceivable.Status.VOID]
-    ap = [n for n in NotePayable.objects.filter(company=company).select_related("supplier")
+    ap = [n for n in NotePayable.objects.filter(company__in=chosen)
+          .select_related("supplier", "company").order_by("company__code", "doc_no")
           if n.unused > 0 and n.status != NotePayable.Status.VOID]
     ar_total = sum((n.unused for n in ar), start=Decimal("0.00"))
     ap_total = sum((n.unused for n in ap), start=Decimal("0.00"))
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
-        headers = ["类别", "单号", "票据号", "出票/开票日", "到期日", "往来对象", "票面", "已用", "未用"]
-        rows = ([["应收票据", n.doc_no, n.note_no, n.draw_date, n.due_date,
-                  str(n.customer or ""), n.amount, n.settled_amount, n.unused] for n in ar]
-                + [["应付票据", n.doc_no, n.note_no, n.draw_date, n.due_date,
-                    str(n.supplier or ""), n.amount, n.settled_amount, n.unused] for n in ap])
-        return xlsx_response("票据余额表", headers, rows, company=company)
+        headers = ["公司", "类别", "单号", "票据号", "出票/开票日", "到期日", "往来对象", "票面", "已用", "未用"]
+        rows = ([[n.company.short_name or str(n.company), "应收票据", n.doc_no, n.note_no,
+                  n.draw_date, n.due_date, str(n.customer or ""), n.amount, n.settled_amount, n.unused]
+                 for n in ar]
+                + [[n.company.short_name or str(n.company), "应付票据", n.doc_no, n.note_no,
+                    n.draw_date, n.due_date, str(n.supplier or ""), n.amount, n.settled_amount, n.unused]
+                   for n in ap])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("票据余额表", headers, rows, company=company_arg)
     return render(request, "finance/notes_balance_report.html", {
         "ar": ar, "ap": ap, "ar_total": ar_total, "ap_total": ap_total,
-        "active_company": company,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
     })
 
 
@@ -1510,15 +1521,21 @@ def notes_balance_report(request):
 @permission_required("finance.view_borrowtransaction", raise_exception=True)
 def borrow_report(request):
     from .models import BorrowTransaction
-    company = resolve_company(request)
+    visible, chosen = _company_scope(request)
+    cmap = {c.pk: c for c in chosen}
     agg = {}
-    for t in BorrowTransaction.objects.filter(company=company):
-        agg[t.counterparty] = agg.get(t.counterparty, Decimal("0.00")) + t.signed_amount
-    rows = [{"counterparty": k or "（未指定）", "balance": v} for k, v in sorted(agg.items())]
+    for t in BorrowTransaction.objects.filter(company__in=chosen):
+        key = (t.company_id, t.counterparty)
+        agg[key] = agg.get(key, Decimal("0.00")) + t.signed_amount
+    rows = [{"company": cmap[cid], "counterparty": cp or "（未指定）", "balance": v}
+            for (cid, cp), v in sorted(agg.items(), key=lambda kv: (cmap[kv[0][0]].code, kv[0][1]))]
     total = sum((r["balance"] for r in rows), start=Decimal("0.00"))
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
-        return xlsx_response("借调往来余额表", ["对手单位", "往来余额"],
-                             [[r["counterparty"], r["balance"]] for r in rows], company=company)
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("借调往来余额表", ["公司", "对手单位", "往来余额"],
+                             [[r["company"].short_name or str(r["company"]),
+                               r["counterparty"], r["balance"]] for r in rows], company=company_arg)
     return render(request, "finance/borrow_report.html",
-                  {"rows": rows, "total": total, "active_company": company})
+                  {"rows": rows, "total": total,
+                   "visible_companies": visible, "chosen_ids": {c.pk for c in chosen}})

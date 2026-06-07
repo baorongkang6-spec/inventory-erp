@@ -2,27 +2,32 @@
 {% block title %}票据余额表 · 库存 ERP{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">票据余额表<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
-  <a href="?{% if request.GET.company %}company={{ request.GET.company }}&{% endif %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
+  <h4 class="mb-0">票据余额表</h4>
+  <a href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}export=xlsx" class="btn btn-outline-success btn-sm">导出 Excel</a>
 </div>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <button class="btn btn-primary">查询</button>
+</form>
 
 <div class="card mb-4">
   <div class="card-header">应收票据（在手未用）</div>
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>单据编号</th><th>票据号</th><th>出票日</th><th>到期日</th><th>来源客户</th>
+        <tr><th>公司</th><th>单据编号</th><th>票据号</th><th>出票日</th><th>到期日</th><th>来源客户</th>
             <th class="text-end">票面</th><th class="text-end">未用</th><th>状态</th></tr>
       </thead>
       <tbody>
         {% for n in ar %}
-        <tr><td>{{ n.doc_no }}</td><td>{{ n.note_no|default:"—" }}</td><td>{{ n.draw_date }}</td>
+        <tr><td>{{ n.company.short_name|default:n.company }}</td><td>{{ n.doc_no }}</td><td>{{ n.note_no|default:"—" }}</td><td>{{ n.draw_date }}</td>
             <td>{{ n.due_date|default:"—" }}</td><td>{{ n.customer|default:"—" }}</td>
             <td class="text-end">{{ n.amount }}</td><td class="text-end fw-semibold">{{ n.unused }}</td>
             <td>{{ n.get_status_display }}</td></tr>
-        {% empty %}<tr><td colspan="8" class="text-center text-muted py-3">无在手应收票据</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="9" class="text-center text-muted py-3">无在手应收票据</td></tr>{% endfor %}
       </tbody>
-      {% if ar %}<tfoot class="table-secondary"><tr><th colspan="6" class="text-end">应收票据合计</th><th class="text-end">{{ ar_total }}</th><th></th></tr></tfoot>{% endif %}
+      {% if ar %}<tfoot class="table-secondary"><tr><th colspan="7" class="text-end">应收票据合计</th><th class="text-end">{{ ar_total }}</th><th></th></tr></tfoot>{% endif %}
     </table>
   </div>
 </div>
@@ -32,18 +37,18 @@
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>单据编号</th><th>票据号</th><th>开票日</th><th>到期日</th><th>收票供应商</th>
+        <tr><th>公司</th><th>单据编号</th><th>票据号</th><th>开票日</th><th>到期日</th><th>收票供应商</th>
             <th class="text-end">票面</th><th class="text-end">未用</th><th>状态</th></tr>
       </thead>
       <tbody>
         {% for n in ap %}
-        <tr><td>{{ n.doc_no }}</td><td>{{ n.note_no|default:"—" }}</td><td>{{ n.draw_date }}</td>
+        <tr><td>{{ n.company.short_name|default:n.company }}</td><td>{{ n.doc_no }}</td><td>{{ n.note_no|default:"—" }}</td><td>{{ n.draw_date }}</td>
             <td>{{ n.due_date|default:"—" }}</td><td>{{ n.supplier }}</td>
             <td class="text-end">{{ n.amount }}</td><td class="text-end fw-semibold">{{ n.unused }}</td>
             <td>{{ n.get_status_display }}</td></tr>
-        {% empty %}<tr><td colspan="8" class="text-center text-muted py-3">无在手应付票据</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="9" class="text-center text-muted py-3">无在手应付票据</td></tr>{% endfor %}
       </tbody>
-      {% if ap %}<tfoot class="table-secondary"><tr><th colspan="6" class="text-end">应付票据合计</th><th class="text-end">{{ ap_total }}</th><th></th></tr></tfoot>{% endif %}
+      {% if ap %}<tfoot class="table-secondary"><tr><th colspan="7" class="text-end">应付票据合计</th><th class="text-end">{{ ap_total }}</th><th></th></tr></tfoot>{% endif %}
     </table>
   </div>
 </div>
