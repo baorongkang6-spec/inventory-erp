@@ -613,6 +613,27 @@ def _journal_rows(company, account, date_from=None, date_to=None, entry_type=Non
     return period_opening, rows, balance
 
 
+def _journal_rows_multi(accounts, date_from=None, date_to=None, entry_type=None):
+    """多账户合并日记账：每个账户内部按时间累计逐笔余额，再合并。
+
+    返回 (期初合计, 行[每行含 account 与该账户逐笔余额], 期末合计)。
+    行按 公司/账户/日期 排序——逐笔「余额」是各账户自身的滚动余额（跨账户无统一余额）。
+    """
+    total_opening = Decimal("0.00")
+    total_closing = Decimal("0.00")
+    all_rows = []
+    for acc in accounts:
+        op, rows, cl = _journal_rows(acc.company, acc, date_from, date_to, entry_type)
+        total_opening += op
+        total_closing += cl
+        for r in rows:
+            r["account"] = acc
+            all_rows.append(r)
+    all_rows.sort(key=lambda r: (r["account"].company.code, r["account"].name,
+                                 r["j"].date, r["j"].id))
+    return total_opening, all_rows, total_closing
+
+
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_accounts_report(request):
@@ -640,24 +661,32 @@ def bank_accounts_report(request):
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_report(request):
-    company = resolve_company(request)
-    accounts = list(BankAccount.objects.filter(company=company).order_by("name"))
+    """银行存款日记账：支持多公司联合查询；银行账户不选=全部账户。
+
+    选定单一账户时为经典存折式（逐笔滚动余额）；多账户时各账户内部滚动、
+    合并按 公司/账户/日期 排序，期初/期末为各账户合计。
+    """
+    visible = list(get_visible_companies(request.user))
+    sel_ids = request.GET.getlist("company")
+    if sel_ids:
+        chosen = [c for c in visible if str(c.pk) in sel_ids]
+    else:
+        chosen = list(visible)   # 未选=全部可见公司
+
+    accounts = list(BankAccount.objects.filter(company__in=chosen)
+                    .select_related("company").order_by("company__code", "name"))
     account = None
     acc_id = request.GET.get("account")
     if acc_id:
         account = next((a for a in accounts if str(a.pk) == acc_id), None)
-    elif accounts:
-        account = accounts[0]
 
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
     entry_type = request.GET.get("entry_type") or ""
 
-    opening = closing = Decimal("0.00")
-    rows = []
-    if account:
-        opening, rows, closing = _journal_rows(company, account, date_from, date_to,
-                                               entry_type or None)
+    target_accounts = [account] if account else accounts
+    opening, rows, closing = _journal_rows_multi(
+        target_accounts, date_from, date_to, entry_type or None)
     income_total = sum((r["j"].amount for r in rows if r["j"].direction == "in"), Decimal("0.00"))
     outgo_total = sum((r["j"].amount for r in rows if r["j"].direction == "out"), Decimal("0.00"))
 
@@ -667,7 +696,8 @@ def bank_journal_report(request):
         "income_total": income_total, "outgo_total": outgo_total,
         "entry_type": entry_type, "entry_types": BankJournal.EntryType.choices,
         "date_from": request.GET.get("from", ""), "date_to": request.GET.get("to", ""),
-        "active_company": company,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "multi": account is None,
     })
 
 
@@ -988,26 +1018,59 @@ def sales_cost_by_outbound_report(request):
 @login_required
 @permission_required("finance.view_bankjournal", raise_exception=True)
 def bank_journal_export(request):
-    """导出当前账户/期间的银行存款日记账为 Excel。"""
+    """导出银行存款日记账为 Excel。
+
+    选定单一账户：经典存折式（沿用 export_bank_journal）。
+    未选账户（全部账户，支持多公司）：用通用导出，含 公司/银行账户 列与各账户合计。
+    """
     from django.http import HttpResponse
 
     from .excel import export_bank_journal
 
-    company = get_active_company(request, list(get_visible_companies(request.user)))
-    account = get_object_or_404(BankAccount, pk=request.GET.get("account"), company=company)
+    visible = list(get_visible_companies(request.user))
+    sel_ids = request.GET.getlist("company")
+    chosen = [c for c in visible if str(c.pk) in sel_ids] if sel_ids else list(visible)
     date_from = _parse_date(request.GET.get("from"))
     date_to = _parse_date(request.GET.get("to"))
     entry_type = request.GET.get("entry_type") or None
-    opening, rows, closing = _journal_rows(company, account, date_from, date_to, entry_type)
 
-    content = export_bank_journal(account, rows, opening=opening, closing=closing,
-                                  date_from=date_from, date_to=date_to)
-    resp = HttpResponse(
-        content,
-        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    resp["Content-Disposition"] = f'attachment; filename="bank_journal_{account.pk}.xlsx"'
-    return resp
+    acc_id = request.GET.get("account")
+    if acc_id:
+        account = get_object_or_404(BankAccount, pk=acc_id, company__in=chosen)
+        opening, rows, closing = _journal_rows(account.company, account, date_from, date_to, entry_type)
+        content = export_bank_journal(account, rows, opening=opening, closing=closing,
+                                      date_from=date_from, date_to=date_to)
+        resp = HttpResponse(
+            content,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="bank_journal_{account.pk}.xlsx"'
+        return resp
+
+    # 全部账户（可多公司）→ 通用导出
+    from apps.core.exports import xlsx_response
+    accounts = list(BankAccount.objects.filter(company__in=chosen)
+                    .select_related("company").order_by("company__code", "name"))
+    opening, rows, closing = _journal_rows_multi(accounts, date_from, date_to, entry_type)
+    income_total = sum((r["j"].amount for r in rows if r["j"].direction == "in"), Decimal("0.00"))
+    outgo_total = sum((r["j"].amount for r in rows if r["j"].direction == "out"), Decimal("0.00"))
+    headers = ["公司", "银行账户", "日期", "业务类型", "摘要", "对方单位", "来源单据",
+               "收入", "支出", "账户余额"]
+    data = [["期初余额", "", "", "", "", "", "", "", "", opening]]
+    for r in rows:
+        j = r["j"]
+        data.append([
+            r["account"].company.short_name or str(r["account"].company),
+            r["account"].name, j.date, j.get_entry_type_display(), j.summary or "",
+            j.counterparty or "", j.source_no or "",
+            j.amount if j.direction == "in" else "",
+            j.amount if j.direction == "out" else "", r["balance"],
+        ])
+    data.append(["本期合计", "", "", "", "", "", "", income_total, outgo_total, ""])
+    data.append(["期末余额", "", "", "", "", "", "", "", "", closing])
+    company_arg = chosen[0] if len(chosen) == 1 else None
+    return xlsx_response("银行存款日记账", headers, data,
+                         company=company_arg, period=(date_from, date_to) if (date_from or date_to) else None)
 
 
 @login_required

@@ -2,12 +2,10 @@
 {% block title %}银行存款日记账 · 库存 ERP{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">银行存款日记账<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <h4 class="mb-0">银行存款日记账</h4>
   <div class="d-flex gap-2">
-    {% if account %}
     <a class="btn btn-outline-success btn-sm"
-       href="{% url 'bank_journal_export' %}?account={{ account.pk }}&from={{ date_from }}&to={{ date_to }}&entry_type={{ entry_type }}">导出 Excel</a>
-    {% endif %}
+       href="{% url 'bank_journal_export' %}?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}{% if account %}account={{ account.pk }}&{% endif %}from={{ date_from }}&to={{ date_to }}&entry_type={{ entry_type }}">导出 Excel</a>
     {% if perms.finance.add_bankjournal %}
     <a class="btn btn-outline-secondary btn-sm" href="{% url 'other_cashflow_create' %}">其他收支登记</a>
     <a class="btn btn-outline-primary btn-sm" href="{% url 'bank_journal_import' %}">导入流水</a>
@@ -16,42 +14,63 @@
   </div>
 </div>
 
-<form method="get" class="row g-2 mb-3 align-items-end">
-  <div class="col-md-4">
-    <label class="form-label">银行账户</label>
-    <select name="account" class="form-select" onchange="this.form.submit()">
-      {% for a in accounts %}
-      <option value="{{ a.pk }}" {% if account and a.pk == account.pk %}selected{% endif %}>{{ a.name }} {{ a.account_no }}</option>
+<form method="get" class="mb-3">
+  <div class="mb-2">
+    <label class="form-label mb-1">公司（可多选，不选=全部）</label>
+    <div>
+      {% for c in visible_companies %}
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="checkbox" name="company" value="{{ c.pk }}"
+               id="co{{ c.pk }}" {% if c.pk in chosen_ids %}checked{% endif %}>
+        <label class="form-check-label" for="co{{ c.pk }}">{{ c }}</label>
+      </div>
       {% endfor %}
-    </select>
+    </div>
   </div>
-  <div class="col-md-2"><label class="form-label">起始日期</label>
-    <input type="date" name="from" value="{{ date_from }}" class="form-control"></div>
-  <div class="col-md-2"><label class="form-label">截止日期</label>
-    <input type="date" name="to" value="{{ date_to }}" class="form-control"></div>
-  <div class="col-md-2"><label class="form-label">业务类型</label>
-    <select name="entry_type" class="form-select">
-      <option value="">全部</option>
-      {% for val, label in entry_types %}
-      <option value="{{ val }}" {% if entry_type == val %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select></div>
-  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  <div class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label">银行账户</label>
+      <select name="account" class="form-select">
+        <option value="">全部账户</option>
+        {% for a in accounts %}
+        <option value="{{ a.pk }}" {% if account and a.pk == account.pk %}selected{% endif %}>{{ a.company.short_name|default:a.company }} · {{ a.name }} {{ a.account_no }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2"><label class="form-label">起始日期</label>
+      <input type="date" name="from" value="{{ date_from }}" class="form-control"></div>
+    <div class="col-md-2"><label class="form-label">截止日期</label>
+      <input type="date" name="to" value="{{ date_to }}" class="form-control"></div>
+    <div class="col-md-2"><label class="form-label">业务类型</label>
+      <select name="entry_type" class="form-select">
+        <option value="">全部</option>
+        {% for val, label in entry_types %}
+        <option value="{{ val }}" {% if entry_type == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
 </form>
 
-{% if account %}
 <div class="card">
   <div class="table-responsive">
     <table class="table table-sm table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>日期</th><th>业务类型</th><th>摘要</th><th>对方单位</th><th>来源单据</th>
+        <tr>{% if multi %}<th>公司</th><th>银行账户</th>{% endif %}
+            <th>日期</th><th>业务类型</th><th>摘要</th><th>对方单位</th><th>来源单据</th>
             <th class="text-end">收入</th><th class="text-end">支出</th><th class="text-end">余额</th>
             <th class="text-end">操作</th></tr>
       </thead>
       <tbody>
+        {% if multi %}
+        <tr class="table-secondary"><td colspan="9">期初余额（各账户合计）</td><td class="text-end">{{ opening }}</td><td></td></tr>
+        {% else %}
         <tr class="table-secondary"><td colspan="7">期初余额</td><td class="text-end">{{ opening }}</td><td></td></tr>
+        {% endif %}
         {% for r in rows %}
         <tr>
+          {% if multi %}<td>{{ r.account.company.short_name|default:r.account.company }}</td>
+          <td>{{ r.account.name }}</td>{% endif %}
           <td>{{ r.j.date }}</td>
           <td><span class="badge text-bg-light">{{ r.j.get_entry_type_display }}</span></td>
           <td>{{ r.j.summary|default:"—" }}{% if r.j.is_imported %} <span class="badge text-bg-secondary">导入</span>{% endif %}</td>
@@ -67,18 +86,22 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="9" class="text-center text-muted py-3">该期间无日记账</td></tr>
+        <tr><td colspan="{% if multi %}11{% else %}9{% endif %}" class="text-center text-muted py-3">该期间无日记账</td></tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-light">
+        {% if multi %}
+        <tr><th colspan="7" class="text-end">本期合计</th>
+            <th class="text-end">{{ income_total }}</th><th class="text-end">{{ outgo_total }}</th><th></th><th></th></tr>
+        <tr><th colspan="9" class="text-end">期末余额（各账户合计）</th><th class="text-end">{{ closing }}</th><th></th></tr>
+        {% else %}
         <tr><th colspan="5" class="text-end">本期合计</th>
             <th class="text-end">{{ income_total }}</th><th class="text-end">{{ outgo_total }}</th><th></th><th></th></tr>
         <tr><th colspan="7" class="text-end">期末余额</th><th class="text-end">{{ closing }}</th><th></th></tr>
+        {% endif %}
       </tfoot>
     </table>
   </div>
 </div>
-{% else %}
-<p class="text-muted">请先在「银行账户」建立账户。</p>
-{% endif %}
+{% if multi %}<p class="text-muted small mt-2">多账户合并视图：「余额」为各账户自身的滚动余额（跨账户无统一余额）；期初/期末为所选账户合计。选定单一账户即为经典存折式。</p>{% endif %}
 {% endblock %}
