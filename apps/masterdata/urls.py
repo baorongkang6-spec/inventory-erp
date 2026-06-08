@@ -20,6 +20,8 @@ urlpatterns = [
     path("suppliers/new/", views.SupplierCreateView.as_view(), name="supplier_create"),
     path("suppliers/<int:pk>/edit/", views.SupplierUpdateView.as_view(), name="supplier_update"),
     path("suppliers/<int:pk>/delete/", views.SupplierDeleteView.as_view(), name="supplier_delete"),
+    # 一键复制基础资料到其他公司（管理员）
+    path("copy/", views.copy_masterdata, name="masterdata_copy"),
     # 费用类别
     path("expense-categories/", views.ExpenseCategoryListView.as_view(), name="expensecategory_list"),
     path("expense-categories/new/", views.ExpenseCategoryCreateView.as_view(), name="expensecategory_create"),

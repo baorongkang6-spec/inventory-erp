@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}复制基础资料到其他公司 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-1">复制基础资料到其他公司</h4>
+<p class="text-muted">以<strong>当前账套（{{ source }}）</strong>为源，把商品/客户/供应商/费用类别复制到所选公司。
+  目标公司<strong>已存在相同编码</strong>（费用类别按名称）的<strong>自动跳过</strong>，可反复执行、安全幂等。只复制主数据，不影响库存与单据。</p>
+
+{% if not source %}
+<div class="alert alert-warning">没有可用的当前账套。</div>
+{% elif not others %}
+<div class="alert alert-info">没有其他可见公司可复制。</div>
+{% else %}
+<form method="post" class="card card-body mb-3" style="max-width:680px">
+  {% csrf_token %}
+  <div class="mb-3">
+    <label class="form-label fw-semibold">① 复制哪些基础资料</label>
+    {% for t in ui_types %}
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="types" value="{{ t.key }}" id="t{{ t.key }}" checked>
+      <label class="form-check-label" for="t{{ t.key }}">{{ t.label }}<span class="text-muted small">（源 {{ source }} 现有 {{ t.count }} 条）</span></label>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mb-3">
+    <label class="form-label fw-semibold">② 复制到哪些公司（目标）</label>
+    {% for c in others %}
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" name="targets" value="{{ c.pk }}" id="c{{ c.pk }}" checked>
+      <label class="form-check-label" for="c{{ c.pk }}">{{ c }}</label>
+    </div>
+    {% endfor %}
+  </div>
+  <div>
+    <button class="btn btn-primary" onclick="return confirm('确认把 {{ source }} 的所选基础资料复制到所选公司？已存在的会自动跳过。');">开始复制</button>
+    <a href="{% url 'product_list' %}" class="btn btn-outline-secondary">返回</a>
+  </div>
+</form>
+{% endif %}
+
+{% if results %}
+<div class="card">
+  <div class="card-header">复制结果</div>
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light"><tr><th>类别</th><th>目标公司</th><th class="text-end">新建</th><th class="text-end">跳过(已存在)</th></tr></thead>
+      <tbody>
+        {% for r in results %}
+        <tr><td>{{ r.label }}</td><td>{{ r.target }}</td>
+            <td class="text-end fw-semibold">{{ r.created }}</td><td class="text-end text-muted">{{ r.skipped }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

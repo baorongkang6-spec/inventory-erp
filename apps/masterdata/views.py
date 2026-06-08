@@ -142,3 +142,84 @@ class ExpenseCategoryDeleteView(ScopedDeleteView):
     model = ExpenseCategory
     title = "费用类别"
     success_url = reverse_lazy("expensecategory_list")
+
+
+# --- 一键复制基础资料到其他公司（仅管理员）-----------------------------------
+def copy_masterdata(request):
+    """把当前账套的 商品/客户/供应商/费用类别 复制到其他公司。
+
+    以右上「当前账套」为源；目标公司已存在相同编码(费用类别按名称)的自动跳过，
+    故可反复执行、幂等安全。仅复制主数据本身，不动库存与单据。
+    """
+    from django.contrib import messages
+    from django.core.exceptions import PermissionDenied
+    from django.db import transaction
+    from django.shortcuts import redirect, render
+
+    from apps.core.scope import get_active_company, get_visible_companies
+
+    if not request.user.is_authenticated:
+        return redirect("login")
+    if not request.user.is_superuser:
+        raise PermissionDenied("仅管理员可使用基础资料复制")
+
+    visible = list(get_visible_companies(request.user))
+    source = get_active_company(request, visible)
+    others = [c for c in visible if source and c.pk != source.pk]
+
+    # key, 中文, 模型, 判重字段, 复制字段
+    type_defs = [
+        ("product", "商品", Product, "code",
+         ["code", "name", "spec", "unit", "category", "default_tax_rate", "is_active", "remark"]),
+        ("customer", "客户", Customer, "code",
+         ["code", "name", "contact", "phone", "tax_no", "address", "is_active", "remark"]),
+        ("supplier", "供应商", Supplier, "code",
+         ["code", "name", "contact", "phone", "tax_no", "address", "is_active", "remark"]),
+        ("expensecategory", "费用类别", ExpenseCategory, "name",
+         ["name", "include_in_cost", "is_active", "remark"]),
+    ]
+    ui_types = [{"key": k, "label": l, "count": M.objects.filter(company=source).count() if source else 0}
+                for (k, l, M, _kf, _fs) in type_defs]
+
+    results = None
+    if request.method == "POST":
+        target_ids = set(request.POST.getlist("targets"))
+        chosen_types = set(request.POST.getlist("types"))
+        targets = [c for c in others if str(c.pk) in target_ids]
+        if not source:
+            messages.error(request, "没有可用的当前账套")
+            return redirect("masterdata_copy")
+        if not targets or not chosen_types:
+            messages.error(request, "请至少选择一个目标公司和一类基础资料")
+            return redirect("masterdata_copy")
+        results = []
+        with transaction.atomic():
+            for key, label, Model, keyf, fields in type_defs:
+                if key not in chosen_types:
+                    continue
+                src_rows = list(Model.objects.filter(company=source))
+                is_partner = key in ("customer", "supplier")
+                for tgt in targets:
+                    existing = set(Model.objects.filter(company=tgt).values_list(keyf, flat=True))
+                    created = skipped = 0
+                    for row in src_rows:
+                        kv = getattr(row, keyf)
+                        if kv in existing:
+                            skipped += 1
+                            continue
+                        data = {f: getattr(row, f) for f in fields}
+                        data["company"] = tgt
+                        if is_partner:
+                            rc = row.related_company_id
+                            # 关联企业指向目标本身时不带（公司不能是自己的往来对象）
+                            data["related_company_id"] = None if rc == tgt.pk else rc
+                        Model.objects.create(**data)
+                        created += 1
+                    results.append({"label": label, "target": str(tgt),
+                                    "created": created, "skipped": skipped})
+        total = sum(r["created"] for r in results)
+        messages.success(request, f"复制完成：共新建 {total} 条（已存在的同编码已跳过）。")
+
+    return render(request, "masterdata/copy.html", {
+        "source": source, "others": others, "ui_types": ui_types, "results": results,
+    })

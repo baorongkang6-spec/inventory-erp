@@ -31,6 +31,7 @@
             {% if menu.suppliers %}<li><a class="dropdown-item" href="{% url 'supplier_list' %}">供应商</a></li>{% endif %}
             {% if perms.masterdata.view_expensecategory %}<li><a class="dropdown-item" href="{% url 'expensecategory_list' %}">费用类别</a></li>{% endif %}
             {% if perms.finance.view_bankaccount %}<li><a class="dropdown-item" href="{% url 'bankaccount_list' %}">银行账户</a></li>{% endif %}
+            {% if user.is_superuser %}<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="{% url 'masterdata_copy' %}">复制到其他公司</a></li>{% endif %}
           </ul>
         </li>
         {% endif %}
