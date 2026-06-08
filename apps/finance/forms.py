@@ -68,9 +68,9 @@ class PurchaseInvoiceLineForm(BootstrapForm):
         label="商品", queryset=Product.objects.none(), required=False, empty_label="—（可不选）"
     )
     description = forms.CharField(label="摘要", required=False, max_length=128)
-    quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3, min_value=0)
+    quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3)
     amount_untaxed = forms.DecimalField(
-        label="不含税金额", required=False, max_digits=18, decimal_places=2, min_value=0
+        label="不含税金额", required=False, max_digits=18, decimal_places=2
     )
     tax_rate = forms.DecimalField(
         label="税率", required=False, max_digits=5, decimal_places=4,
@@ -95,8 +95,10 @@ class PurchaseInvoiceLineForm(BootstrapForm):
             cleaned["_empty"] = True
             return cleaned
         cleaned["_empty"] = False
-        if amt is None or amt <= 0:
-            self.add_error("amount_untaxed", "不含税金额必须大于 0")
+        if amt is None:
+            self.add_error("amount_untaxed", "请输入不含税金额（红冲/退货可填负数）")
+        elif amt == 0:
+            self.add_error("amount_untaxed", "金额不能为 0")
         if cleaned.get("tax_rate") is None:
             cleaned["tax_rate"] = DEFAULT_TAX_RATE
         return cleaned
@@ -179,9 +181,9 @@ class SalesInvoiceLineForm(BootstrapForm):
         label="商品", queryset=Product.objects.none(), required=False, empty_label="—（可不选）"
     )
     description = forms.CharField(label="摘要", required=False, max_length=128)
-    quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3, min_value=0)
+    quantity = forms.DecimalField(label="数量", required=False, max_digits=18, decimal_places=3)
     amount_untaxed = forms.DecimalField(
-        label="不含税金额", required=False, max_digits=18, decimal_places=2, min_value=0
+        label="不含税金额", required=False, max_digits=18, decimal_places=2
     )
     tax_rate = forms.DecimalField(
         label="税率", required=False, max_digits=5, decimal_places=4,
@@ -206,8 +208,10 @@ class SalesInvoiceLineForm(BootstrapForm):
             cleaned["_empty"] = True
             return cleaned
         cleaned["_empty"] = False
-        if amt is None or amt <= 0:
-            self.add_error("amount_untaxed", "不含税金额必须大于 0")
+        if amt is None:
+            self.add_error("amount_untaxed", "请输入不含税金额（红冲/退货可填负数）")
+        elif amt == 0:
+            self.add_error("amount_untaxed", "金额不能为 0")
         if cleaned.get("tax_rate") is None:
             cleaned["tax_rate"] = DEFAULT_TAX_RATE
         return cleaned

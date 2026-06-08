@@ -118,14 +118,15 @@ class AllocationTests(TestCase):
         self.assertEqual(b.outstanding, Decimal("0.00"))
         self.assertEqual(pay.unallocated, Decimal("0.00"))
 
-    def test_over_invoice_outstanding_rejected(self):
+    def test_over_invoice_outstanding_allowed(self):
+        # 允许核销超过发票未核销额 → 发票余额变负（预付/多付）
         inv = self._invoice("100")  # 113
         pay = self._payment("500")
-        with self.assertRaises(SettlementError):
-            allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("200")}])
+        allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("200")}])
         inv.refresh_from_db(); pay.refresh_from_db()
-        self.assertEqual(inv.settled_amount, Decimal("0.00"))
-        self.assertEqual(pay.settled_amount, Decimal("0.00"))
+        self.assertEqual(inv.settled_amount, Decimal("200.00"))
+        self.assertEqual(inv.outstanding, Decimal("-87.00"))   # 113 - 200
+        self.assertEqual(pay.settled_amount, Decimal("200.00"))
 
     def test_over_payment_balance_rejected(self):
         a = self._invoice("100")  # 113
@@ -177,7 +178,8 @@ class SalesSideTests(TestCase):
         self.assertEqual(inv.outstanding, Decimal("0.00"))
         self.assertEqual(rec.unallocated, Decimal("0.00"))
 
-    def test_receipt_over_allocate_rejected(self):
+    def test_receipt_over_allocate_allowed(self):
+        # 允许核销超过发票未核销额 → 应收变负（预收/多收）
         inv = create_sales_invoice(
             company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust,
             lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("100"),
@@ -185,10 +187,10 @@ class SalesSideTests(TestCase):
         )  # 113
         rec = create_receipt(company=self.c1, user=None, doc_date=date(2026, 6, 5),
                              bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
-        with self.assertRaises(SettlementError):
-            allocate_receipt(receipt=rec, allocations=[{"invoice": inv, "amount": Decimal("200")}])
+        allocate_receipt(receipt=rec, allocations=[{"invoice": inv, "amount": Decimal("200")}])
         inv.refresh_from_db()
-        self.assertEqual(inv.settled_amount, Decimal("0.00"))
+        self.assertEqual(inv.settled_amount, Decimal("200.00"))
+        self.assertEqual(inv.outstanding, Decimal("-87.00"))
 
 
 class BankJournalExcelTests(TestCase):

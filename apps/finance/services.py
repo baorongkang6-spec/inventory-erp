@@ -128,10 +128,7 @@ def allocate_payment(*, payment, allocations, user=None):
         invoice = PurchaseInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
         if invoice.company_id != payment.company_id or invoice.supplier_id != payment.supplier_id:
             raise SettlementError("发票与付款的公司/供应商不一致")
-        if amount > invoice.outstanding:
-            raise SettlementError(
-                f"核销额 {amount} 超过发票 {invoice.doc_no} 未核销 {invoice.outstanding}"
-            )
+        # 允许核销超过发票未核销额（使发票余额/应付为负，对应预付/多付）
         total += amount
         cleaned.append((invoice, amount))
 
@@ -311,10 +308,7 @@ def allocate_receipt(*, receipt, allocations, user=None):
         invoice = SalesInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
         if invoice.company_id != receipt.company_id or invoice.customer_id != receipt.customer_id:
             raise SettlementError("发票与收款的公司/客户不一致")
-        if amount > invoice.outstanding:
-            raise SettlementError(
-                f"核销额 {amount} 超过发票 {invoice.doc_no} 未核销 {invoice.outstanding}"
-            )
+        # 允许核销超过发票未核销额（使发票余额/应收为负，对应预收/多收）
         total += amount
         cleaned.append((invoice, amount))
 
@@ -395,8 +389,7 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         inv = invoice_model.objects.select_for_update().get(pk=a["invoice"].pk)
         if inv.company_id != note.company_id:
             raise SettlementError("票据与发票公司不一致")
-        if amount > inv.outstanding:
-            raise SettlementError(f"冲销额 {amount} 超过发票 {inv.doc_no} 未核销 {inv.outstanding}")
+        # 允许冲销超过发票未核销额（使发票余额为负）
         total += amount
         cleaned.append((inv, amount))
 
