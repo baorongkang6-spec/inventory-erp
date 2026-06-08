@@ -169,8 +169,9 @@ class InboundListFilterTests(TestCase):
         wb = load_workbook(BytesIO(resp.content))
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
-        self.assertEqual(rows[0][0], "采购入库")           # 标题行
-        # 表头行（带样式后位于标题+元信息之后）
+        # 第1行=公司抬头，第2行=报表名
+        self.assertEqual(rows[1][0], "采购入库")           # 报表名行
+        # 表头行（带样式后位于抬头+报表名+元信息之后）
         hdr_idx = next(i for i, r in enumerate(rows) if r[0] == "单据编号")
         data = rows[hdr_idx + 1:]
         self.assertEqual(len(data), 1)                     # 筛选后仅 1 行

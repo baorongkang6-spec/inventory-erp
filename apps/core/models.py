@@ -18,6 +18,9 @@ class Company(models.Model):
     code = models.CharField("公司编号", max_length=8, unique=True)  # C1 / C2 / C3
     name = models.CharField("公司全称", max_length=128, unique=True)
     short_name = models.CharField("简称", max_length=32, blank=True)
+    full_name = models.CharField(
+        "法定全称（报表/单据抬头）", max_length=128, blank=True,
+        help_text="如「安博诺新材料科技（上海）有限公司」；用于 Excel 表头与单据打印抬头。留空则用公司全称。")
     is_related = models.BooleanField("系统内关联企业", default=True)
     is_active = models.BooleanField("启用", default=True)
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
@@ -29,6 +32,11 @@ class Company(models.Model):
 
     def __str__(self) -> str:
         return f"{self.code} {self.short_name or self.name}"
+
+    @property
+    def header_name(self) -> str:
+        """报表/单据抬头用的法定全称；未设则退回公司全称。"""
+        return self.full_name or self.name
 
 
 class CompanyScopedQuerySet(models.QuerySet):

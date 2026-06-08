@@ -33,7 +33,10 @@
     <button class="btn" onclick="window.close()">关闭</button>
   </div>
   <div class="sheet">
-    <div class="company">{{ doc.company.name }}</div>
+    <div class="company" style="display:flex;align-items:center;justify-content:center;gap:10px;">
+      <img src="{% static 'img/logo.png' %}" alt="logo" style="height:40px;width:auto;">
+      <span>{{ doc.company.header_name }}</span>
+    </div>
     <div class="doc-title">{% block doc_title %}单据{% endblock %}</div>
     {% block meta %}{% endblock %}
     {% block lines %}{% endblock %}

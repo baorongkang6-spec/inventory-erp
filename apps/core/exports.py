@@ -18,6 +18,9 @@ from openpyxl.utils import get_column_letter
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+# 跨 2 家及以上公司的导出，抬头统一用集团名
+GROUP_HEADER = "鸿威达新材料集团公司"
+
 _HEADER_FILL = PatternFill("solid", fgColor="E8EEF7")
 _TOTAL_FILL = PatternFill("solid", fgColor="F2F2F2")
 _THIN = Side(style="thin", color="C0C0C0")
@@ -74,9 +77,12 @@ def xlsx_response(report_name, headers, rows, *, company=None, period=None,
     """report_name 报表名（作标题）；company 编制单位（Company 或 str）；
     period (dfrom, dto) 期间；generated 导出日期（默认今天）。
     文件名规则：{报表名}_{编制单位}_{起}-{止}_{导出日}.xlsx（缺省部分省略）。"""
-    company_label = ""
-    if company is not None:
-        company_label = getattr(company, "short_name", None) or str(company)
+    # 抬头：单公司用其法定全称，跨 2 家及以上(company=None)用集团名
+    header_label = (getattr(company, "header_name", None)
+                    or (str(company) if company is not None else GROUP_HEADER))
+    # 文件名用短名，避免过长
+    company_short = (getattr(company, "short_name", None) or getattr(company, "name", None)
+                     or (str(company) if company is not None else "集团"))
     gen = generated or timezone.localdate()
     dfrom = dto = None
     if period:
@@ -89,17 +95,22 @@ def xlsx_response(report_name, headers, rows, *, company=None, period=None,
     last_col = get_column_letter(ncols)
 
     r = 1
-    # 标题
+    # 抬头（公司法定全称 / 集团名）
+    ws.merge_cells(f"A{r}:{last_col}{r}")
+    hc = ws.cell(r, 1, header_label)
+    hc.font = Font(bold=True, size=15)
+    hc.alignment = _CENTER
+    ws.row_dimensions[r].height = 30
+    r += 1
+    # 报表名
     ws.merge_cells(f"A{r}:{last_col}{r}")
     cell = ws.cell(r, 1, report_name)
-    cell.font = Font(bold=True, size=14)
+    cell.font = Font(bold=True, size=12)
     cell.alignment = _CENTER
-    ws.row_dimensions[r].height = 24
+    ws.row_dimensions[r].height = 20
     r += 1
-    # 元信息行：编制单位 / 期间 / 导出日期
+    # 元信息行：期间 / 导出日期（编制单位已在抬头体现）
     meta = []
-    if company_label:
-        meta.append(f"编制单位：{company_label}")
     if dfrom or dto:
         meta.append(f"期间：{_norm(dfrom) or '起初'} ~ {_norm(dto) or '至今'}")
     for m in (extra_meta or []):
@@ -110,6 +121,18 @@ def xlsx_response(report_name, headers, rows, *, company=None, period=None,
     mcell.font = Font(size=9, color="808080")
     mcell.alignment = _LEFT
     r += 1
+
+    # 左上角嵌入 logo（缺 Pillow / 文件不存在则跳过，绝不影响导出）
+    try:
+        from django.conf import settings
+        from openpyxl.drawing.image import Image as XLImage
+        logo_path = settings.BASE_DIR / "static" / "img" / "logo.png"
+        if logo_path.exists():
+            img = XLImage(str(logo_path))
+            img.height, img.width = 38, round(38 * img.width / img.height)
+            ws.add_image(img, "A1")
+    except Exception:
+        pass
 
     # 表头
     header_row = r
@@ -149,8 +172,8 @@ def xlsx_response(report_name, headers, rows, *, company=None, period=None,
     def _ymd(d):
         return d.strftime("%Y%m%d") if hasattr(d, "strftime") else ""
     parts = [_safe(report_name)]
-    if company_label:
-        parts.append(_safe(company_label))
+    if company_short:
+        parts.append(_safe(company_short))
     if dfrom or dto:
         parts.append(f"{_ymd(dfrom)}-{_ymd(dto)}")
     parts.append(_ymd(gen) or _safe(_norm(gen)))

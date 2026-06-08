@@ -36,8 +36,19 @@ def export_bank_journal(account, rows, opening=None, closing=None,
     period = ""
     if date_from or date_to:
         period = f"  期间：{date_from or '起初'} ~ {date_to or '至今'}"
+    ws.append([account.company.header_name])   # 抬头：公司法定全称
     ws.append([f"账户：{account.name} {account.account_no}{period}"])
     ws.append(HEADERS)
+    # 左上角嵌入 logo（缺 Pillow/文件不存在则跳过）
+    try:
+        from django.conf import settings
+        from openpyxl.drawing.image import Image as XLImage
+        lp = settings.BASE_DIR / "static" / "img" / "logo.png"
+        if lp.exists():
+            im = XLImage(str(lp)); im.height, im.width = 34, round(34 * im.width / im.height)
+            ws.add_image(im, "A1")
+    except Exception:
+        pass
 
     if opening is None:
         opening = (rows[0]["balance"] - rows[0]["j"].signed_amount) if rows else account.opening_balance
@@ -71,7 +82,7 @@ def export_bank_journal(account, rows, opening=None, closing=None,
     ws.append(["期末余额", None, None, None, None, None, float(closing)])
 
     # 金额列（收入D / 支出E / 余额G）统一两位小数 + 千分位
-    for row in ws.iter_rows(min_row=3, min_col=1, max_col=7):
+    for row in ws.iter_rows(min_row=4, min_col=1, max_col=7):
         for cell in row:
             if cell.column_letter in ("D", "E", "G") and isinstance(cell.value, (int, float)):
                 cell.number_format = "#,##0.00"
@@ -137,6 +148,8 @@ def parse_bank_journal_xlsx(file):
         cells = (values + [None] * IMPORT_COLS)[:IMPORT_COLS]
         d = _to_date(cells[0])
         if d is None:
+            if not parsed:   # 尚无数据行 → 视为前置抬头/标题行，静默跳过
+                continue
             errors.append(f"第 {idx} 行：日期无法识别（{cells[0]!r}）")
             continue
         income = _to_decimal(cells[3])
