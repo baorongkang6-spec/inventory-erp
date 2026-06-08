@@ -160,6 +160,9 @@
     </div>
     {% endfor %}
   {% endif %}
+  {% if request.resolver_match.url_name != 'home' %}
+  <a href="javascript:history.back()" class="btn btn-sm btn-outline-secondary mb-3">← 返回</a>
+  {% endif %}
   {% block content %}{% endblock %}
 </main>
 
