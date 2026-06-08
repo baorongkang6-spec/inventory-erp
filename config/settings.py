@@ -160,6 +160,11 @@ LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
 USE_I18N = True
 USE_TZ = True
+# 数字显示千分位（金额/数量等只读展示分组为 1,234.56）。
+# 表单数字输入框不分组（Django 对 localize=False 的字段不加分隔符），不影响录入。
+# zh-hans 内置把 THOUSAND_SEPARATOR 设为空、分组为 4；用自定义格式模块覆盖为标准千分位。
+USE_THOUSAND_SEPARATOR = True
+FORMAT_MODULE_PATH = ["apps.formats"]
 
 
 # --- 静态文件 -----------------------------------------------------------------

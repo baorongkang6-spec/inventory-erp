@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from django.db.models import Sum
 
-from apps.core.money import round_money
+from apps.core.money import round_money, round_qty
 
 from apps.finance.models import (
     BankAccount,
@@ -31,7 +31,8 @@ Z = Decimal("0.00")
 
 
 def _s(qs, field="amount"):
-    return qs.aggregate(v=Sum(field))["v"] or Z
+    # SQLite 对 DecimalField 的 SUM 返回浮点→Decimal 会带长尾零，统一量化为 2 位
+    return round_money(qs.aggregate(v=Sum(field))["v"] or Z)
 
 
 def _before(qs, dfield, dfrom, field="amount"):
@@ -57,7 +58,8 @@ def _period(inc_qs, dec_qs, inc_dfield, dec_dfield, dfrom, dto, inc_field="amoun
 def company_overview(company, dfrom, dto):
     """返回 dict：5 类各自 {opening, income, outgo, ending}，按 [dfrom,dto] 统计。"""
     # 银行存款（期初余额 + 区间前日记账净额 = 期初）
-    bank_open0 = BankAccount.objects.filter(company=company).aggregate(v=Sum("opening_balance"))["v"] or Z
+    bank_open0 = round_money(
+        BankAccount.objects.filter(company=company).aggregate(v=Sum("opening_balance"))["v"] or Z)
     bj = BankJournal.objects.filter(company=company)
     bj_in, bj_out = bj.filter(direction=BankJournal.Direction.IN), bj.filter(direction=BankJournal.Direction.OUT)
     b = _period(bj_in, bj_out, "date", "date", dfrom, dto)
@@ -459,7 +461,7 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
     if dto:
         qs = qs.filter(outbound__doc_date__lte=dto)
 
-    invoiced = {r["source_outbound_line"]: (r["q"] or ZQ) for r in
+    invoiced = {r["source_outbound_line"]: round_qty(r["q"] or ZQ) for r in
                 SalesInvoiceLine.objects.filter(source_outbound_line__in=qs)
                 .exclude(invoice__status=SalesInvoice.Status.VOID)
                 .values("source_outbound_line").annotate(q=Sum("quantity"))}
@@ -509,7 +511,7 @@ def received_uninvoiced(companies, dfrom=None, dto=None):
     if dto:
         qs = qs.filter(inbound__doc_date__lte=dto)
 
-    invoiced = {r["source_inbound_line"]: (r["q"] or ZQ) for r in
+    invoiced = {r["source_inbound_line"]: round_qty(r["q"] or ZQ) for r in
                 PurchaseInvoiceLine.objects.filter(source_inbound_line__in=qs)
                 .exclude(invoice__status=PurchaseInvoice.Status.VOID)
                 .values("source_inbound_line").annotate(q=Sum("quantity"))}
