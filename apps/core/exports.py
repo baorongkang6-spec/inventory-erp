@@ -129,6 +129,7 @@ def xlsx_response(report_name, headers, rows, *, company=None, period=None,
             c.border = _BORDER
             if _is_num(v):
                 c.alignment = _RIGHT
+                c.number_format = "#,##0.00"   # 两位小数 + 千分位
             if is_total:
                 c.font = Font(bold=True)
                 c.fill = _TOTAL_FILL

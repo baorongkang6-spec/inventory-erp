@@ -70,6 +70,12 @@ def export_bank_journal(account, rows, opening=None, closing=None,
     # 期末余额行（余额列）
     ws.append(["期末余额", None, None, None, None, None, float(closing)])
 
+    # 金额列（收入D / 支出E / 余额G）统一两位小数 + 千分位
+    for row in ws.iter_rows(min_row=3, min_col=1, max_col=7):
+        for cell in row:
+            if cell.column_letter in ("D", "E", "G") and isinstance(cell.value, (int, float)):
+                cell.number_format = "#,##0.00"
+
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()

@@ -144,3 +144,10 @@
 - **复用**：直接调 `payable_partners_balance/receivable_partners_balance(company,dfrom,dto)` 逐公司汇总再合并（这俩本就返回 opening/income/outgo/ending + partner 对象）；明细账复用既有 `payable_partner_ledger/receivable_partner_ledger`（`resolve_company` 已支持 `?company=`，故跨公司下钻无需改后端）。
 - **共用明细账两入口**：ledger 加 `src=menu` 区分来源——决定「返回余额表」回菜单报表还是 M9 总览下钻报表；`src` 在 ledger 自身的查询表单/导出链接里透传。
 - **模板**：新增 `partner_balance_multi.html`（公司列 + 多选 + 合计）；旧 `balance_report.html` 及 `_outstanding_balance_report` 的发票清单实现删除。
+
+## 十七、全站数字千分位 + 两位小数
+
+- **网页**：zh-hans 内置把 THOUSAND_SEPARATOR 设空、分组 4 → 金额无千分位。解决：自定义格式模块 `apps/formats/zh_Hans/formats.py`(THOUSAND_SEPARATOR="," NUMBER_GROUPING=3) + `FORMAT_MODULE_PATH=["apps.formats"]` + `USE_THOUSAND_SEPARATOR=True`。只读输出自动分组；表单 number 输入不分组(已验证不影响录入)。
+- **长尾零根因=SQLite**：对 DecimalField 做 SUM 返回浮点→Decimal 带长尾零。reports 的 `_s`/`bank_open0` 用 round_money、收开票数量 round_qty 量化。
+- **Excel**：xlsx_response 数字单元格 + 银行日记账导出金额列(D/E/G) 设 `number_format="#,##0.00"`。
+- 备注：数量仍按 3 位小数显示(保精度)；金额 2 位。
