@@ -169,6 +169,27 @@ def _ensure_product_in(company_b, source_product):
     return prod
 
 
+def _ensure_supplier_for_company(company_b, source_company):
+    """在 B 账套找/建一个"代表源公司 A"的供应商（按 related_company=A 识别）。
+
+    用于镜像采购入库自动带上供应商=源公司，便于 B 后续记采购发票/应付。
+    已有则复用，避免重复建。
+    """
+    from apps.masterdata.models import Supplier
+    sup = Supplier.objects.filter(company=company_b, related_company=source_company).first()
+    if sup:
+        return sup
+    base = f"GL{source_company.code}"   # 关联企业供应商编码前缀
+    code, n = base, 1
+    while Supplier.objects.filter(company=company_b, code=code).exists():
+        n += 1
+        code = f"{base}-{n}"
+    return Supplier.objects.create(
+        company=company_b, code=code, name=source_company.name,
+        related_company=source_company, remark="系统自动建立的关联企业供应商（可改名）",
+    )
+
+
 def _mirror_to_related_company(outbound, user):
     """若出库单客户对应系统内关联公司 B，则在 B 自动生成镜像采购入库单（外购）。
 
@@ -193,9 +214,12 @@ def _mirror_to_related_company(outbound, user):
     # 销售→对方外购入库；借出/归还→对方借调入库（SPEC §5）
     borrow_kind = outbound.sales_type in (
         SalesOutbound.SalesType.LEND, SalesOutbound.SalesType.RETURN)
+    # 外购镜像带上"代表源公司"的供应商；借调类走 borrow_counterparty，不设供应商
+    supplier = None if borrow_kind else _ensure_supplier_for_company(company_b, outbound.company)
     from apps.purchasing.models import PurchaseInbound
     inbound = create_and_post_inbound(
         company=company_b, user=user, doc_date=outbound.doc_date, lines=lines,
+        supplier=supplier,
         remark=f"关联自动生成：源 {outbound.company.code} {outbound.doc_no}",
         purchase_type=(PurchaseInbound.PurchaseType.BORROW if borrow_kind
                        else PurchaseInbound.PurchaseType.EXTERNAL),
