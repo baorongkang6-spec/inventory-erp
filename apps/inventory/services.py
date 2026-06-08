@@ -88,16 +88,7 @@ def reverse_move(move: StockMove, *, date=None, source_type="", source_id="", so
     """
     bal = _get_balance_for_update(move.company, move.product)
     if move.direction == StockMove.Direction.IN:
-        if move.quantity > bal.quantity or move.amount > bal.amount:
-            raise InsufficientStockError(
-                move.product, bal.quantity, move.quantity,
-                message=(
-                    f"无法反冲入库：{move.product} 该批入库的商品/成本已被后续出库消耗。"
-                    f"原入库 {move.quantity} 件 / 金额 {move.amount}，"
-                    f"当前结存仅 {bal.quantity} 件 / 金额 {bal.amount}。"
-                    f"请先作废引用本批货的出库单，再修改或作废本入库单。"
-                ),
-            )
+        # 允许负库存：反冲入库即使会令结存为负也照常执行（不再拦截"已被后续消耗"）
         bal.quantity = round_qty(bal.quantity - move.quantity)
         bal.amount = round_money(bal.amount - move.amount)
         new_dir = StockMove.Direction.OUT
@@ -125,21 +116,27 @@ def reverse_move(move: StockMove, *, date=None, source_type="", source_id="", so
 @transaction.atomic
 def post_outbound(company, product, quantity, *, date=None,
                   source_type="", source_id="", source_no="") -> StockMove:
-    """出库过账：按当前移动加权均价结转成本。库存不足抛 InsufficientStockError。"""
+    """出库过账：按当前移动加权均价结转成本。
+
+    允许负库存（业务上常需"先出后入"）：库存不足不再拦截，结存数量/金额可为负。
+    成本单价：库存>0 用当前均价；=0 用最近均价（通常为 0，待入库后自然修正）。
+    """
     quantity = round_qty(quantity)
     if quantity <= 0:
         raise InventoryError("出库数量必须大于 0")
 
     bal = _get_balance_for_update(company, product)
-    if quantity > bal.quantity:
-        raise InsufficientStockError(product, bal.quantity, quantity)
 
     if quantity == bal.quantity:
         # 全部出清：成本 = 剩余金额，结存精确归零
         unit_price = bal.avg_price
         cost = bal.amount
-    else:
+    elif bal.quantity != 0:
         unit_price = round_money(bal.amount / bal.quantity)
+        cost = round_money(quantity * unit_price)
+    else:
+        # 库存为 0 仍出库 → 负库存：用最近均价作成本基准（无基准则为 0）
+        unit_price = bal.avg_price
         cost = round_money(quantity * unit_price)
 
     bal.quantity = round_qty(bal.quantity - quantity)

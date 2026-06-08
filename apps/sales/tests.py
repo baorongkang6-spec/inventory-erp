@@ -37,34 +37,35 @@ class OutboundPostingTests(TestCase):
         self.assertEqual(bal.quantity, Decimal("90.000"))
         self.assertEqual(bal.amount, Decimal("990.00"))
 
-    def test_insufficient_stock_rolls_back_whole_doc(self):
+    def test_oversell_allowed_negative(self):
+        # 允许负库存：出库超过结存照常过账，结存变负
         post_inbound(self.c1, self.p, Decimal("10"), Decimal("5"))
-        with self.assertRaises(InsufficientStockError):
-            create_and_post_outbound(
-                company=self.c1, user=None, doc_date=date(2026, 6, 5),
-                lines=[{"product": self.p, "quantity": Decimal("11")}],
-            )
-        # 整单回滚：无单据、库存不变
-        self.assertEqual(SalesOutbound.objects.count(), 0)
+        doc = create_and_post_outbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[{"product": self.p, "quantity": Decimal("11")}],
+        )
+        self.assertEqual(SalesOutbound.objects.count(), 1)
+        self.assertEqual(doc.total_cost, Decimal("55.00"))   # 11 * 5
         bal = StockBalance.objects.get(company=self.c1, product=self.p)
-        self.assertEqual(bal.quantity, Decimal("10.000"))
-        self.assertEqual(bal.amount, Decimal("50.00"))
+        self.assertEqual(bal.quantity, Decimal("-1.000"))
+        self.assertEqual(bal.amount, Decimal("-5.00"))
 
-    def test_multiline_partial_failure_rolls_back(self):
-        # 第一行成功、第二行不足 → 整单回滚（第一行也不生效）
+    def test_multiline_oversell_allowed(self):
+        # 多行：一行正常、一行超卖，两行都过账（超卖行变负）
         post_inbound(self.c1, self.p, Decimal("5"), Decimal("10"))
         p2 = Product.objects.create(company=self.c1, code="P002", name="固化剂")
         post_inbound(self.c1, p2, Decimal("1"), Decimal("10"))
-        with self.assertRaises(InsufficientStockError):
-            create_and_post_outbound(
-                company=self.c1, user=None, doc_date=date(2026, 6, 5),
-                lines=[
-                    {"product": self.p, "quantity": Decimal("5")},   # 可成
-                    {"product": p2, "quantity": Decimal("99")},      # 不足
-                ],
-            )
-        self.assertEqual(SalesOutbound.objects.count(), 0)
-        # 第一行未生效
+        doc = create_and_post_outbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[
+                {"product": self.p, "quantity": Decimal("5")},   # 出清
+                {"product": p2, "quantity": Decimal("99")},      # 超卖→负
+            ],
+        )
+        self.assertEqual(SalesOutbound.objects.count(), 1)
         self.assertEqual(
-            StockBalance.objects.get(company=self.c1, product=self.p).quantity, Decimal("5.000")
+            StockBalance.objects.get(company=self.c1, product=self.p).quantity, Decimal("0.000")
+        )
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c1, product=p2).quantity, Decimal("-98.000")
         )

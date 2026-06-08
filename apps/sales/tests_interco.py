@@ -91,20 +91,22 @@ class IntercoVoidTests(TestCase):
         self.assertEqual(
             StockBalance.objects.get(company=self.c2, product=p_c2).quantity, Decimal("0.000"))
 
-    def test_void_blocked_when_mirror_stock_consumed(self):
+    def test_void_succeeds_even_if_mirror_consumed(self):
         from apps.sales.services import void_sales_outbound
-        from apps.inventory.services import InsufficientStockError, post_outbound
+        from apps.inventory.services import post_outbound
         out = self._mirror_outbound("30")
         p_c2 = Product.objects.get(company=self.c2, code="P001")
-        # C2 把镜像入库的货卖掉一部分 → 反冲会致负库存
-        post_outbound(self.c2, p_c2, Decimal("25"))
-        with self.assertRaises(InsufficientStockError):
-            void_sales_outbound(out, None)
+        # C2 把镜像入库的货卖掉一部分；允许负库存 → 作废照常（C2 反冲后变负）
+        post_outbound(self.c2, p_c2, Decimal("25"))   # C2 余 5
+        void_sales_outbound(out, None)
         out.refresh_from_db()
-        # 整体回滚：源单未作废，C1 仍是出库后的 70
-        self.assertEqual(out.status, "posted")
+        self.assertEqual(out.status, "void")
+        # C1 库存恢复到出库前
         self.assertEqual(
-            StockBalance.objects.get(company=self.c1, product=self.p1).quantity, Decimal("70.000"))
+            StockBalance.objects.get(company=self.c1, product=self.p1).quantity, Decimal("100.000"))
+        # C2 镜像入库 30 被反冲：5 − 30 = −25
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c2, product=p_c2).quantity, Decimal("-25.000"))
 
     def test_cannot_void_mirror_directly(self):
         from apps.purchasing.services import void_purchase_inbound
