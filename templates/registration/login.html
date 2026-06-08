@@ -1,11 +1,15 @@
 {% extends "base.html" %}
-{% block title %}登录 · 库存 ERP{% endblock %}
+{% load static %}
+{% block title %}登录 · 鸿威达新材料集团公司ERP{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-12 col-sm-8 col-md-5 col-lg-4">
     <div class="card shadow-sm mt-5">
       <div class="card-body p-4">
-        <h4 class="card-title text-center mb-4">关联企业库存 ERP</h4>
+        <div class="text-center mb-3">
+          <img src="{% static 'img/logo.png' %}" alt="鸿威达新材料" style="height:56px;width:auto;">
+        </div>
+        <h4 class="card-title text-center mb-4">鸿威达新材料集团公司ERP</h4>
         {% for err in form.non_field_errors %}
         <div class="alert alert-danger">{{ err }}</div>
         {% endfor %}
