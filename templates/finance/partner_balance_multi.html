@@ -24,7 +24,8 @@
     <table class="table table-striped mb-0 align-middle text-end">
       <thead class="table-light">
         <tr><th class="text-start">公司</th><th class="text-start">{{ partner_label }}</th>
-            <th>期初余额</th><th>{{ inc_label }}</th><th>{{ dec_label }}</th><th>期末余额</th></tr>
+            <th>期初余额</th><th>{{ inc_label }}</th><th>{{ dec_label }}</th><th>期末余额</th>
+            <th class="text-warning">逾期金额</th><th>3个月以内</th><th>3-6个月</th><th>6个月-1年</th><th>1年以上</th></tr>
       </thead>
       <tbody>
         {% for r in rows %}
@@ -37,14 +38,17 @@
           <td>{{ r.income }}</td>
           <td>{{ r.outgo }}</td>
           <td class="fw-semibold">{{ r.ending }}</td>
+          <td class="fw-semibold {% if r.overdue %}text-danger{% endif %}">{{ r.overdue }}</td>
+          <td>{{ r.b1 }}</td><td>{{ r.b2 }}</td><td>{{ r.b3 }}</td><td>{{ r.b4 }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-4">所选公司当期无往来</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-4">所选公司当期无往来</td></tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-secondary">
         <tr><th class="text-start" colspan="2">合计</th><th>{{ totals.opening }}</th><th>{{ totals.income }}</th>
-            <th>{{ totals.outgo }}</th><th>{{ totals.ending }}</th></tr>
+            <th>{{ totals.outgo }}</th><th>{{ totals.ending }}</th>
+            <th>{{ totals.overdue }}</th><th>{{ totals.b1 }}</th><th>{{ totals.b2 }}</th><th>{{ totals.b3 }}</th><th>{{ totals.b4 }}</th></tr>
       </tfoot>
     </table>
   </div>

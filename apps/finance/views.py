@@ -732,7 +732,8 @@ def _outstanding_balance_report(request, *, kind, title, partner_label, ledger_u
 
     公司不选=全部可见公司；日期区间默认月初~今天；点往来对象进该公司该对象明细账。
     """
-    from apps.opening.reports import payable_partners_balance, receivable_partners_balance
+    from apps.opening.reports import (invoice_aging, payable_partners_balance,
+                                      receivable_partners_balance)
     visible, chosen = _company_scope(request)
     today = timezone.localdate()
     dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
@@ -743,14 +744,26 @@ def _outstanding_balance_report(request, *, kind, title, partner_label, ledger_u
         for r in balance_fn(company, dfrom, dto):
             rows.append({**r, "company": company})
     rows.sort(key=lambda r: (r["company"].code, getattr(r["partner"], "code", "")))
-    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
-              for k in ("opening", "income", "outgo", "ending")}
+    # 账龄/逾期（按查询期末日 dto）
+    model = PurchaseInvoice if kind == "payable" else SalesInvoice
+    pattr = "supplier" if kind == "payable" else "customer"
+    aging = invoice_aging(model, pattr, chosen, dto)
+    Z = Decimal("0.00")
+    for r in rows:
+        a = aging.get((r["company"].pk, r["partner"].pk), {})
+        for k in ("overdue", "b1", "b2", "b3", "b4"):
+            r[k] = a.get(k, Z)
+    keys = ("opening", "income", "outgo", "ending", "overdue", "b1", "b2", "b3", "b4")
+    totals = {k: sum((r[k] for r in rows), Z) for k in keys}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
-        headers = ["公司", partner_label, "期初余额", inc_label, dec_label, "期末余额"]
+        headers = ["公司", partner_label, "期初余额", inc_label, dec_label, "期末余额",
+                   "逾期金额", "3个月以内", "3-6个月", "6个月-1年", "1年以上"]
         data = [[r["company"].short_name or str(r["company"]), str(r["partner"]),
-                 r["opening"], r["income"], r["outgo"], r["ending"]] for r in rows]
-        data.append(["合计", "", totals["opening"], totals["income"], totals["outgo"], totals["ending"]])
+                 r["opening"], r["income"], r["outgo"], r["ending"],
+                 r["overdue"], r["b1"], r["b2"], r["b3"], r["b4"]] for r in rows]
+        data.append(["合计", "", totals["opening"], totals["income"], totals["outgo"], totals["ending"],
+                     totals["overdue"], totals["b1"], totals["b2"], totals["b3"], totals["b4"]])
         company_arg = chosen[0] if len(chosen) == 1 else None
         return xlsx_response(title, headers, data, company=company_arg, period=(dfrom, dto))
     return render(request, "finance/partner_balance_multi.html", {

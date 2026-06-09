@@ -344,6 +344,42 @@ def receivable_partners_balance(company, dfrom, dto):
         SalesInvoice, dfrom, dto)
 
 
+def invoice_aging(model, partner_attr, companies, asof):
+    """按 (公司, 往来对象) 汇总逾期金额与账龄分桶。
+
+    逾期天数 = (asof 期末日 − 开票日) − 账期(天)；>0 即逾期，金额取发票未核销额(>0)。
+    桶：b1 ≤90天(3个月以内) / b2 91-180(3-6月) / b3 181-365(6月-1年) / b4 >365(1年以上)。
+    返回 {(company_id, partner_id): {overdue,b1,b2,b3,b4}}。
+    """
+    companies = list(companies)
+    res = {}
+    if not companies:
+        return res
+    qs = (model.objects.filter(company__in=companies, status=model.Status.REGISTERED,
+                               doc_date__lte=asof)
+          .only("company_id", f"{partner_attr}_id", "doc_date", "term_days",
+                "amount_taxed", "settled_amount"))
+    for inv in qs:
+        out = inv.amount_taxed - inv.settled_amount
+        if out <= 0:
+            continue
+        past = (asof - inv.doc_date).days - (inv.term_days or 0)
+        if past <= 0:
+            continue
+        key = (inv.company_id, getattr(inv, f"{partner_attr}_id"))
+        b = res.setdefault(key, {"overdue": Z, "b1": Z, "b2": Z, "b3": Z, "b4": Z})
+        b["overdue"] += out
+        if past <= 90:
+            b["b1"] += out
+        elif past <= 180:
+            b["b2"] += out
+        elif past <= 365:
+            b["b3"] += out
+        else:
+            b["b4"] += out
+    return res
+
+
 def partner_ledger(company, partner, kind, dfrom, dto):
     """往来对象明细账：发票(增) + 核销/票据(减) 按时间滚动余额。kind ∈ {payable, receivable}。
 
