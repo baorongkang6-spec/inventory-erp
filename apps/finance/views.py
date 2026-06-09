@@ -784,6 +784,29 @@ def receivables_report(request):
 
 
 @login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
+def invoice_quota_report(request):
+    """剩余发票额度查询：每家公司 本年/本月开票(不含税) + 额度 + 剩余可开。"""
+    from apps.opening.reports import invoice_quota_usage
+    visible, chosen = _company_scope(request)
+    asof = _parse_date(request.GET.get("to")) or timezone.localdate()
+    rows = invoice_quota_usage(chosen, asof)
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("year_amt", "month_amt", "quota", "remain")}
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["公司名称", "本年开票金额", "本月开票金额", "开票额度", "剩余可开发票额度"]
+        data = [[r["company"].header_name, r["year_amt"], r["month_amt"], r["quota"], r["remain"]]
+                for r in rows]
+        data.append(["合计", totals["year_amt"], totals["month_amt"], totals["quota"], totals["remain"]])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("剩余发票额度查询", headers, data, company=company_arg, period=(None, asof))
+    return render(request, "finance/invoice_quota_report.html", {
+        "rows": rows, "totals": totals, "asof": asof,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen}})
+
+
+@login_required
 def overdue_report(request):
     """逾期明细表：逐张逾期发票（应收/应付），多公司联合，按期末日判定逾期天数。"""
     from apps.opening.reports import overdue_invoice_list

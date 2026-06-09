@@ -121,19 +121,18 @@ class ExpenseCategory(CompanyScopedModel):
 
 
 class InvoiceQuota(CompanyScopedModel):
-    """每月可开具发票额度（按公司·月份）。用于控制/对比当月开票金额。"""
+    """每月可开具发票额度（按公司，一家一个；每月相同，可随时调整）。不含税金额。"""
 
-    period = models.CharField("月份", max_length=7)  # YYYY-MM
-    amount = models.DecimalField("可开票额度", max_digits=18, decimal_places=2, default=0)
+    amount = models.DecimalField("每月可开票额度(不含税)", max_digits=18, decimal_places=2, default=0)
     remark = models.CharField("备注", max_length=255, blank=True)
 
     class Meta:
         verbose_name = "开票额度"
         verbose_name_plural = "开票额度"
-        ordering = ["company", "-period"]
+        ordering = ["company"]
         constraints = [
-            models.UniqueConstraint(fields=["company", "period"], name="uniq_quota_company_period")
+            models.UniqueConstraint(fields=["company"], name="uniq_quota_company")
         ]
 
     def __str__(self) -> str:
-        return f"{self.period} {self.amount}"
+        return f"{self.company} {self.amount}"

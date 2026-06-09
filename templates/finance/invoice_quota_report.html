@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}剩余发票额度查询 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">剩余发票额度查询</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}to={{ asof|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">金额均为<b>不含税</b>。剩余可开发票额度 = 每月开票额度 − 本月开票金额。开票金额取已开具(非作废、非期初)销售发票。</p>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">查询基准日</label>
+      <input type="date" name="to" value="{{ asof|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">公司名称</th><th>本年开票金额</th><th>本月开票金额</th>
+            <th>每月开票额度</th><th>剩余可开发票额度</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="text-start">{{ r.company.header_name }}</td>
+          <td>{{ r.year_amt }}</td>
+          <td>{{ r.month_amt }}</td>
+          <td>{{ r.quota }}</td>
+          <td class="fw-semibold {% if r.remain < 0 %}text-danger{% endif %}">{{ r.remain }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="text-center text-muted py-4">无数据</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th class="text-start">合计</th><th>{{ totals.year_amt }}</th><th>{{ totals.month_amt }}</th>
+            <th>{{ totals.quota }}</th><th>{{ totals.remain }}</th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

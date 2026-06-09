@@ -380,6 +380,30 @@ def invoice_aging(model, partner_attr, companies, asof):
     return res
 
 
+def invoice_quota_usage(companies, asof):
+    """剩余发票额度查询：每家公司 本年/本月开票额(不含税) + 额度 + 剩余。
+
+    开票额 = 已开具(非作废、非期初)销售发票的不含税金额，按 asof 的年/月统计。
+    剩余 = 额度 − 本月开票额。
+    """
+    from apps.finance.models import SalesInvoice
+    from apps.masterdata.models import InvoiceQuota
+    companies = list(companies)
+    rows = []
+    for c in companies:
+        base = SalesInvoice.objects.filter(company=c, status=SalesInvoice.Status.REGISTERED,
+                                           is_opening=False)
+        year_amt = round_money(base.filter(doc_date__year=asof.year)
+                               .aggregate(v=Sum("amount_untaxed"))["v"] or Z)
+        month_amt = round_money(base.filter(doc_date__year=asof.year, doc_date__month=asof.month)
+                                .aggregate(v=Sum("amount_untaxed"))["v"] or Z)
+        q = InvoiceQuota.objects.filter(company=c).first()
+        quota = q.amount if q else Z
+        rows.append({"company": c, "year_amt": year_amt, "month_amt": month_amt,
+                     "quota": quota, "remain": round_money(quota - month_amt)})
+    return rows
+
+
 def aging_bucket(past_days):
     """逾期天数 → 账龄段中文标签。"""
     if past_days <= 90:
