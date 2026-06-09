@@ -10,7 +10,7 @@ from apps.core.crud import (
 )
 
 from .forms import CustomerForm, ExpenseCategoryForm, ProductForm, SupplierForm
-from .models import Customer, ExpenseCategory, Product, Supplier
+from .models import Customer, ExpenseCategory, InvoiceQuota, Product, Supplier
 
 
 # --- 商品 ---------------------------------------------------------------------
@@ -223,3 +223,62 @@ def copy_masterdata(request):
     return render(request, "masterdata/copy.html", {
         "source": source, "others": others, "ui_types": ui_types, "results": results,
     })
+
+
+# --- 开具发票额度录入（按公司·月份）-----------------------------------------
+def invoice_quota(request):
+    """录入/查看三家公司每月可开具发票额度。"""
+    from datetime import datetime
+    from decimal import Decimal, InvalidOperation
+
+    from django.contrib import messages
+    from django.contrib.auth.decorators import login_required  # noqa: F401
+    from django.core.exceptions import PermissionDenied
+    from django.shortcuts import redirect, render
+
+    from apps.core.scope import get_visible_companies
+
+    if not request.user.is_authenticated:
+        return redirect("login")
+    can_view = request.user.is_superuser or request.user.has_perm("finance.view_salesinvoice")
+    if not can_view:
+        raise PermissionDenied("无权查看开票额度")
+    can_edit = request.user.is_superuser or request.user.has_perm("finance.add_salesinvoice")
+    visible = list(get_visible_companies(request.user))
+
+    if request.method == "POST":
+        if not can_edit:
+            raise PermissionDenied("无权修改开票额度")
+        if request.POST.get("action") == "delete":
+            InvoiceQuota.objects.filter(pk=request.POST.get("id"), company__in=visible).delete()
+            messages.success(request, "已删除该额度。")
+            return redirect("invoice_quota")
+        cid = request.POST.get("company")
+        period = (request.POST.get("period") or "").strip()
+        company = next((c for c in visible if str(c.pk) == cid), None)
+        try:
+            datetime.strptime(period, "%Y-%m")
+            ok_period = True
+        except ValueError:
+            ok_period = False
+        try:
+            amt = Decimal(request.POST.get("amount") or "")
+        except (InvalidOperation, TypeError):
+            amt = None
+        if not company:
+            messages.error(request, "请选择公司")
+        elif not ok_period:
+            messages.error(request, "请选择有效月份")
+        elif amt is None:
+            messages.error(request, "请输入有效金额")
+        else:
+            obj, created = InvoiceQuota.objects.update_or_create(
+                company=company, period=period,
+                defaults={"amount": amt, "remark": request.POST.get("remark", "")})
+            messages.success(request, f"{'已新增' if created else '已更新'} {company} {period} 额度 {amt}")
+        return redirect("invoice_quota")
+
+    rows = (InvoiceQuota.objects.filter(company__in=visible)
+            .select_related("company").order_by("company__code", "-period"))
+    return render(request, "masterdata/invoice_quota.html", {
+        "rows": rows, "companies": visible, "can_edit": can_edit})

@@ -22,6 +22,8 @@ urlpatterns = [
     path("suppliers/<int:pk>/delete/", views.SupplierDeleteView.as_view(), name="supplier_delete"),
     # 一键复制基础资料到其他公司（管理员）
     path("copy/", views.copy_masterdata, name="masterdata_copy"),
+    # 开具发票额度录入（按公司·月份）
+    path("invoice-quota/", views.invoice_quota, name="invoice_quota"),
     # 费用类别
     path("expense-categories/", views.ExpenseCategoryListView.as_view(), name="expensecategory_list"),
     path("expense-categories/new/", views.ExpenseCategoryCreateView.as_view(), name="expensecategory_create"),

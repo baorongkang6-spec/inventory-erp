@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}开具发票额度录入 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-1">开具发票额度录入</h4>
+<p class="text-muted">按公司·月份录入每月可开具发票的金额。同一公司同一月份再次录入会覆盖。</p>
+
+{% if can_edit %}
+<form method="post" class="card card-body mb-3" style="max-width:760px">
+  {% csrf_token %}
+  <div class="row g-2 align-items-end">
+    <div class="col-md-3"><label class="form-label mb-0 small">公司</label>
+      <select name="company" class="form-select" required>
+        <option value="">—选择公司—</option>
+        {% for c in companies %}<option value="{{ c.pk }}">{{ c }}</option>{% endfor %}
+      </select></div>
+    <div class="col-md-3"><label class="form-label mb-0 small">月份</label>
+      <input type="month" name="period" class="form-control" required></div>
+    <div class="col-md-3"><label class="form-label mb-0 small">可开票额度</label>
+      <input type="number" step="0.01" name="amount" class="form-control" required></div>
+    <div class="col-md-2"><label class="form-label mb-0 small">备注</label>
+      <input type="text" name="remark" class="form-control"></div>
+    <div class="col-md-1"><button class="btn btn-primary w-100">保存</button></div>
+  </div>
+</form>
+{% endif %}
+
+<div class="card" style="max-width:760px">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light"><tr><th>公司</th><th>月份</th><th class="text-end">可开票额度</th><th>备注</th>{% if can_edit %}<th class="text-end">操作</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.company.short_name|default:r.company }}</td>
+          <td>{{ r.period }}</td>
+          <td class="text-end fw-semibold">{{ r.amount }}</td>
+          <td class="text-muted">{{ r.remark|default:"—" }}</td>
+          {% if can_edit %}
+          <td class="text-end">
+            <form method="post" onsubmit="return confirm('删除 {{ r.company }} {{ r.period }} 的额度？');" class="d-inline">
+              {% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.pk }}">
+              <button class="btn btn-sm btn-outline-danger py-0">删除</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if can_edit %}5{% else %}4{% endif %}" class="text-center text-muted py-4">暂无额度记录</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
