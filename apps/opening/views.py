@@ -50,6 +50,9 @@ def opening_import(request):
         return redirect("home")
 
     if request.method == "POST":
+        if company.opening_locked:
+            messages.error(request, "期初已启用锁定，不可再导入；如需修改请先「解锁期初」。")
+            return redirect("opening_import")
         upload = request.FILES.get("file")
         if not upload:
             messages.error(request, "请上传期初数据文件")
@@ -74,7 +77,83 @@ def opening_import(request):
                for k, label, cols in
                [(k, IMPORTERS[k][0], TEMPLATES[k]) for k in IMPORTERS]]
     return render(request, "opening/opening_import.html",
-                  {"headers": headers, "opening_date": settings.OPENING_DATE})
+                  {"headers": headers, "opening_date": settings.OPENING_DATE,
+                   "company": company, "opening_locked": company.opening_locked,
+                   "clear_blocked": _opening_clear_block_reason(company)})
+
+
+def _opening_clear_block_reason(company):
+    """期初尚处「设置阶段」才可清空：一旦有日常业务（非期初流水/发票/收付款），返回原因。"""
+    from apps.finance.models import (Payment, PurchaseInvoice, Receipt,
+                                     SalesInvoice)
+    from apps.inventory.models import StockMove
+    if StockMove.objects.filter(company=company).exclude(source_type="Opening").exists():
+        return "已有期初之后的库存业务"
+    if PurchaseInvoice.objects.filter(company=company, is_opening=False).exists() \
+            or SalesInvoice.objects.filter(company=company, is_opening=False).exists():
+        return "已有日常采购/销售发票"
+    if Payment.objects.filter(company=company).exists() or Receipt.objects.filter(company=company).exists():
+        return "已有付款/收款记录"
+    return None
+
+
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def opening_clear(request):
+    """清空本账套期初数据（仅未锁定 + 仍处设置阶段时）。清空后可重新导入修正。"""
+    from django.db import transaction
+
+    from apps.finance.models import (NotePayable, NoteReceivable,
+                                     PurchaseInvoice, SalesInvoice)
+    from apps.inventory.models import StockBalance, StockMove
+    from apps.finance.models import BankAccount
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method != "POST":
+        return redirect("opening_import")
+    if company.opening_locked:
+        messages.error(request, "期初已锁定，请先解锁再清空。")
+        return redirect("opening_import")
+    reason = _opening_clear_block_reason(company)
+    if reason:
+        messages.error(request, f"不可清空期初：{reason}（请逐笔调整或先作废相关业务）。")
+        return redirect("opening_import")
+    with transaction.atomic():
+        for inv in list(PurchaseInvoice.objects.filter(company=company, is_opening=True)):
+            inv.lines.all().delete(); inv.delete()
+        for inv in list(SalesInvoice.objects.filter(company=company, is_opening=True)):
+            inv.lines.all().delete(); inv.delete()
+        NoteReceivable.objects.filter(company=company, is_opening=True).delete()
+        NotePayable.objects.filter(company=company, is_opening=True).delete()
+        StockMove.objects.filter(company=company, source_type="Opening").delete()
+        StockBalance.objects.filter(company=company).delete()
+        BankAccount.objects.filter(company=company).update(opening_balance=0)
+    messages.success(request, "已清空本账套期初数据，可重新「下载模板」修正后导入。")
+    return redirect("opening_import")
+
+
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def opening_lock(request):
+    """启用期初：锁定，之后不可修改/重导。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method == "POST":
+        company.opening_locked = True
+        company.save(update_fields=["opening_locked"])
+        messages.success(request, "期初已启用并锁定。")
+    return redirect("opening_import")
+
+
+@login_required
+def opening_unlock(request):
+    """解锁期初（仅管理员）：解锁后方可再次清空/导入修改。"""
+    if not request.user.is_superuser:
+        raise PermissionDenied("仅管理员可解锁期初")
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method == "POST":
+        company.opening_locked = False
+        company.save(update_fields=["opening_locked"])
+        messages.success(request, "期初已解锁，可清空/重导修改；改完请重新启用。")
+    return redirect("opening_import")
 
 
 def _is_overview(user):

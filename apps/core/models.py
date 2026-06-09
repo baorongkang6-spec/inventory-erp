@@ -23,6 +23,9 @@ class Company(models.Model):
         help_text="如「安博诺新材料科技（上海）有限公司」；用于 Excel 表头与单据打印抬头。留空则用公司全称。")
     is_related = models.BooleanField("系统内关联企业", default=True)
     is_active = models.BooleanField("启用", default=True)
+    opening_locked = models.BooleanField(
+        "期初已启用(锁定)", default=False,
+        help_text="启用后期初数据不可修改/重导；未启用时可清空重导。")
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
 
     class Meta:
