@@ -49,6 +49,8 @@ class PurchaseInvoice(CompanyScopedModel):
     doc_no = models.CharField("登记单号", max_length=32)
     invoice_no = models.CharField("发票号码", max_length=64, blank=True)
     doc_date = models.DateField("开票日期")
+    term_days = models.PositiveIntegerField("账期(天)", default=0,
+                                            help_text="0=即期；到期日 = 开票日期 + 账期天数")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="供应商")
     amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
@@ -73,6 +75,19 @@ class PurchaseInvoice(CompanyScopedModel):
     def outstanding(self):
         """未核销（应付余额）。"""
         return self.amount_taxed - self.settled_amount
+
+    @property
+    def due_date(self):
+        """到期日 = 开票日期 + 账期天数。"""
+        from datetime import timedelta
+        return self.doc_date + timedelta(days=self.term_days or 0)
+
+    def is_overdue(self, today=None):
+        """是否逾期：已登记、仍有未核销、且已过到期日。"""
+        from django.utils import timezone
+        today = today or timezone.localdate()
+        return (self.status == self.Status.REGISTERED
+                and self.outstanding > 0 and self.due_date < today)
 
     @property
     def party(self):
@@ -249,6 +264,8 @@ class SalesInvoice(CompanyScopedModel):
     doc_no = models.CharField("登记单号", max_length=32)
     invoice_no = models.CharField("发票号码", max_length=64, blank=True)
     doc_date = models.DateField("开票日期")
+    term_days = models.PositiveIntegerField("账期(天)", default=0,
+                                            help_text="0=即期；到期日 = 开票日期 + 账期天数")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="客户")
     amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
@@ -273,6 +290,19 @@ class SalesInvoice(CompanyScopedModel):
     def outstanding(self):
         """未核销（应收余额）。"""
         return self.amount_taxed - self.settled_amount
+
+    @property
+    def due_date(self):
+        """到期日 = 开票日期 + 账期天数。"""
+        from datetime import timedelta
+        return self.doc_date + timedelta(days=self.term_days or 0)
+
+    def is_overdue(self, today=None):
+        """是否逾期：已开具、仍有未核销、且已过到期日。"""
+        from django.utils import timezone
+        today = today or timezone.localdate()
+        return (self.status == self.Status.REGISTERED
+                and self.outstanding > 0 and self.due_date < today)
 
     @property
     def party(self):

@@ -18,6 +18,8 @@
   <div class="card-body row g-2">
     <div class="col-md-3"><span class="text-muted">公司：</span>{{ inv.company }}</div>
     <div class="col-md-3"><span class="text-muted">开票日期：</span>{{ inv.doc_date }}</div>
+    <div class="col-md-3"><span class="text-muted">账期(天)：</span>{{ inv.term_days }}</div>
+    <div class="col-md-3"><span class="text-muted">到期日：</span>{{ inv.due_date }}{% if inv.is_overdue %} <span class="badge text-bg-danger">已逾期</span>{% endif %}</div>
     <div class="col-md-3"><span class="text-muted">发票号码：</span>{{ inv.invoice_no|default:"—" }}</div>
     <div class="col-md-3"><span class="text-muted">客户：</span>{{ inv.customer }}</div>
     <div class="col-md-3"><span class="text-muted">状态：</span>{{ inv.get_status_display }}</div>

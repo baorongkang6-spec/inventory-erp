@@ -36,7 +36,7 @@ def compute_tax(amount_untaxed, tax_rate):
 
 @transaction.atomic
 def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
-                            invoice_no="", remark="") -> PurchaseInvoice:
+                            invoice_no="", remark="", term_days=0) -> PurchaseInvoice:
     """登记采购发票并产生应付账款（发票即应付单据）。
 
     lines: [{"product": Product|None, "description": str,
@@ -46,7 +46,8 @@ def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
     inv = PurchaseInvoice.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(PurchaseInvoice, company, "CGF", doc_date),
-        invoice_no=invoice_no, doc_date=doc_date, supplier=supplier, remark=remark,
+        invoice_no=invoice_no, doc_date=doc_date, term_days=term_days or 0,
+        supplier=supplier, remark=remark,
     )
 
     total_untaxed = ZERO_MONEY
@@ -153,7 +154,7 @@ def allocate_payment(*, payment, allocations, user=None):
 
 
 @transaction.atomic
-def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="", remark=""):
+def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="", remark="", term_days=0):
     """修改销售发票（保留单号）：未核销才可改；替换明细并重算应收。"""
     if inv.is_opening:
         raise SettlementError("期初发票不可在此修改")
@@ -163,6 +164,7 @@ def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="",
     inv.doc_date = doc_date
     inv.customer = customer
     inv.invoice_no = invoice_no
+    inv.term_days = term_days or 0
     inv.remark = remark
     total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for ln in lines:
@@ -180,7 +182,7 @@ def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="",
     inv.amount_untaxed = total_untaxed
     inv.tax_amount = total_tax
     inv.amount_taxed = total_taxed
-    inv.save(update_fields=["doc_date", "customer", "invoice_no", "remark",
+    inv.save(update_fields=["doc_date", "customer", "invoice_no", "term_days", "remark",
                             "amount_untaxed", "tax_amount", "amount_taxed"])
     AuditLog.record(actor=user, company=inv.company, action=AuditLog.Action.UPDATE, target=inv,
                     summary=f"修改销售发票 {inv.doc_no} 含税 {total_taxed}")
@@ -229,12 +231,13 @@ def sales_invoice_edit_block_reason(inv, today):
 # ============================= 销售侧（镜像采购侧）=============================
 @transaction.atomic
 def create_sales_invoice(*, company, user, doc_date, customer, lines,
-                         invoice_no="", remark="") -> SalesInvoice:
+                         invoice_no="", remark="", term_days=0) -> SalesInvoice:
     """开具销售发票并产生应收账款（发票即应收单据）。镜像 create_purchase_invoice。"""
     inv = SalesInvoice.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(SalesInvoice, company, "XSF", doc_date),
-        invoice_no=invoice_no, doc_date=doc_date, customer=customer, remark=remark,
+        invoice_no=invoice_no, doc_date=doc_date, term_days=term_days or 0,
+        customer=customer, remark=remark,
     )
     total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for ln in lines:

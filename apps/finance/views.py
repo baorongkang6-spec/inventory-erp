@@ -174,6 +174,7 @@ def purchase_invoice_create(request):
                 supplier=header.cleaned_data["supplier"],
                 invoice_no=header.cleaned_data.get("invoice_no", ""),
                 remark=header.cleaned_data.get("remark", ""),
+                term_days=header.cleaned_data.get("term_days") or 0,
                 lines=lines,
             )
             messages.success(request, f"采购发票已登记（应付）：{inv.doc_no}")
@@ -365,7 +366,8 @@ def sales_invoice_create(request):
                 doc_date=header.cleaned_data["doc_date"],
                 customer=header.cleaned_data["customer"],
                 invoice_no=header.cleaned_data.get("invoice_no", ""),
-                remark=header.cleaned_data.get("remark", ""), lines=lines,
+                remark=header.cleaned_data.get("remark", ""),
+                term_days=header.cleaned_data.get("term_days") or 0, lines=lines,
             )
             messages.success(request, f"销售发票已开具（应收）：{inv.doc_no}")
             return redirect("sales_invoice_detail", pk=inv.pk)
@@ -447,7 +449,8 @@ def sales_invoice_edit(request, pk):
                     inv, user=request.user, doc_date=header.cleaned_data["doc_date"],
                     customer=header.cleaned_data["customer"],
                     invoice_no=header.cleaned_data.get("invoice_no", ""),
-                    remark=header.cleaned_data.get("remark", ""), lines=lines)
+                    remark=header.cleaned_data.get("remark", ""),
+                    term_days=header.cleaned_data.get("term_days") or 0, lines=lines)
             except SettlementError as e:
                 messages.error(request, f"修改失败：{e}")
             else:
@@ -459,7 +462,8 @@ def sales_invoice_edit(request, pk):
             # 修改时也支持「从出库单带入」：用所选出库单覆盖明细并建立关联
             h, line_init, outbound = _outbound_prefill(company, outbound_id)
             header_initial = {"doc_date": inv.doc_date, "customer": inv.customer_id,
-                              "invoice_no": inv.invoice_no, "remark": inv.remark}
+                              "invoice_no": inv.invoice_no, "remark": inv.remark,
+                              "term_days": inv.term_days}
             if outbound:
                 header_initial.update(h)
                 messages.info(request, f"已从出库单 {outbound.doc_no} 带出明细，请核对后保存")
@@ -468,7 +472,8 @@ def sales_invoice_edit(request, pk):
         else:
             header = SalesInvoiceHeaderForm(company=company, initial={
                 "doc_date": inv.doc_date, "customer": inv.customer_id,
-                "invoice_no": inv.invoice_no, "remark": inv.remark})
+                "invoice_no": inv.invoice_no, "remark": inv.remark,
+                "term_days": inv.term_days})
             line_init = [{
                 "product": ln.product_id, "description": ln.description, "quantity": ln.quantity,
                 "amount_untaxed": ln.amount_untaxed, "tax_rate": ln.tax_rate,

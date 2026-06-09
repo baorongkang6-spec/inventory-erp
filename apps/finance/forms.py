@@ -51,6 +51,8 @@ class BankAccountForm(CompanyScopedModelForm):
 # --- 采购发票 -----------------------------------------------------------------
 class PurchaseInvoiceHeaderForm(BootstrapForm):
     doc_date = forms.DateField(label="开票日期")
+    term_days = forms.IntegerField(label="账期(天)", required=False, min_value=0, initial=0,
+                                   help_text="0=即期；到期日=开票日期+账期")
     supplier = forms.ModelChoiceField(label="供应商", queryset=Supplier.objects.none())
     invoice_no = forms.CharField(label="发票号码", required=False, max_length=64)
     remark = forms.CharField(label="备注", required=False, max_length=255)
@@ -164,6 +166,8 @@ class PaymentForm(forms.ModelForm):
 # --- 销售发票 -----------------------------------------------------------------
 class SalesInvoiceHeaderForm(BootstrapForm):
     doc_date = forms.DateField(label="开票日期")
+    term_days = forms.IntegerField(label="账期(天)", required=False, min_value=0, initial=0,
+                                   help_text="0=即期；到期日=开票日期+账期")
     customer = forms.ModelChoiceField(label="客户", queryset=Customer.objects.none())
     invoice_no = forms.CharField(label="发票号码", required=False, max_length=64)
     remark = forms.CharField(label="备注", required=False, max_length=255)

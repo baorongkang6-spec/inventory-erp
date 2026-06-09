@@ -25,8 +25,9 @@
 
   <div class="card mb-2">
     <div class="card-body row g-2 py-2">
-      <div class="col-md-3"><label class="form-label mb-0 small">{{ header.doc_date.label }}</label>{{ header.doc_date }}
+      <div class="col-md-2"><label class="form-label mb-0 small">{{ header.doc_date.label }}</label>{{ header.doc_date }}
         {% for e in header.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+      <div class="col-md-1"><label class="form-label mb-0 small">{{ header.term_days.label }}</label>{{ header.term_days }}</div>
       <div class="col-md-4"><label class="form-label mb-0 small">{{ header.customer.label }}</label>{{ header.customer }}
         {% for e in header.customer.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
       <div class="col-md-3"><label class="form-label mb-0 small">{{ header.invoice_no.label }}</label>{{ header.invoice_no }}</div>
