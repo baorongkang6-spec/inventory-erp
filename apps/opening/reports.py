@@ -380,6 +380,43 @@ def invoice_aging(model, partner_attr, companies, asof):
     return res
 
 
+def aging_bucket(past_days):
+    """逾期天数 → 账龄段中文标签。"""
+    if past_days <= 90:
+        return "3个月以内"
+    if past_days <= 180:
+        return "3-6个月"
+    if past_days <= 365:
+        return "6个月-1年"
+    return "1年以上"
+
+
+def overdue_invoice_list(model, partner_attr, companies, asof):
+    """逾期发票明细：每张已登记、有未核销且已过账期的发票一行（按 asof 期末日判定）。"""
+    companies = list(companies)
+    rows = []
+    if not companies:
+        return rows
+    qs = (model.objects.filter(company__in=companies, status=model.Status.REGISTERED,
+                               doc_date__lte=asof)
+          .select_related("company", partner_attr)
+          .order_by("company__code", f"{partner_attr}__code", "doc_date"))
+    for inv in qs:
+        out = inv.amount_taxed - inv.settled_amount
+        if out <= 0:
+            continue
+        past = (asof - inv.doc_date).days - (inv.term_days or 0)
+        if past <= 0:
+            continue
+        rows.append({
+            "company": inv.company, "partner": getattr(inv, partner_attr), "inv": inv,
+            "doc_no": inv.doc_no, "invoice_no": inv.invoice_no, "doc_date": inv.doc_date,
+            "term_days": inv.term_days or 0, "due_date": inv.due_date,
+            "overdue_days": past, "outstanding": out, "bucket": aging_bucket(past),
+        })
+    return rows
+
+
 def partner_ledger(company, partner, kind, dfrom, dto):
     """往来对象明细账：发票(增) + 核销/票据(减) 按时间滚动余额。kind ∈ {payable, receivable}。
 

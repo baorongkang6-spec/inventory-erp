@@ -41,6 +41,7 @@ urlpatterns = [
     path("other-cashflow/<int:pk>/delete/", views.other_cashflow_delete, name="other_cashflow_delete"),
     path("reports/payables/", views.payables_report, name="payables_report"),
     path("reports/receivables/", views.receivables_report, name="receivables_report"),
+    path("reports/overdue/", views.overdue_report, name="overdue_report"),
     path("reports/sales-revenue-cost/", views.sales_revenue_cost_report, name="sales_revenue_cost_report"),
     path("reports/sales-cost-by-outbound/", views.sales_cost_by_outbound_report, name="sales_cost_by_outbound_report"),
     path("reports/shipped-uninvoiced/", views.shipped_uninvoiced_report, name="shipped_uninvoiced_report"),

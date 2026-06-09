@@ -783,6 +783,41 @@ def receivables_report(request):
         ledger_url="receivable_partner_ledger", inc_label="本期增加", dec_label="本期减少")
 
 
+@login_required
+def overdue_report(request):
+    """逾期明细表：逐张逾期发票（应收/应付），多公司联合，按期末日判定逾期天数。"""
+    from apps.opening.reports import overdue_invoice_list
+    visible, chosen = _company_scope(request)
+    asof = _parse_date(request.GET.get("to")) or timezone.localdate()
+    kind = request.GET.get("kind") or "all"   # ar / ap / all
+    can_ar = request.user.has_perm("finance.view_salesinvoice")
+    can_ap = request.user.has_perm("finance.view_purchaseinvoice")
+    rows = []
+    if kind in ("ar", "all") and can_ar:
+        for r in overdue_invoice_list(SalesInvoice, "customer", chosen, asof):
+            rows.append({**r, "kind": "应收", "kind_code": "ar"})
+    if kind in ("ap", "all") and can_ap:
+        for r in overdue_invoice_list(PurchaseInvoice, "supplier", chosen, asof):
+            rows.append({**r, "kind": "应付", "kind_code": "ap"})
+    rows.sort(key=lambda r: (-r["overdue_days"], r["company"].code))
+    total = sum((r["outstanding"] for r in rows), Decimal("0.00"))
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["公司", "类型", "往来对象", "单据号", "发票号", "开票日期", "账期(天)",
+                   "到期日", "逾期天数", "逾期金额(未核销)", "账龄段"]
+        data = [[r["company"].short_name or str(r["company"]), r["kind"], str(r["partner"] or ""),
+                 r["doc_no"], r["invoice_no"], r["doc_date"], r["term_days"], r["due_date"],
+                 r["overdue_days"], r["outstanding"], r["bucket"]] for r in rows]
+        data.append(["合计", "", "", "", "", "", "", "", "", total, ""])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("逾期明细表", headers, data, company=company_arg,
+                             period=(None, asof))
+    return render(request, "finance/overdue_report.html", {
+        "rows": rows, "total": total, "asof": asof, "kind": kind,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "can_ar": can_ar, "can_ap": can_ap})
+
+
 # ===== 往来余额表 + 往来明细账（M9-2/M9-3，总览应付/应收两级下钻）=============
 def _partner_report(request, kind):
     """往来余额表（公司→各往来对象 期初/本期增/本期减/期末），可下钻明细账。"""

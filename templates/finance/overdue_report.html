@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}逾期明细表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">逾期明细表</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}kind={{ kind }}&to={{ asof|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">逾期 =（期末日 − 开票日）− 账期 &gt; 0；金额为该发票未核销额。按逾期天数倒序。支持多公司联合查询。</p>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">类型</label>
+      <select name="kind" class="form-select">
+        <option value="all" {% if kind == 'all' %}selected{% endif %}>全部</option>
+        <option value="ar" {% if kind == 'ar' %}selected{% endif %}>应收</option>
+        <option value="ap" {% if kind == 'ap' %}selected{% endif %}>应付</option>
+      </select></div>
+    <div class="col-auto"><label class="form-label">期末日期</label>
+      <input type="date" name="to" value="{{ asof|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>公司</th><th>类型</th><th>往来对象</th><th>单据号</th><th>发票号</th>
+            <th>开票日期</th><th class="text-end">账期(天)</th><th>到期日</th>
+            <th class="text-end">逾期天数</th><th class="text-end">逾期金额(未核销)</th><th>账龄段</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.company.short_name|default:r.company }}</td>
+          <td>{% if r.kind_code == 'ar' %}<span class="badge text-bg-info">应收</span>{% else %}<span class="badge text-bg-warning">应付</span>{% endif %}</td>
+          <td>{{ r.partner|default:"—" }}</td>
+          <td>
+            {% if r.kind_code == 'ar' %}<a href="{% url 'sales_invoice_detail' r.inv.pk %}">{{ r.doc_no }}</a>
+            {% else %}<a href="{% url 'purchase_invoice_detail' r.inv.pk %}">{{ r.doc_no }}</a>{% endif %}
+          </td>
+          <td>{{ r.invoice_no|default:"—" }}</td>
+          <td>{{ r.doc_date|date:"Y-m-d" }}</td>
+          <td class="text-end">{{ r.term_days }}</td>
+          <td>{{ r.due_date|date:"Y-m-d" }}</td>
+          <td class="text-end fw-semibold text-danger">{{ r.overdue_days }}</td>
+          <td class="text-end fw-semibold">{{ r.outstanding }}</td>
+          <td>{{ r.bucket }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="text-center text-muted py-4">所选范围内无逾期</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr><th colspan="9" class="text-end">逾期金额合计</th><th class="text-end">{{ total }}</th><th></th></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

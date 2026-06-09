@@ -52,7 +52,31 @@ def home(request):
         and not (user_roles - roles.INVENTORY_ONLY_ROLES),
         "role_descriptions": roles.ROLE_DESCRIPTIONS,
     }
+    context.update(_overdue_summary(user, visible))
     return render(request, "home.html", context)
+
+
+def _overdue_summary(user, visible):
+    """首页逾期提醒：按今天判定，统计可见公司逾期应收/应付笔数与金额（受权限控制）。"""
+    from decimal import Decimal
+
+    from django.utils import timezone
+
+    from apps.finance.models import PurchaseInvoice, SalesInvoice
+    from apps.opening.reports import overdue_invoice_list
+    today = timezone.localdate()
+    out = {"overdue_ar_count": 0, "overdue_ar_amount": Decimal("0.00"),
+           "overdue_ap_count": 0, "overdue_ap_amount": Decimal("0.00")}
+    if user.has_perm("finance.view_salesinvoice"):
+        ar = overdue_invoice_list(SalesInvoice, "customer", visible, today)
+        out["overdue_ar_count"] = len(ar)
+        out["overdue_ar_amount"] = sum((r["outstanding"] for r in ar), Decimal("0.00"))
+    if user.has_perm("finance.view_purchaseinvoice"):
+        ap = overdue_invoice_list(PurchaseInvoice, "supplier", visible, today)
+        out["overdue_ap_count"] = len(ap)
+        out["overdue_ap_amount"] = sum((r["outstanding"] for r in ap), Decimal("0.00"))
+    out["has_overdue"] = bool(out["overdue_ar_count"] or out["overdue_ap_count"])
+    return out
 
 
 @require_POST

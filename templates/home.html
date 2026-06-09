@@ -16,6 +16,15 @@
 <div class="alert alert-warning">尚未分配角色，请联系管理员在后台为你分配角色与可见公司。</div>
 {% endif %}
 
+{% if has_overdue %}
+<div class="alert alert-danger d-flex flex-wrap align-items-center gap-3">
+  <strong>⚠️ 逾期提醒（截至今日）：</strong>
+  {% if overdue_ar_count %}<span>逾期应收 <b>{{ overdue_ar_count }}</b> 笔，金额 <b>{{ overdue_ar_amount }}</b></span>{% endif %}
+  {% if overdue_ap_count %}<span>逾期应付 <b>{{ overdue_ap_count }}</b> 笔，金额 <b>{{ overdue_ap_amount }}</b></span>{% endif %}
+  <a href="{% url 'overdue_report' %}" class="btn btn-sm btn-outline-danger ms-auto">查看逾期明细表</a>
+</div>
+{% endif %}
+
 <div class="row g-3 mt-1">
   {% if is_overview_role %}
   <div class="col-12 col-md-6 col-lg-4">
