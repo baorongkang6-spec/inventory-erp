@@ -122,13 +122,13 @@ def _apply_stock(company, user, rows):
         product = Product.objects.filter(company=company, code=code).first()
         if not product:
             errors.append(f"第{idx}行：商品编码「{code}」不存在"); continue
-        if qty is None or qty <= 0 or amount is None or amount < 0:
-            errors.append(f"第{idx}行：数量/金额无效"); continue
+        if qty is None or amount is None or qty == 0:
+            errors.append(f"第{idx}行：数量/金额无效（数量不能为 0、金额必填）"); continue
         if StockMove.objects.filter(company=company, product=product, source_type="Opening").exists():
             skipped += 1; continue
-        # 数量金额式：金额直接入账，单价由 post_inbound 按 金额/数量 反算
+        # 数量金额式：金额直接入账，单价由 post_inbound 按 金额/数量 反算（期初允许负数）
         post_inbound(company, product, qty, ZERO_MONEY, amount=amount, date=OPENING,
-                     source_type="Opening", source_no="期初")
+                     source_type="Opening", source_no="期初", allow_nonpositive=True)
         created += 1
     return created, skipped, errors
 
@@ -142,8 +142,10 @@ def _apply_payable(company, user, rows):
         sup = Supplier.objects.filter(company=company, code=code).first()
         if not sup:
             errors.append(f"第{idx}行：供应商编码「{code}」不存在"); continue
-        if amount is None or amount <= 0:
+        if amount is None:
             errors.append(f"第{idx}行：金额无效"); continue
+        if amount == 0:
+            skipped += 1; continue   # 0 视为空行跳过；负数允许（红字期初）
         if PurchaseInvoice.objects.filter(company=company, supplier=sup, is_opening=True).exists():
             skipped += 1; continue
         create_opening_payable(company=company, user=user, supplier=sup, amount=amount, doc_date=OPENING)
@@ -160,8 +162,10 @@ def _apply_receivable(company, user, rows):
         cust = Customer.objects.filter(company=company, code=code).first()
         if not cust:
             errors.append(f"第{idx}行：客户编码「{code}」不存在"); continue
-        if amount is None or amount <= 0:
+        if amount is None:
             errors.append(f"第{idx}行：金额无效"); continue
+        if amount == 0:
+            skipped += 1; continue   # 0 视为空行跳过；负数允许（红字期初）
         if SalesInvoice.objects.filter(company=company, customer=cust, is_opening=True).exists():
             skipped += 1; continue
         create_opening_receivable(company=company, user=user, customer=cust, amount=amount, doc_date=OPENING)
@@ -194,8 +198,10 @@ def _apply_note_receivable(company, user, rows):
         amount = _dec(vals[1] if len(vals) > 1 else None)
         cust = Customer.objects.filter(company=company, code=str(vals[2] or "").strip()).first() if len(vals) > 2 and vals[2] else None
         due = _date(vals[3]) if len(vals) > 3 else None
-        if amount is None or amount <= 0:
+        if amount is None:
             errors.append(f"第{idx}行：金额无效"); continue
+        if amount == 0:
+            skipped += 1; continue   # 0 视为空行跳过；负数允许
         if note_no and NoteReceivable.objects.filter(company=company, note_no=note_no).exists():
             skipped += 1; continue
         create_note_receivable(company=company, user=user, draw_date=OPENING, amount=amount,
@@ -212,8 +218,10 @@ def _apply_note_payable(company, user, rows):
         amount = _dec(vals[1] if len(vals) > 1 else None)
         sup = Supplier.objects.filter(company=company, code=str(vals[2] or "").strip()).first() if len(vals) > 2 and vals[2] else None
         due = _date(vals[3]) if len(vals) > 3 else None
-        if amount is None or amount <= 0:
+        if amount is None:
             errors.append(f"第{idx}行：金额无效"); continue
+        if amount == 0:
+            skipped += 1; continue   # 0 视为空行跳过；负数允许
         if not sup:
             errors.append(f"第{idx}行：收票供应商编码无效"); continue
         if note_no and NotePayable.objects.filter(company=company, note_no=note_no).exists():
