@@ -113,6 +113,7 @@
             {% if menu.commission or menu.expenses %}<li><a class="dropdown-item" href="{% url 'expense_summary_report' %}">费用汇总表</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_revenue_cost_report' %}">销售收入成本表（按开票）</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_cost_by_outbound_report' %}">销售收入成本表（按出库）</a></li>{% endif %}
+            {% if perms.sales.view_salesoutbound or perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'customer_sales_report' %}">客户销售分析表（出库）</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'shipped_uninvoiced_report' %}">已出库未开票明细表</a></li>{% endif %}
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'received_uninvoiced_report' %}">已入库未收票明细表</a></li>{% endif %}
             {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'notes_balance_report' %}">票据余额表</a></li>{% endif %}

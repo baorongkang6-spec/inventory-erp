@@ -552,6 +552,79 @@ def sales_revenue_cost_by_outbound(company, dfrom, dto):
     return rows
 
 
+def customer_sales_analysis(companies, dfrom, dto, by_product, show_commission):
+    """客户销售分析表（按出库）：公司→客户[→产品] 汇总 数量/收入(不含税)/成本/佣金/毛利率。
+
+    by_product=True 列到产品并给每客户小计；每公司给合计。佣金仅 show_commission 时计入毛利率。
+    返回 [{company, customers:[{customer, prods:[...], sub}], tot}]。
+    """
+    from apps.finance.models import ExpenseRecord
+    from apps.sales.models import SalesOutbound, SalesOutboundLine
+    companies = list(companies)
+    if not companies:
+        return []
+    ZQ = Decimal("0.000")
+
+    def blank():
+        return {"qty": ZQ, "revenue": Z, "cost": Z, "commission": Z}
+
+    def margin(a):
+        profit = a["revenue"] - a["cost"] - (a["commission"] if show_commission else Z)
+        return (profit / a["revenue"] * 100).quantize(Decimal("0.1")) if a["revenue"] else Z
+
+    cells = {}   # (comp, cust, prod) -> 聚合
+    lines = (SalesOutboundLine.objects
+             .filter(outbound__company__in=companies,
+                     outbound__sales_type=SalesOutbound.SalesType.SALE,
+                     outbound__doc_date__gte=dfrom, outbound__doc_date__lte=dto)
+             .exclude(outbound__status=SalesOutbound.Status.VOID)
+             .select_related("outbound__company", "outbound__customer", "product"))
+    for ln in lines:
+        comp = ln.outbound.company
+        cust = ln.outbound.customer
+        key = (comp.pk, cust.pk if cust else 0, ln.product_id if by_product else 0)
+        d = cells.setdefault(key, {"company": comp, "customer": cust,
+                                   "product": ln.product if by_product else None, **blank()})
+        d["qty"] += ln.quantity
+        d["revenue"] += ln.amount_untaxed
+        d["cost"] += ln.amount
+    if show_commission:
+        for e in (ExpenseRecord.objects.filter(company__in=companies, category="commission",
+                                               date__gte=dfrom, date__lte=dto)
+                  .select_related("company", "customer", "product")):
+            key = (e.company_id, e.customer_id or 0, e.product_id if by_product else 0)
+            d = cells.get(key)
+            if d is None:
+                d = cells.setdefault(key, {"company": e.company, "customer": e.customer,
+                                           "product": e.product if by_product else None, **blank()})
+            d["commission"] += e.amount
+
+    comps = {}
+    for d in cells.values():
+        comp, cust = d["company"], d["customer"]
+        cp = comps.setdefault(comp.pk, {"company": comp, "custs": {}, "tot": blank()})
+        cc = cp["custs"].setdefault(cust.pk if cust else 0,
+                                    {"customer": cust, "prods": [], "sub": blank()})
+        if by_product:
+            cc["prods"].append({"product": d["product"], "qty": d["qty"], "revenue": d["revenue"],
+                                "cost": d["cost"], "commission": d["commission"], "margin": margin(d)})
+        for agg in (cc["sub"], cp["tot"]):
+            for k in ("qty", "revenue", "cost", "commission"):
+                agg[k] += d[k]
+
+    out = []
+    for cp in sorted(comps.values(), key=lambda x: x["company"].code):
+        custs = []
+        for cc in sorted(cp["custs"].values(),
+                         key=lambda x: x["customer"].code if x["customer"] else ""):
+            cc["prods"].sort(key=lambda p: p["product"].code if p["product"] else "")
+            cc["sub"]["margin"] = margin(cc["sub"])
+            custs.append(cc)
+        cp["tot"]["margin"] = margin(cp["tot"])
+        out.append({"company": cp["company"], "customers": custs, "tot": cp["tot"]})
+    return out
+
+
 def shipped_uninvoiced(companies, dfrom=None, dto=None):
     """已出库未开具发票明细：销售出库行中「出库数量 − 已开票数量 ≠ 0」的行。
 

@@ -1792,3 +1792,54 @@ def expense_summary_report(request):
         "group": group, "group_label": group_label,
         "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
         "date_from": dfrom, "date_to": dto})
+
+
+@login_required
+def customer_sales_report(request):
+    """客户销售分析表（按出库）：多公司、可选按产品明细。佣金仅总经理可见。"""
+    from django.core.exceptions import PermissionDenied
+
+    from apps.opening.reports import customer_sales_analysis
+    if not (request.user.is_superuser or _is_gm(request.user)
+            or request.user.has_perm("sales.view_salesoutbound")
+            or request.user.has_perm("finance.view_salesinvoice")):
+        raise PermissionDenied("无权查看客户销售分析")
+    visible, chosen = _company_scope(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    by_product = request.GET.get("by_product") == "1"
+    show_commission = _is_gm(request.user)
+    data = customer_sales_analysis(chosen, dfrom, dto, by_product, show_commission)
+
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        cols = ["公司", "客户", "产品", "销售数量", "销售收入(不含税)", "销售成本"]
+        if show_commission:
+            cols.append("佣金")
+        cols.append("毛利率%")
+
+        def line(company, customer, product, a):
+            row = [company, customer, product, a["qty"], a["revenue"], a["cost"]]
+            if show_commission:
+                row.append(a["commission"])
+            row.append(a["margin"])
+            return row
+        out = []
+        for cp in data:
+            cname = cp["company"].short_name or str(cp["company"])
+            for cc in cp["customers"]:
+                custname = str(cc["customer"] or "")
+                if by_product:
+                    for p in cc["prods"]:
+                        out.append(line(cname, custname, str(p["product"] or ""), p))
+                    out.append(line("", custname + " 小计", "", cc["sub"]))
+                else:
+                    out.append(line(cname, custname, "", cc["sub"]))
+            out.append(line(cname + " 合计", "", "", cp["tot"]))
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("客户销售分析表(按出库)", cols, out, company=company_arg, period=(dfrom, dto))
+    return render(request, "finance/customer_sales.html", {
+        "data": data, "by_product": by_product, "show_commission": show_commission,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "date_from": dfrom, "date_to": dto})

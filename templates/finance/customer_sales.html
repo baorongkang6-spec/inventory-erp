@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}客户销售分析表（出库）· 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">客户销售分析表（出库）</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}{% if by_product %}by_product=1&{% endif %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">口径：按销售出库（出库日落区间、非作废、方式=销售）。收入=售价不含税，成本=移动加权结转成本。</p>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">起始日期</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><label class="form-label">截止日期</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto pb-2"><div class="form-check">
+      <input class="form-check-input" type="checkbox" name="by_product" value="1" id="bp" {% if by_product %}checked{% endif %}>
+      <label class="form-check-label" for="bp">按产品明细分析</label></div></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th class="text-start">客户</th>{% if by_product %}<th class="text-start">产品</th>{% endif %}
+            <th>销售数量</th><th>销售收入</th><th>销售成本</th>{% if show_commission %}<th>佣金</th>{% endif %}<th>毛利率</th></tr>
+      </thead>
+      <tbody>
+        {% for cp in data %}
+        <tr class="table-secondary"><td class="text-start fw-semibold" colspan="{% if by_product %}2{% else %}1{% endif %}">公司：{{ cp.company.short_name|default:cp.company }}</td>
+            <td colspan="{% if show_commission %}4{% else %}3{% endif %}"></td></tr>
+        {% for cc in cp.customers %}
+          {% if by_product %}
+            {% for p in cc.prods %}
+            <tr><td class="text-start">{% if forloop.first %}{{ cc.customer|default:"—" }}{% endif %}</td>
+                <td class="text-start">{% if p.product %}{{ p.product.code }} {{ p.product.name }}{% else %}—{% endif %}</td>
+                <td>{{ p.qty }}</td><td>{{ p.revenue }}</td><td>{{ p.cost }}</td>{% if show_commission %}<td>{{ p.commission }}</td>{% endif %}<td>{{ p.margin }}%</td></tr>
+            {% endfor %}
+            <tr class="table-light"><td class="text-start">{{ cc.customer|default:"—" }} 小计</td><td></td>
+                <td>{{ cc.sub.qty }}</td><td>{{ cc.sub.revenue }}</td><td>{{ cc.sub.cost }}</td>{% if show_commission %}<td>{{ cc.sub.commission }}</td>{% endif %}<td>{{ cc.sub.margin }}%</td></tr>
+          {% else %}
+            <tr><td class="text-start">{{ cc.customer|default:"—" }}</td>
+                <td>{{ cc.sub.qty }}</td><td>{{ cc.sub.revenue }}</td><td>{{ cc.sub.cost }}</td>{% if show_commission %}<td>{{ cc.sub.commission }}</td>{% endif %}<td>{{ cc.sub.margin }}%</td></tr>
+          {% endif %}
+        {% endfor %}
+        <tr class="fw-semibold"><td class="text-start" colspan="{% if by_product %}2{% else %}1{% endif %}">{{ cp.company.short_name|default:cp.company }} 合计</td>
+            <td>{{ cp.tot.qty }}</td><td>{{ cp.tot.revenue }}</td><td>{{ cp.tot.cost }}</td>{% if show_commission %}<td>{{ cp.tot.commission }}</td>{% endif %}<td>{{ cp.tot.margin }}%</td></tr>
+        {% empty %}
+        <tr><td colspan="{% if by_product %}{% if show_commission %}7{% else %}6{% endif %}{% else %}{% if show_commission %}6{% else %}5{% endif %}{% endif %}" class="text-center text-muted py-4">该期间无销售出库</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
