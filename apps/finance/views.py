@@ -226,6 +226,44 @@ class PaymentDetailView(CompanyScopedMixin, DetailView):
         return super().get_queryset().select_related("supplier", "bank_account", "bank_journal")
 
 
+def _collect_allocations(request, candidates):
+    """从 POST 收集逐张发票的冲销额：alloc-<pk>。返回 (allocations, error_msg)。"""
+    allocations = []
+    for inv in candidates:
+        raw = (request.POST.get(f"alloc-{inv.pk}") or "").strip()
+        if not raw:
+            continue
+        try:
+            amt = Decimal(raw)
+        except (InvalidOperation, ValueError):
+            return None, f"发票 {inv.doc_no} 的冲销金额无效"
+        if amt:
+            allocations.append({"invoice": inv, "amount": amt})
+    return allocations, None
+
+
+@login_required
+def note_receivable_lookup(request):
+    """付款背书：按票据号码查在手应收票据，带出出票/到期/可用余额。返回 JSON。"""
+    from django.http import JsonResponse
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    note_no = (request.GET.get("note_no") or "").strip()
+    if company is None or not note_no:
+        return JsonResponse({"found": False})
+    note = (NoteReceivable.objects.filter(
+        company=company, note_no=note_no, status=NoteReceivable.Status.ON_HAND)
+        .order_by("-draw_date", "-id").first())
+    if note is None or note.unused <= 0:
+        return JsonResponse({"found": False})
+    return JsonResponse({
+        "found": True, "doc_no": note.doc_no,
+        "draw_date": note.draw_date.strftime("%Y-%m-%d") if note.draw_date else "",
+        "due_date": note.due_date.strftime("%Y-%m-%d") if note.due_date else "",
+        "amount": str(note.amount), "unused": str(note.unused),
+        "customer": str(note.customer) if note.customer_id else "",
+    })
+
+
 @login_required
 @permission_required("finance.add_payment", raise_exception=True)
 def payment_create(request):
@@ -234,21 +272,65 @@ def payment_create(request):
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
+    # 背书可冲抵的采购发票（应付未结）
+    inv_candidates = [i for i in PurchaseInvoice.objects.filter(
+        company=company, status=PurchaseInvoice.Status.REGISTERED)
+        .select_related("supplier").order_by("doc_date", "id") if i.outstanding > 0]
+
     if request.method == "POST":
         form = PaymentForm(request.POST, company=company)
         if form.is_valid():
             cd = form.cleaned_data
-            pay = create_payment(
-                company=company, user=request.user, doc_date=cd["doc_date"],
-                bank_account=cd["bank_account"], supplier=cd["supplier"],
-                amount=cd["amount"], summary=cd.get("summary", ""),
-            )
-            messages.success(request, f"付款已登记，并生成银行日记账：{pay.doc_no}")
-            return redirect("payment_detail", pk=pay.pk)
+            if cd["method"] == PaymentForm.METHOD_NOTE:
+                ok = _handle_payment_by_note(request, company, cd, inv_candidates)
+                if ok:
+                    return ok
+            else:
+                pay = create_payment(
+                    company=company, user=request.user, doc_date=cd["doc_date"],
+                    bank_account=cd["bank_account"], supplier=cd["supplier"],
+                    amount=cd["amount"], summary=cd.get("summary", ""),
+                )
+                messages.success(request, f"付款已登记，并生成银行日记账：{pay.doc_no}")
+                return redirect("payment_detail", pk=pay.pk)
     else:
         form = PaymentForm(company=company, initial={"doc_date": timezone.localdate()})
 
-    return render(request, "finance/payment_form.html", {"form": form, "title": "付款登记"})
+    return render(request, "finance/payment_form.html",
+                  {"form": form, "title": "付款登记", "inv_candidates": inv_candidates})
+
+
+def _handle_payment_by_note(request, company, cd, inv_candidates):
+    """付款方式=应收票据(背书)：找在手票据→按勾选采购发票背书抵应付。成功返回 redirect。"""
+    from apps.core.money import round_money
+    note = (NoteReceivable.objects.filter(
+        company=company, note_no=cd["note_no"], status=NoteReceivable.Status.ON_HAND)
+        .order_by("-draw_date", "-id").first())
+    if note is None or note.unused <= 0:
+        messages.error(request, f"未找到可用的在手应收票据：{cd['note_no']}")
+        return None
+    amount = round_money(cd["amount"])
+    if amount > note.unused:
+        messages.error(request, f"付款金额 {amount} 超过票据可用余额 {note.unused}")
+        return None
+    allocations, err = _collect_allocations(request, inv_candidates)
+    if err:
+        messages.error(request, err)
+        return None
+    if not allocations:
+        messages.error(request, "背书付款需勾选至少一张要冲抵的采购发票")
+        return None
+    total = round_money(sum(a["amount"] for a in allocations))
+    if total != amount:
+        messages.error(request, f"勾选发票冲销合计 {total} 应等于付款金额 {amount}")
+        return None
+    try:
+        endorse_receivable_against_purchase(note=note, allocations=allocations, user=request.user)
+    except SettlementError as e:
+        messages.error(request, f"背书失败：{e}")
+        return None
+    messages.success(request, f"已用应收票据 {note.doc_no} 背书付款 {amount}，抵付 {len(allocations)} 张采购发票")
+    return redirect("note_receivable_list")
 
 
 @login_required
@@ -529,21 +611,60 @@ def receipt_create(request):
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
+    # 收票可冲抵的销售发票（应收未结）
+    inv_candidates = [i for i in SalesInvoice.objects.filter(
+        company=company, status=SalesInvoice.Status.REGISTERED)
+        .select_related("customer").order_by("doc_date", "id") if i.outstanding > 0]
+
     if request.method == "POST":
         form = ReceiptForm(request.POST, company=company)
         if form.is_valid():
             cd = form.cleaned_data
-            rec = create_receipt(
-                company=company, user=request.user, doc_date=cd["doc_date"],
-                bank_account=cd["bank_account"], customer=cd["customer"],
-                amount=cd["amount"], summary=cd.get("summary", ""),
-            )
-            messages.success(request, f"收款已登记，并生成银行日记账：{rec.doc_no}")
-            return redirect("receipt_detail", pk=rec.pk)
+            if cd["method"] == ReceiptForm.METHOD_NOTE:
+                ok = _handle_receipt_by_note(request, company, cd, inv_candidates)
+                if ok:
+                    return ok
+            else:
+                rec = create_receipt(
+                    company=company, user=request.user, doc_date=cd["doc_date"],
+                    bank_account=cd["bank_account"], customer=cd["customer"],
+                    amount=cd["amount"], summary=cd.get("summary", ""),
+                )
+                messages.success(request, f"收款已登记，并生成银行日记账：{rec.doc_no}")
+                return redirect("receipt_detail", pk=rec.pk)
     else:
         form = ReceiptForm(company=company, initial={"doc_date": timezone.localdate()})
 
-    return render(request, "finance/receipt_form.html", {"form": form, "title": "收款登记"})
+    return render(request, "finance/receipt_form.html",
+                  {"form": form, "title": "收款登记", "inv_candidates": inv_candidates})
+
+
+def _handle_receipt_by_note(request, company, cd, inv_candidates):
+    """收款方式=应收票据：建一张在手应收票据，并按勾选销售发票冲应收。成功返回 redirect。"""
+    from apps.core.money import round_money
+    amount = round_money(cd["amount"])
+    allocations, err = _collect_allocations(request, inv_candidates)
+    if err:
+        messages.error(request, err)
+        return None
+    total = round_money(sum(a["amount"] for a in allocations)) if allocations else round_money(0)
+    if total > amount:
+        messages.error(request, f"勾选发票冲销合计 {total} 不能超过票面金额 {amount}")
+        return None
+    try:
+        note = create_note_receivable(
+            company=company, user=request.user, draw_date=cd["draw_date"],
+            amount=amount, customer=cd["customer"], note_no=cd["note_no"],
+            due_date=cd["due_date"], remark=cd.get("summary", ""),
+        )
+        if allocations:
+            settle_receivable_against_sales(note=note, allocations=allocations, user=request.user)
+    except (SettlementError, ValueError) as e:
+        messages.error(request, f"收票失败：{e}")
+        return None
+    tail = f"，并冲抵 {len(allocations)} 张销售发票" if allocations else "（在手，未冲销）"
+    messages.success(request, f"已收到应收票据 {note.doc_no} 票面 {amount}{tail}")
+    return redirect("note_receivable_list")
 
 
 @login_required

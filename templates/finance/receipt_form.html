@@ -2,28 +2,134 @@
 {% block title %}收款登记 · 库存 ERP{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-12 col-lg-7">
+  <div class="col-12 col-lg-9">
     <h4 class="mb-3">收款登记<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
-    <div class="card">
-      <div class="card-body">
-        <form method="post">
-          {% csrf_token %}
-          {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
-          {% for field in form %}
-          <div class="mb-3">
-            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
-            {{ field }}
-            {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
-          </div>
-          {% endfor %}
-          <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary">登记收款</button>
-            <a href="{% url 'receipt_list' %}" class="btn btn-outline-secondary">取消</a>
-          </div>
-          <p class="text-muted small mt-2">登记后自动生成一条银行存款日记账（收入）。之后到核销界面把收款与销售发票勾对。</p>
-        </form>
+    <form method="post" id="recform">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="card mb-2"><div class="card-body row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.doc_date.id_for_label }}">{{ form.doc_date.label }}</label>
+          {{ form.doc_date }}
+          {% for e in form.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.method.id_for_label }}">{{ form.method.label }}</label>
+          {{ form.method }}
+          {% for e in form.method.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.customer.id_for_label }}">付款客户</label>
+          {{ form.customer }}
+          {% for e in form.customer.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+
+        {# 票据专属字段 #}
+        <div class="col-md-4 note-only">
+          <label class="form-label" for="{{ form.note_no.id_for_label }}">{{ form.note_no.label }}</label>
+          {{ form.note_no }}
+          {% for e in form.note_no.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4 note-only">
+          <label class="form-label" for="{{ form.draw_date.id_for_label }}">{{ form.draw_date.label }}</label>
+          {{ form.draw_date }}
+          {% for e in form.draw_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4 note-only">
+          <label class="form-label" for="{{ form.due_date.id_for_label }}">{{ form.due_date.label }}</label>
+          {{ form.due_date }}
+          {% for e in form.due_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.amount.id_for_label }}"><span class="amt-label">收款金额</span></label>
+          {{ form.amount }}
+          {% for e in form.amount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-8">
+          <label class="form-label" for="{{ form.summary.id_for_label }}">{{ form.summary.label }}</label>
+          {{ form.summary }}
+        </div>
+      </div></div>
+
+      {# 票据收款：勾选要冲抵的销售发票（按所选客户过滤） #}
+      <div class="card mb-2 note-only" id="alloc-card">
+        <div class="card-header py-1">冲抵销售发票（应收账款）<small class="text-muted ms-2">仅显示所选客户的未结发票；合计 <span id="alloc-sum">0.00</span> ≤ 票面金额</small></div>
+        <div class="table-responsive">
+          <table class="table table-sm table-striped mb-0 align-middle">
+            <thead class="table-light">
+              <tr><th>发票单号</th><th>日期</th><th>客户</th><th class="text-end">含税</th>
+                  <th class="text-end">未核销</th><th style="width:16%">本次冲抵</th></tr>
+            </thead>
+            <tbody>
+              {% for inv in inv_candidates %}
+              <tr class="alloc-row" data-party="{{ inv.customer_id }}">
+                <td>{{ inv.doc_no }}</td><td>{{ inv.doc_date }}</td><td>{{ inv.customer }}</td>
+                <td class="text-end">{{ inv.amount_taxed }}</td>
+                <td class="text-end">{{ inv.outstanding }}</td>
+                <td><input type="number" step="0.01" min="0" max="{{ inv.outstanding }}"
+                           name="alloc-{{ inv.pk }}" class="form-control form-control-sm alloc-in text-end" placeholder="0.00"></td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="6" class="text-center text-muted py-3">无可冲抵的销售发票</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">登记收款</button>
+        <a href="{% url 'receipt_list' %}" class="btn btn-outline-secondary">取消</a>
+      </div>
+      <p class="text-muted small mt-2">
+        银行账户：登记后生成银行存款日记账（收入），之后到核销界面与销售发票勾对。<br>
+        应收票据：收到客户票据 → 生成一张在手应收票据（<strong>不</strong>生成银行日记账），可在上方直接勾选要冲抵的销售发票；冲抵合计可小于票面（余额留在手）。
+      </p>
+    </form>
   </div>
 </div>
+
+<script>
+(function () {
+  var form = document.getElementById("recform");
+  var methodSel = form.querySelector('[name="method"]');
+  var customerSel = form.querySelector('[name="customer"]');
+  var amtInput = form.querySelector('[name="amount"]');
+  var noteBlocks = form.querySelectorAll(".note-only");
+  var rows = form.querySelectorAll(".alloc-row");
+  var sumEl = document.getElementById("alloc-sum");
+  var amtLabel = form.querySelector(".amt-label");
+
+  function isNote() { return methodSel.value === "note"; }
+  function toggleMethod() {
+    var note = isNote();
+    noteBlocks.forEach(function (b) { b.style.display = note ? "" : "none"; });
+    amtLabel.textContent = note ? "票面金额" : "收款金额";
+    if (note) filterRows();
+  }
+  function filterRows() {
+    var cid = customerSel.value;
+    rows.forEach(function (r) {
+      var show = !cid || r.getAttribute("data-party") === cid;
+      r.style.display = show ? "" : "none";
+      if (!show) { var i = r.querySelector(".alloc-in"); if (i) i.value = ""; }
+    });
+    sumAlloc();
+  }
+  function sumAlloc() {
+    var s = 0;
+    rows.forEach(function (r) {
+      if (r.style.display === "none") return;
+      var i = r.querySelector(".alloc-in");
+      s += i ? (parseFloat(i.value) || 0) : 0;
+    });
+    sumEl.textContent = s.toFixed(2);
+  }
+  methodSel.addEventListener("change", toggleMethod);
+  customerSel.addEventListener("change", filterRows);
+  form.querySelectorAll(".alloc-in").forEach(function (i) { i.addEventListener("input", sumAlloc); });
+  toggleMethod();
+})();
+</script>
 {% endblock %}
