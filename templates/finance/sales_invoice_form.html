@@ -37,12 +37,12 @@
 
   {{ formset.management_form }}
   <div class="card mb-2">
-    <div class="card-header py-1">发票明细（不含税金额 + 税率 → 自动算税额/含税）</div>
+    <div class="card-header py-1">发票明细（不含税金额 + 税率 → 自动算税额/含税；税额、含税金额可手工微调尾差）</div>
     <div class="table-responsive">
       <table class="table table-sm mb-0 align-middle">
         <thead class="table-light">
-          <tr><th style="width:22%">商品(可选)</th><th style="width:16%">摘要</th><th>数量</th>
-              <th>不含税金额</th><th>税率</th><th class="text-end">税额</th><th class="text-end">含税金额</th><th></th></tr>
+          <tr><th style="width:20%">商品(可选)</th><th style="width:14%">摘要</th><th>数量</th>
+              <th style="width:13%">不含税金额</th><th>税率</th><th class="text-end" style="width:11%">税额</th><th class="text-end" style="width:13%">含税金额</th><th></th></tr>
         </thead>
         <tbody>
           {% for form in formset %}
@@ -52,8 +52,8 @@
             <td>{{ form.quantity }}{% for e in form.quantity.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.amount_untaxed }}{% for e in form.amount_untaxed.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td>{{ form.tax_rate }}{% for e in form.tax_rate.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
-            <td class="text-end cell-tax">0.00</td>
-            <td class="text-end cell-taxed">0.00</td>
+            <td>{{ form.tax_amount }}{% for e in form.tax_amount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
+            <td>{{ form.amount_taxed }}{% for e in form.amount_taxed.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</td>
             <td class="text-muted small text-nowrap">第{{ forloop.counter }}行</td>
           </tr>
           {% endfor %}

@@ -164,6 +164,8 @@ def purchase_invoice_create(request):
                     "quantity": cd.get("quantity"),
                     "amount_untaxed": cd["amount_untaxed"],
                     "tax_rate": cd["tax_rate"],
+                    "tax_amount": cd.get("tax_amount"),
+                    "amount_taxed": cd.get("amount_taxed"),
                     "source_inbound_line": _resolve_inbound_line(company, cd.get("source_inbound_line")),
                 }
                 for cd in formset.valid_lines
@@ -358,6 +360,7 @@ def sales_invoice_create(request):
                 {"product": cd.get("product"), "description": cd.get("description", ""),
                  "quantity": cd.get("quantity"), "amount_untaxed": cd["amount_untaxed"],
                  "tax_rate": cd["tax_rate"],
+                 "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed"),
                  "source_outbound_line": _resolve_outbound_line(company, cd.get("source_outbound_line"))}
                 for cd in formset.valid_lines
             ]
@@ -441,6 +444,7 @@ def sales_invoice_edit(request, pk):
                 {"product": cd.get("product"), "description": cd.get("description", ""),
                  "quantity": cd.get("quantity"), "amount_untaxed": cd["amount_untaxed"],
                  "tax_rate": cd["tax_rate"],
+                 "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed"),
                  "source_outbound_line": _resolve_outbound_line(company, cd.get("source_outbound_line"))}
                 for cd in formset.valid_lines
             ]

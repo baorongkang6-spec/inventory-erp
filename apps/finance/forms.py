@@ -78,6 +78,14 @@ class PurchaseInvoiceLineForm(BootstrapForm):
         label="税率", required=False, max_digits=5, decimal_places=4,
         min_value=0, max_value=1, initial=DEFAULT_TAX_RATE,
     )
+    tax_amount = forms.DecimalField(
+        label="税额", required=False, max_digits=18, decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control text-end", "step": "0.01"}),
+    )
+    amount_taxed = forms.DecimalField(
+        label="含税金额", required=False, max_digits=18, decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control text-end", "step": "0.01"}),
+    )
     # 关联入库行 id（隐藏，「从入库单带入」时写入；用于暂估匹配）
     source_inbound_line = forms.IntegerField(required=False, widget=forms.HiddenInput)
 
@@ -192,6 +200,14 @@ class SalesInvoiceLineForm(BootstrapForm):
     tax_rate = forms.DecimalField(
         label="税率", required=False, max_digits=5, decimal_places=4,
         min_value=0, max_value=1, initial=DEFAULT_TAX_RATE,
+    )
+    tax_amount = forms.DecimalField(
+        label="税额", required=False, max_digits=18, decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control text-end", "step": "0.01"}),
+    )
+    amount_taxed = forms.DecimalField(
+        label="含税金额", required=False, max_digits=18, decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control text-end", "step": "0.01"}),
     )
     # 关联出库行 id（隐藏，「从出库单带入」时写入；用于成本匹配）
     source_outbound_line = forms.IntegerField(required=False, widget=forms.HiddenInput)

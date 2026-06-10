@@ -34,6 +34,15 @@ def compute_tax(amount_untaxed, tax_rate):
     return tax, round_money(untaxed + tax)
 
 
+def _resolve_tax(untaxed, rate, ln):
+    """优先用录入的税额/含税金额(允许尾差手工微调)，否则按税率自动算。"""
+    tax = ln.get("tax_amount")
+    taxed = ln.get("amount_taxed")
+    if tax is not None and taxed is not None:
+        return round_money(tax), round_money(taxed)
+    return compute_tax(untaxed, rate)
+
+
 @transaction.atomic
 def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
                             invoice_no="", remark="", term_days=0) -> PurchaseInvoice:
@@ -56,7 +65,7 @@ def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
     for ln in lines:
         untaxed = round_money(ln["amount_untaxed"])
         rate = ln["tax_rate"]
-        tax, taxed = compute_tax(untaxed, rate)
+        tax, taxed = _resolve_tax(untaxed, rate, ln)
         PurchaseInvoiceLine.objects.create(
             invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
             quantity=ln.get("quantity") or ZERO_QTY,
@@ -170,7 +179,7 @@ def update_sales_invoice(inv, *, user, doc_date, customer, lines, invoice_no="",
     for ln in lines:
         untaxed = round_money(ln["amount_untaxed"])
         rate = ln["tax_rate"]
-        tax, taxed = compute_tax(untaxed, rate)
+        tax, taxed = _resolve_tax(untaxed, rate, ln)
         SalesInvoiceLine.objects.create(
             invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
             quantity=ln.get("quantity") or ZERO_QTY,
@@ -243,7 +252,7 @@ def create_sales_invoice(*, company, user, doc_date, customer, lines,
     for ln in lines:
         untaxed = round_money(ln["amount_untaxed"])
         rate = ln["tax_rate"]
-        tax, taxed = compute_tax(untaxed, rate)
+        tax, taxed = _resolve_tax(untaxed, rate, ln)
         SalesInvoiceLine.objects.create(
             invoice=inv, product=ln.get("product"), description=ln.get("description", ""),
             quantity=ln.get("quantity") or ZERO_QTY,

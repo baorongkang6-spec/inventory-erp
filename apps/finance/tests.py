@@ -51,6 +51,22 @@ class PurchaseInvoiceTests(TestCase):
         self.assertEqual(inv.outstanding, Decimal("1239.00"))  # 应付余额
         self.assertEqual(inv.lines.count(), 2)
 
+    def test_manual_tax_override_for_rounding_diff(self):
+        # 录入税额/含税金额时优先采用（允许尾差手工微调）
+        inv = create_purchase_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 6, 6), supplier=self.sup,
+            lines=[
+                {"product": self.p, "description": "货A", "amount_untaxed": Decimal("999.99"),
+                 "tax_rate": Decimal("0.13"),
+                 "tax_amount": Decimal("130.00"), "amount_taxed": Decimal("1129.99")},
+            ],
+        )
+        ln = inv.lines.first()
+        self.assertEqual(ln.tax_amount, Decimal("130.00"))      # 非自动算的 129.9987→130.00
+        self.assertEqual(ln.amount_taxed, Decimal("1129.99"))
+        self.assertEqual(inv.tax_amount, Decimal("130.00"))
+        self.assertEqual(inv.amount_taxed, Decimal("1129.99"))
+
 
 class PaymentTests(TestCase):
     @classmethod
