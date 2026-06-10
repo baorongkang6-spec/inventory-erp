@@ -552,6 +552,64 @@ def sales_revenue_cost_by_outbound(company, dfrom, dto):
     return rows
 
 
+def management_profit(companies, dfrom, dto, eliminate):
+    """管理利润表（按出库）：每公司 本期/本年 列，可选内部交易抵销。
+
+    内部销售收入=销售给关联公司(客户 related_company 已设)的不含税收入；
+    内部销售成本=从关联公司采购(供应商 related_company 已设)的入库不含税额(简化口径)。
+    返回 (cols, total)；cols=[{company, cur, ytd}]；多公司时 total 为合计列，否则 None。
+    """
+    from apps.finance.models import ExpenseRecord
+    from apps.purchasing.models import PurchaseInbound, PurchaseInboundLine
+    from apps.sales.models import SalesOutbound, SalesOutboundLine
+    companies = list(companies)
+    yfrom = dto.replace(month=1, day=1)
+
+    def base(company, d1, d2):
+        sl = (SalesOutboundLine.objects
+              .filter(outbound__company=company,
+                      outbound__sales_type=SalesOutbound.SalesType.SALE,
+                      outbound__doc_date__gte=d1, outbound__doc_date__lte=d2)
+              .exclude(outbound__status=SalesOutbound.Status.VOID))
+        rev = round_money(sl.aggregate(v=Sum("amount_untaxed"))["v"] or Z)
+        cost = round_money(sl.aggregate(v=Sum("amount"))["v"] or Z)
+        irev = round_money(sl.filter(outbound__customer__related_company__isnull=False)
+                           .aggregate(v=Sum("amount_untaxed"))["v"] or Z)
+        il = (PurchaseInboundLine.objects
+              .filter(inbound__company=company, inbound__doc_date__gte=d1, inbound__doc_date__lte=d2,
+                      inbound__supplier__related_company__isnull=False)
+              .exclude(inbound__status=PurchaseInbound.Status.VOID))
+        icost = round_money(il.aggregate(v=Sum("amount_untaxed"))["v"] or Z)
+        comm = round_money(ExpenseRecord.objects.filter(
+            company=company, category="commission", date__gte=d1, date__lte=d2)
+            .aggregate(v=Sum("amount"))["v"] or Z)
+        return {"rev": rev, "cost": cost, "irev": irev, "icost": icost, "comm": comm}
+
+    def derive(b):
+        net_rev = b["rev"] - b["irev"]
+        net_cost = b["cost"] - b["icost"]
+        if eliminate:
+            profit = net_rev - net_cost - b["comm"]
+            denom = net_rev
+        else:
+            profit = b["rev"] - b["cost"] - b["comm"]
+            denom = b["rev"]
+        margin = (profit / denom * 100).quantize(Decimal("0.1")) if denom else Z
+        return {**b, "net_rev": net_rev, "net_cost": net_cost, "profit": profit, "margin": margin}
+
+    cols = []
+    a_cur = {"rev": Z, "cost": Z, "irev": Z, "icost": Z, "comm": Z}
+    a_ytd = {"rev": Z, "cost": Z, "irev": Z, "icost": Z, "comm": Z}
+    for c in companies:
+        bc, by = base(c, dfrom, dto), base(c, yfrom, dto)
+        for k in a_cur:
+            a_cur[k] += bc[k]
+            a_ytd[k] += by[k]
+        cols.append({"company": c, "cur": derive(bc), "ytd": derive(by)})
+    total = {"company": None, "cur": derive(a_cur), "ytd": derive(a_ytd)} if len(companies) > 1 else None
+    return cols, total
+
+
 def customer_sales_analysis(companies, dfrom, dto, by_product, show_commission):
     """客户销售分析表（按出库）：公司→客户[→产品] 汇总 数量/收入(不含税)/成本/佣金/毛利率。
 

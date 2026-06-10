@@ -46,6 +46,7 @@ urlpatterns = [
     path("expense/<str:cat>/", views.expense_page, name="expense_page"),
     path("reports/expense-summary/", views.expense_summary_report, name="expense_summary_report"),
     path("reports/customer-sales/", views.customer_sales_report, name="customer_sales_report"),
+    path("reports/management-profit/", views.management_profit_report, name="management_profit_report"),
     path("reports/sales-revenue-cost/", views.sales_revenue_cost_report, name="sales_revenue_cost_report"),
     path("reports/sales-cost-by-outbound/", views.sales_cost_by_outbound_report, name="sales_cost_by_outbound_report"),
     path("reports/shipped-uninvoiced/", views.shipped_uninvoiced_report, name="shipped_uninvoiced_report"),

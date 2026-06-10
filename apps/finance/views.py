@@ -1843,3 +1843,61 @@ def customer_sales_report(request):
         "data": data, "by_product": by_product, "show_commission": show_commission,
         "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
         "date_from": dfrom, "date_to": dto})
+
+
+@login_required
+def management_profit_report(request):
+    """管理利润表（按出库）：多公司本期/本年列，可选内部交易抵销。仅总经理可见。"""
+    from django.core.exceptions import PermissionDenied
+
+    from apps.opening.reports import management_profit
+    if not _is_gm(request.user):
+        raise PermissionDenied("管理利润表仅总经理可见")
+    visible, chosen = _company_scope(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+    eliminate = request.GET.get("eliminate") == "1"
+    cols, total = management_profit(chosen, dfrom, dto, eliminate)
+
+    if eliminate:
+        row_defs = [("rev", "销售收入"), ("irev", "内部销售收入"), ("net_rev", "净销售收入"),
+                    ("cost", "销售成本"), ("icost", "内部销售成本"), ("net_cost", "净销售成本"),
+                    ("comm", "销售佣金"), ("profit", "销售利润"), ("margin", "销售毛利率")]
+    else:
+        row_defs = [("rev", "销售收入"), ("cost", "销售成本"), ("comm", "销售佣金"),
+                    ("profit", "销售利润"), ("margin", "销售毛利率")]
+
+    all_cols = cols + ([total] if total else [])
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["项目"]
+        for c in all_cols:
+            nm = (c["company"].short_name or str(c["company"])) if c["company"] else "合计"
+            headers += [f"{nm}(本期)", f"{nm}(本年)"]
+        data = []
+        for key, lbl in row_defs:
+            row = [lbl]
+            for c in all_cols:
+                if key == "margin":
+                    row += [f'{c["cur"]["margin"]}%', f'{c["ytd"]["margin"]}%']
+                else:
+                    row += [c["cur"][key], c["ytd"][key]]
+            data.append(row)
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("管理利润表(按出库)", headers, data, company=company_arg, period=(dfrom, dto))
+    col_heads = [(c["company"].short_name or str(c["company"])) if c["company"] else "合计"
+                 for c in all_cols]
+    table_rows = []
+    for key, lbl in row_defs:
+        cells = []
+        for c in all_cols:
+            if key == "margin":
+                cells.append((f'{c["cur"]["margin"]}%', f'{c["ytd"]["margin"]}%'))
+            else:
+                cells.append((c["cur"][key], c["ytd"][key]))
+        table_rows.append({"label": lbl, "key": key, "cells": cells})
+    return render(request, "finance/management_profit.html", {
+        "col_heads": col_heads, "table_rows": table_rows, "eliminate": eliminate,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "date_from": dfrom, "date_to": dto})

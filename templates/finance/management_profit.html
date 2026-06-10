@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}管理利润表（出库）· 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">管理利润表（出库）</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}{% if eliminate %}eliminate=1&{% endif %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted">本期=所选区间，本年=当年1/1~截止日。金额不含税。{% if eliminate %}利润=净销售收入−净销售成本−佣金，毛利率=利润/净销售收入。{% else %}利润=销售收入−销售成本−佣金，毛利率=利润/销售收入。{% endif %}</p>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">起始日期</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><label class="form-label">截止日期</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto pb-2"><div class="form-check">
+      <input class="form-check-input" type="checkbox" name="eliminate" value="1" id="el" {% if eliminate %}checked{% endif %}>
+      <label class="form-check-label" for="el">内部交易抵销</label></div></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-bordered mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr><th rowspan="2" class="text-start align-middle">项目</th>
+          {% for nm in col_heads %}<th colspan="2" class="text-center">{{ nm }}</th>{% endfor %}</tr>
+        <tr>{% for nm in col_heads %}<th>本期数</th><th>本年数</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for r in table_rows %}
+        <tr {% if r.key == 'profit' %}class="fw-semibold table-light"{% endif %}>
+          <td class="text-start">{{ r.label }}</td>
+          {% for cur, ytd in r.cells %}<td>{{ cur }}</td><td>{{ ytd }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
