@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}费用汇总表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">{{ label }}汇总表<small class="text-muted fs-6 ms-2">按{{ group_label }}</small></h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}cat={{ cat }}&group={{ group }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
+</div>
+
+<form method="get" class="mb-3">
+  {% include "_company_filter.html" %}
+  <div class="row g-2 align-items-end">
+    <div class="col-auto"><label class="form-label">类别</label>
+      <select name="cat" class="form-select">
+        {% for k, l in cat_opts %}<option value="{{ k }}" {% if k == cat %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select></div>
+    <div class="col-auto"><label class="form-label">统计维度</label>
+      <select name="group" class="form-select">
+        <option value="month" {% if group == 'month' %}selected{% endif %}>按月</option>
+        <option value="person" {% if group == 'person' %}selected{% endif %}>按人员</option>
+        <option value="customer" {% if group == 'customer' %}selected{% endif %}>按客户</option>
+        <option value="product" {% if group == 'product' %}selected{% endif %}>按产品</option>
+      </select></div>
+    <div class="col-auto"><label class="form-label">起始日期</label>
+      <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><label class="form-label">截止日期</label>
+      <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+    <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+  </div>
+</form>
+
+<div class="card" style="max-width:680px">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light"><tr><th>{{ group_label }}</th><th class="text-end">笔数</th><th class="text-end">金额</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr><td>{{ r.key }}</td><td class="text-end">{{ r.count }}</td><td class="text-end fw-semibold">{{ r.amount }}</td></tr>
+        {% empty %}
+        <tr><td colspan="3" class="text-center text-muted py-4">该期间无{{ label }}</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if rows %}<tfoot class="table-secondary"><tr><th>合计</th><th class="text-end"></th><th class="text-end">{{ total }}</th></tr></tfoot>{% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -110,6 +110,7 @@
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'receivables_report' %}">应收账款余额表</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice or perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'overdue_report' %}">逾期明细表</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'invoice_quota_report' %}">剩余发票额度查询</a></li>{% endif %}
+            {% if menu.commission or menu.expenses %}<li><a class="dropdown-item" href="{% url 'expense_summary_report' %}">费用汇总表</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_revenue_cost_report' %}">销售收入成本表（按开票）</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_cost_by_outbound_report' %}">销售收入成本表（按出库）</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'shipped_uninvoiced_report' %}">已出库未开票明细表</a></li>{% endif %}

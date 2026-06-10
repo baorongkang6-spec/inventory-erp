@@ -1704,3 +1704,65 @@ def expense_page(request, cat):
         "cat": cat, "label": label, "rows": rows, "total": total,
         "customers": customers, "products": products, "active_company": company,
         "today": timezone.localdate()})
+
+
+@login_required
+def expense_summary_report(request):
+    """费用汇总表：按 类别 + 维度(月/人员/客户/产品) 汇总金额。佣金仅总经理可见。"""
+    from decimal import Decimal
+
+    from django.core.exceptions import PermissionDenied
+
+    from .models import ExpenseRecord
+    is_gm = _is_gm(request.user)
+    cat_opts = [(k, v[0]) for k, v in EXPENSE_CATS.items() if is_gm or not v[1]]
+    if not cat_opts:
+        raise PermissionDenied("无权查看费用汇总")
+    cat = request.GET.get("cat") or cat_opts[0][0]
+    if cat not in EXPENSE_CATS:
+        cat = cat_opts[0][0]
+    label, gm_only = EXPENSE_CATS[cat]
+    if not _can_expense(request.user, gm_only):
+        raise PermissionDenied(f"无权查看{label}")
+
+    group = request.GET.get("group") or "month"
+    group = group if group in ("month", "person", "customer", "product") else "month"
+    group_label = {"month": "月份", "person": "人员", "customer": "客户", "product": "产品"}[group]
+
+    visible, chosen = _company_scope(request)
+    today = timezone.localdate()
+    dfrom = _parse_date(request.GET.get("from")) or today.replace(month=1, day=1)
+    dto = _parse_date(request.GET.get("to")) or today
+
+    qs = (ExpenseRecord.objects.filter(company__in=chosen, category=cat,
+                                       date__gte=dfrom, date__lte=dto)
+          .select_related("customer", "product"))
+    bucket = {}
+    for r in qs:
+        if group == "month":
+            key = r.date.strftime("%Y-%m")
+        elif group == "person":
+            key = r.person or "（未填）"
+        elif group == "customer":
+            key = str(r.customer) if r.customer else "（未指定）"
+        else:
+            key = str(r.product) if r.product else "（未指定）"
+        e = bucket.setdefault(key, {"key": key, "amount": Decimal("0.00"), "count": 0})
+        e["amount"] += r.amount
+        e["count"] += 1
+    rows = sorted(bucket.values(), key=lambda x: x["key"])
+    total = sum((r["amount"] for r in rows), Decimal("0.00"))
+
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = [group_label, "笔数", "金额"]
+        data = [[r["key"], r["count"], r["amount"]] for r in rows]
+        data.append(["合计", sum(r["count"] for r in rows), total])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response(f"{label}汇总表（按{group_label}）", headers, data,
+                             company=company_arg, period=(dfrom, dto))
+    return render(request, "finance/expense_summary.html", {
+        "rows": rows, "total": total, "label": label, "cat": cat, "cat_opts": cat_opts,
+        "group": group, "group_label": group_label,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "date_from": dfrom, "date_to": dto})
