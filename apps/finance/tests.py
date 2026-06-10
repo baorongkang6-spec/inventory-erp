@@ -871,3 +871,111 @@ class NoteExcelTests(TestCase):
         self.assertEqual(parsed[0]["note_no"], "BA1")
         self.assertEqual(parsed[0]["amount"], Decimal("2260"))
         self.assertEqual(parsed[0]["party_name"], "K1 客户甲")
+
+
+class ReceiptPaymentByNoteTests(TestCase):
+    """收款方式=应收票据（收票冲应收）/ 付款方式=应收票据（背书抵应付）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.user = U.objects.create_user(username="cashier", password="x",
+                                         can_view_all_companies=True)
+        for code in ("add_receipt", "add_payment", "view_notereceivable"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _sales_invoice(self, amount):
+        return create_sales_invoice(
+            company=self.c1, user=self.user, doc_date=date(2026, 6, 5), customer=self.cust,
+            lines=[{"product": None, "description": "货", "amount_untaxed": amount,
+                    "tax_rate": Decimal("0")}])
+
+    def _purchase_invoice(self, amount):
+        return create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=date(2026, 6, 5), supplier=self.sup,
+            lines=[{"product": None, "description": "货", "amount_untaxed": amount,
+                    "tax_rate": Decimal("0")}])
+
+    def test_receipt_by_note_creates_note_and_offsets_ar(self):
+        inv = self._sales_invoice(Decimal("1000"))
+        self.assertEqual(inv.outstanding, Decimal("1000.00"))
+        self.client.force_login(self.user)
+        r = self.client.post("/finance/receipts/new/", {
+            "doc_date": "2026-06-10", "method": "note", "customer": self.cust.pk,
+            "note_no": "BJ001", "draw_date": "2026-06-10", "due_date": "2026-09-10",
+            "amount": "1000", "summary": "收客户票据",
+            f"alloc-{inv.pk}": "1000",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        note = NoteReceivable.objects.get(company=self.c1, note_no="BJ001")
+        self.assertEqual(note.amount, Decimal("1000.00"))
+        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)  # 全额用掉
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应收已冲平
+        # 不生成银行日记账
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+
+    def test_receipt_by_note_partial_offset_keeps_remainder_on_hand(self):
+        inv = self._sales_invoice(Decimal("600"))
+        self.client.force_login(self.user)
+        self.client.post("/finance/receipts/new/", {
+            "doc_date": "2026-06-10", "method": "note", "customer": self.cust.pk,
+            "note_no": "BJ002", "draw_date": "2026-06-10", "due_date": "2026-09-10",
+            "amount": "1000", f"alloc-{inv.pk}": "600",
+        }, SERVER_NAME="localhost", follow=True)
+        note = NoteReceivable.objects.get(company=self.c1, note_no="BJ002")
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertEqual(note.unused, Decimal("400.00"))             # 余额留在手
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("0.00"))
+
+    def test_payment_by_note_endorses_to_purchase(self):
+        # 先有一张在手应收票据，再用它背书抵采购应付
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260601-001", note_no="BJ010",
+            draw_date=date(2026, 6, 1), due_date=date(2026, 9, 1),
+            customer=self.cust, amount=Decimal("1000"))
+        inv = self._purchase_invoice(Decimal("800"))
+        self.client.force_login(self.user)
+        r = self.client.post("/finance/payments/new/", {
+            "doc_date": "2026-06-10", "method": "note", "supplier": self.sup.pk,
+            "note_no": "BJ010", "amount": "800",
+            f"alloc-{inv.pk}": "800",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        note.refresh_from_db()
+        self.assertEqual(note.status, NoteReceivable.Status.ENDORSED)
+        self.assertEqual(note.settled_amount, Decimal("800.00"))
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应付已冲平
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+
+    def test_payment_by_note_amount_must_match_allocations(self):
+        NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260601-002", note_no="BJ011",
+            draw_date=date(2026, 6, 1), customer=self.cust, amount=Decimal("1000"))
+        inv = self._purchase_invoice(Decimal("800"))
+        self.client.force_login(self.user)
+        self.client.post("/finance/payments/new/", {
+            "doc_date": "2026-06-10", "method": "note", "supplier": self.sup.pk,
+            "note_no": "BJ011", "amount": "900",   # 与勾选 800 不符 → 拒绝
+            f"alloc-{inv.pk}": "800",
+        }, SERVER_NAME="localhost", follow=True)
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("800.00"))          # 未被冲销
+
+    def test_bank_receipt_still_creates_journal(self):
+        acc = BankAccount.objects.create(company=self.c1, name="基本户")
+        self.client.force_login(self.user)
+        self.client.post("/finance/receipts/new/", {
+            "doc_date": "2026-06-10", "method": f"bank:{acc.pk}", "customer": "",
+            "amount": "500", "summary": "现金收款",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+        self.assertEqual(NoteReceivable.objects.filter(company=self.c1).count(), 0)
