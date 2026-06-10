@@ -142,22 +142,36 @@ PurchaseInvoiceLineFormSet = forms.formset_factory(
 
 # --- 付款登记 -----------------------------------------------------------------
 class PaymentForm(forms.ModelForm):
-    """付款登记。bank_account/supplier 按当前账套过滤；company 由视图注入。"""
+    """付款登记。付款方式 = 各银行账户 + 应收票据(背书)；company 由视图注入。
+
+    - 选银行账户：照常生成银行日记账（支出）。
+    - 选「应收票据(背书)」：用手上一张在手应收票据背书抵付应付（不生成银行日记账）。
+    """
+
+    METHOD_NOTE = "note"
+
+    method = forms.ChoiceField(label="付款方式", choices=[])
+    note_no = forms.CharField(label="票据号码", required=False, max_length=64,
+                              help_text="背书时填在手应收票据号，自动带出出票/到期/余额")
 
     class Meta:
         model = Payment
-        fields = ["doc_date", "bank_account", "supplier", "amount", "summary"]
+        fields = ["doc_date", "supplier", "amount", "summary"]
         widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.company = company
+        accounts = []
         if company is not None:
-            self.fields["bank_account"].queryset = BankAccount.objects.filter(
-                company=company, is_active=True
-            )
+            accounts = list(BankAccount.objects.filter(company=company, is_active=True))
             self.fields["supplier"].queryset = Supplier.objects.filter(
                 company=company, is_active=True
             )
+        self.fields["method"].choices = (
+            [(f"bank:{a.pk}", f"银行账户 · {a.name}") for a in accounts]
+            + [(self.METHOD_NOTE, "应收票据（背书）")]
+        )
         self.fields["supplier"].required = False
         self.fields["supplier"].empty_label = "（其他付款，可不选）"
         for name, field in self.fields.items():
@@ -169,6 +183,25 @@ class PaymentForm(forms.ModelForm):
         if amount is None or amount <= 0:
             raise forms.ValidationError("付款金额必须大于 0")
         return amount
+
+    def clean(self):
+        cleaned = super().clean()
+        method = cleaned.get("method") or ""
+        if method == self.METHOD_NOTE:
+            cleaned["bank_account"] = None
+            if not cleaned.get("supplier"):
+                self.add_error("supplier", "背书付款时，收款供应商必填")
+            if not cleaned.get("note_no"):
+                self.add_error("note_no", "请填写要背书的应收票据号码")
+        elif method.startswith("bank:"):
+            try:
+                acc_id = int(method.split(":", 1)[1])
+                cleaned["bank_account"] = BankAccount.objects.get(pk=acc_id, company=self.company)
+            except (ValueError, BankAccount.DoesNotExist):
+                self.add_error("method", "请选择有效的付款方式")
+        else:
+            self.add_error("method", "请选择付款方式")
+        return cleaned
 
 
 # --- 销售发票 -----------------------------------------------------------------
@@ -265,24 +298,46 @@ SalesInvoiceLineFormSet = forms.formset_factory(
 
 # --- 收款登记 -----------------------------------------------------------------
 class ReceiptForm(forms.ModelForm):
+    """收款登记。收款方式 = 各银行账户 + 应收票据；company 由视图注入。
+
+    - 选银行账户：照常生成银行日记账（收入）。
+    - 选「应收票据」：收到客户票据，生成一张在手应收票据（不生成银行日记账），
+      可在同界面勾选要冲抵的销售发票（冲应收）。
+    """
+
+    METHOD_NOTE = "note"
+
+    method = forms.ChoiceField(label="收款方式", choices=[])
+    note_no = forms.CharField(label="票据号码", required=False, max_length=64)
+    draw_date = forms.DateField(label="出票日期", required=False,
+                                widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"))
+    due_date = forms.DateField(label="到期日期", required=False,
+                               widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"))
+
     class Meta:
         model = Receipt
-        fields = ["doc_date", "bank_account", "customer", "amount", "summary"]
+        fields = ["doc_date", "customer", "amount", "summary"]
         widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.company = company
+        accounts = []
         if company is not None:
-            self.fields["bank_account"].queryset = BankAccount.objects.filter(
-                company=company, is_active=True
-            )
+            accounts = list(BankAccount.objects.filter(company=company, is_active=True))
             self.fields["customer"].queryset = Customer.objects.filter(
                 company=company, is_active=True
             )
+        self.fields["method"].choices = (
+            [(f"bank:{a.pk}", f"银行账户 · {a.name}") for a in accounts]
+            + [(self.METHOD_NOTE, "应收票据")]
+        )
         self.fields["customer"].required = False
         self.fields["customer"].empty_label = "（其他收款，可不选）"
         for name, field in self.fields.items():
             w = field.widget
+            if isinstance(w, forms.DateInput):
+                w.attrs.setdefault("type", "date")
             w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
 
     def clean_amount(self):
@@ -290,6 +345,29 @@ class ReceiptForm(forms.ModelForm):
         if amount is None or amount <= 0:
             raise forms.ValidationError("收款金额必须大于 0")
         return amount
+
+    def clean(self):
+        cleaned = super().clean()
+        method = cleaned.get("method") or ""
+        if method == self.METHOD_NOTE:
+            cleaned["bank_account"] = None
+            if not cleaned.get("customer"):
+                self.add_error("customer", "收款方式为应收票据时，付款客户必填")
+            if not cleaned.get("note_no"):
+                self.add_error("note_no", "请填写票据号码")
+            if not cleaned.get("draw_date"):
+                self.add_error("draw_date", "请填写出票日期")
+            if not cleaned.get("due_date"):
+                self.add_error("due_date", "请填写到期日期")
+        elif method.startswith("bank:"):
+            try:
+                acc_id = int(method.split(":", 1)[1])
+                cleaned["bank_account"] = BankAccount.objects.get(pk=acc_id, company=self.company)
+            except (ValueError, BankAccount.DoesNotExist):
+                self.add_error("method", "请选择有效的收款方式")
+        else:
+            self.add_error("method", "请选择收款方式")
+        return cleaned
 
 
 # --- 票据登记（M3）-----------------------------------------------------------
