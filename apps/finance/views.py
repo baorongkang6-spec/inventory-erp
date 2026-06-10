@@ -1618,3 +1618,89 @@ def borrow_report(request):
     return render(request, "finance/borrow_report.html",
                   {"rows": rows, "total": total,
                    "visible_companies": visible, "chosen_ids": {c.pk for c in chosen}})
+
+
+# ============================= 费用（佣金/销售/管理/财务）======================
+EXPENSE_CATS = {
+    "commission": ("佣金", True),    # gm_only=True
+    "sales": ("销售费用", False),
+    "admin": ("管理费用", False),
+    "finance": ("财务费用", False),
+}
+
+
+def _is_gm(user):
+    from apps.accounts import roles
+    return user.is_superuser or roles.GM in getattr(user, "role_names", [])
+
+
+def _can_expense(user, gm_only):
+    from apps.accounts import roles
+    if gm_only:
+        return _is_gm(user)
+    return user.is_superuser or bool(set(getattr(user, "role_names", []))
+                                     & {roles.GM, roles.FINANCE, roles.CASHIER})
+
+
+@login_required
+def expense_page(request, cat):
+    """费用录入/列表（按类别）。佣金仅总经理可见可录。"""
+    from decimal import Decimal, InvalidOperation
+
+    from django.core.exceptions import PermissionDenied
+    from django.http import Http404
+
+    from apps.core.scope import get_active_company, get_visible_companies
+    from apps.masterdata.models import Customer, Product
+    from .models import ExpenseRecord
+    if cat not in EXPENSE_CATS:
+        raise Http404
+    label, gm_only = EXPENSE_CATS[cat]
+    if not _can_expense(request.user, gm_only):
+        raise PermissionDenied(f"无权查看{label}")
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "无可用公司账套")
+        return redirect("home")
+
+    if request.method == "POST":
+        if request.POST.get("action") == "delete":
+            ExpenseRecord.objects.filter(pk=request.POST.get("id"), company=company,
+                                         category=cat).delete()
+            messages.success(request, "已删除该记录。")
+            return redirect("expense_page", cat=cat)
+        d = _parse_date(request.POST.get("date"))
+        cust = Customer.objects.filter(pk=request.POST.get("customer") or 0, company=company).first()
+        prod = Product.objects.filter(pk=request.POST.get("product") or 0, company=company).first()
+        try:
+            amt = Decimal(request.POST.get("amount") or "")
+        except (InvalidOperation, TypeError):
+            amt = None
+        if not d:
+            messages.error(request, "请选择日期")
+        elif amt is None:
+            messages.error(request, "请输入有效金额")
+        else:
+            ExpenseRecord.objects.create(
+                company=company, created_by=request.user, category=cat, date=d,
+                customer=cust, product=prod, person=request.POST.get("person", "").strip(),
+                amount=amt, remark=request.POST.get("remark", "").strip())
+            messages.success(request, f"已登记{label} {amt}")
+        return redirect("expense_page", cat=cat)
+
+    rows = (ExpenseRecord.objects.filter(company=company, category=cat)
+            .select_related("customer", "product").order_by("-date", "-id"))
+    total = sum((r.amount for r in rows), Decimal("0.00"))
+    customers = Customer.objects.filter(company=company, is_active=True).order_by("code")
+    products = Product.objects.filter(company=company, is_active=True).order_by("code")
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["日期", "客户", "产品", "人员名称", "金额", "备注"]
+        data = [[r.date, str(r.customer or ""), str(r.product or ""), r.person, r.amount, r.remark]
+                for r in rows]
+        data.append(["合计", "", "", "", total, ""])
+        return xlsx_response(f"{label}明细", headers, data, company=company)
+    return render(request, "finance/expense_page.html", {
+        "cat": cat, "label": label, "rows": rows, "total": total,
+        "customers": customers, "products": products, "active_company": company,
+        "today": timezone.localdate()})

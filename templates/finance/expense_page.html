@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">{{ label }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a class="btn btn-outline-success btn-sm" href="?export=xlsx">导出 Excel</a>
+</div>
+{% if cat == 'commission' %}<p class="text-muted">佣金为总经理专属，仅总经理可见、可录、可改。</p>{% endif %}
+
+<form method="post" class="card card-body mb-3">
+  {% csrf_token %}
+  <div class="row g-2 align-items-end">
+    <div class="col-md-2"><label class="form-label mb-0 small">日期</label>
+      <input type="date" name="date" value="{{ today|date:'Y-m-d' }}" class="form-control" required></div>
+    <div class="col-md-2"><label class="form-label mb-0 small">客户</label>
+      <select name="customer" class="form-select"><option value="">—</option>
+        {% for c in customers %}<option value="{{ c.pk }}">{{ c.code }} {{ c.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-0 small">产品</label>
+      <select name="product" class="form-select"><option value="">—</option>
+        {% for p in products %}<option value="{{ p.pk }}">{{ p.code }} {{ p.name }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label mb-0 small">人员名称</label>
+      <input type="text" name="person" class="form-control"></div>
+    <div class="col-md-1"><label class="form-label mb-0 small">金额</label>
+      <input type="number" step="0.01" name="amount" class="form-control" required></div>
+    <div class="col-md-2"><label class="form-label mb-0 small">备注</label>
+      <input type="text" name="remark" class="form-control"></div>
+    <div class="col-md-1"><button class="btn btn-primary w-100">登记</button></div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light"><tr><th>日期</th><th>客户</th><th>产品</th><th>人员名称</th>
+          <th class="text-end">金额</th><th>备注</th><th class="text-end">操作</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.date }}</td>
+          <td>{{ r.customer|default:"—" }}</td>
+          <td>{{ r.product|default:"—" }}</td>
+          <td>{{ r.person|default:"—" }}</td>
+          <td class="text-end fw-semibold">{{ r.amount }}</td>
+          <td class="text-muted">{{ r.remark|default:"—" }}</td>
+          <td class="text-end">
+            <form method="post" onsubmit="return confirm('删除该记录？');" class="d-inline">
+              {% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.pk }}">
+              <button class="btn btn-sm btn-outline-danger py-0">删除</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted py-4">暂无{{ label }}记录</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if rows %}<tfoot class="table-secondary"><tr><th colspan="4" class="text-end">合计</th><th class="text-end">{{ total }}</th><th colspan="2"></th></tr></tfoot>{% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

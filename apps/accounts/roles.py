@@ -38,10 +38,13 @@ def menu_flags(user):
     超级用户全部可见。
     """
     if user.is_superuser:
-        return {"products": True, "customers": True, "suppliers": True}
+        return {"products": True, "customers": True, "suppliers": True,
+                "commission": True, "expenses": True}
     roles = set(user.role_names)
     return {
         "products": True,
         "customers": bool(roles & {SALES, FINANCE, CASHIER, GM}),
         "suppliers": bool(roles & {PURCHASER, FINANCE, CASHIER, GM}),
+        "commission": GM in roles,                      # 佣金：仅总经理
+        "expenses": bool(roles & {GM, FINANCE, CASHIER}),  # 销售/管理/财务费用
     }

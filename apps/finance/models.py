@@ -575,3 +575,31 @@ class BorrowTransaction(CompanyScopedModel):
     @property
     def signed_amount(self):
         return self.amount if self.direction == self.Direction.IN else -self.amount
+
+
+class ExpenseRecord(CompanyScopedModel):
+    """费用记录：佣金/销售费用/管理费用/财务费用。佣金仅总经理可见可录。"""
+
+    class Category(models.TextChoices):
+        COMMISSION = "commission", "佣金"
+        SALES = "sales", "销售费用"
+        ADMIN = "admin", "管理费用"
+        FINANCE = "finance", "财务费用"
+
+    category = models.CharField("类别", max_length=16, choices=Category.choices)
+    date = models.DateField("日期")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True,
+                                 verbose_name="客户")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, null=True, blank=True,
+                                verbose_name="产品")
+    person = models.CharField("人员名称", max_length=64, blank=True)
+    amount = models.DecimalField("金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    remark = models.CharField("备注", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "费用记录"
+        verbose_name_plural = "费用记录"
+        ordering = ["-date", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.get_category_display()} {self.amount}"

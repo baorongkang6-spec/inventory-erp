@@ -64,6 +64,19 @@
         </li>
         {% endif %}
 
+        {# 费用：佣金(仅总经理) / 销售/管理/财务费用 #}
+        {% if menu.commission or menu.expenses %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">费用</a>
+          <ul class="dropdown-menu">
+            {% if menu.commission %}<li><a class="dropdown-item" href="{% url 'expense_page' 'commission' %}">佣金</a></li>{% endif %}
+            {% if menu.expenses %}<li><a class="dropdown-item" href="{% url 'expense_page' 'sales' %}">销售费用</a></li>
+            <li><a class="dropdown-item" href="{% url 'expense_page' 'admin' %}">管理费用</a></li>
+            <li><a class="dropdown-item" href="{% url 'expense_page' 'finance' %}">财务费用</a></li>{% endif %}
+          </ul>
+        </li>
+        {% endif %}
+
         {% if perms.inventory.view_stockbalance %}
         <li class="nav-item"><a class="nav-link" href="{% url 'stock_report' %}">库存报表</a></li>
         {% endif %}
