@@ -67,34 +67,51 @@ def company_overview(company, dfrom, dto):
     b["ending"] += bank_open0
     bank = b
 
-    # 库存商品（金额）：IN/OUT 流水按 date
+    # 库存商品（金额）：期初流水(source_type=Opening)恒计期初，其余按 date
     moves = StockMove.objects.filter(company=company)
-    stock = _period(moves.filter(direction=StockMove.Direction.IN),
-                    moves.filter(direction=StockMove.Direction.OUT), "date", "date", dfrom, dto)
+    biz = moves.exclude(source_type="Opening")
+    stock = _period(biz.filter(direction=StockMove.Direction.IN),
+                    biz.filter(direction=StockMove.Direction.OUT), "date", "date", dfrom, dto)
+    open_moves = moves.filter(source_type="Opening")
+    _add_opening(stock, _s(open_moves.filter(direction=StockMove.Direction.IN))
+                 - _s(open_moves.filter(direction=StockMove.Direction.OUT)))
 
-    # 供应商往来（应付）：增=采购发票(doc_date,含税)；减=付款核销+票据抵付(created_at)
-    ap_inv = PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
+    # 供应商往来（应付）：期初发票(is_opening)恒计期初；增=本期采购发票；减=付款核销+票据抵付
+    ap_all = PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
+    ap_inv = ap_all.filter(is_opening=False)
     ap_pay = PaymentAllocation.objects.filter(payment__company=company)
     ap_note = NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
     payable = _merge_period(ap_inv, "doc_date", "amount_taxed",
                             [(ap_pay, "created_at__date"), (ap_note, "created_at__date")], dfrom, dto)
+    _add_opening(payable, _s(ap_all.filter(is_opening=True), "amount_taxed"))
 
-    # 客户往来（应收）：增=销售发票；减=收款核销+应收票据冲应收
-    ar_inv = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
+    # 客户往来（应收）：期初发票恒计期初；增=本期销售发票；减=收款核销+应收票据冲应收
+    ar_all = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
+    ar_inv = ar_all.filter(is_opening=False)
     ar_rec = ReceiptAllocation.objects.filter(receipt__company=company)
     ar_note = NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES,
                                             is_endorsement=False)
     receivable = _merge_period(ar_inv, "doc_date", "amount_taxed",
                                [(ar_rec, "created_at__date"), (ar_note, "created_at__date")], dfrom, dto)
+    _add_opening(receivable, _s(ar_all.filter(is_opening=True), "amount_taxed"))
 
-    # 应收票据：增=票据(draw_date)；减=票据使用(冲应收/背书，note_kind=ar_note)
-    nr = NoteReceivable.objects.filter(company=company).exclude(status=NoteReceivable.Status.VOID)
+    # 应收票据：期初票据(is_opening)恒计期初；增=本期出票；减=票据使用
+    nr_all = NoteReceivable.objects.filter(company=company).exclude(status=NoteReceivable.Status.VOID)
+    nr = nr_all.filter(is_opening=False)
     nr_use = NoteSettlement.objects.filter(company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE)
     note_recv = _merge_period(nr, "draw_date", "amount",
                               [(nr_use, "created_at__date")], dfrom, dto)
+    _add_opening(note_recv, _s(nr_all.filter(is_opening=True), "amount"))
 
     return {"bank": bank, "stock": stock, "payable": payable,
             "receivable": receivable, "note_recv": note_recv}
+
+
+def _add_opening(row, amt):
+    """把期初标记数据的金额恒加到期初与期末（不计入本期收入/发出）。"""
+    row["opening"] += amt
+    row["ending"] += amt
+    return row
 
 
 def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
@@ -207,7 +224,7 @@ def stock_products_balance(company, dfrom, dto):
         d = data.setdefault(m.product, {"opening": Z, "income": Z, "outgo": Z,
                                         "open_qty": ZQ, "in_qty": ZQ, "out_qty": ZQ})
         is_in = m.direction == StockMove.Direction.IN
-        if m.date < dfrom:
+        if m.source_type == "Opening" or m.date < dfrom:
             d["opening"] += m.amount if is_in else -m.amount
             d["open_qty"] += m.quantity if is_in else -m.quantity
         elif m.date <= dto:
@@ -278,7 +295,7 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
     for inv in invoices.select_related(partner_attr):
         partner = getattr(inv, partner_attr)
         d = data.setdefault(partner, _pset())
-        if inv.doc_date < dfrom:
+        if inv.is_opening or inv.doc_date < dfrom:
             d["opening"] += inv.amount_taxed
         elif inv.doc_date <= dto:
             d["income"] += inv.amount_taxed
@@ -477,7 +494,8 @@ def partner_ledger(company, partner, kind, dfrom, dto):
     events = []
     for inv in invoices:
         events.append({"date": inv.doc_date, "kind": inv_label, "doc_no": inv.doc_no,
-                       "inc": inv.amount_taxed, "dec": Z, "ref_url": inv_url(inv)})
+                       "inc": inv.amount_taxed, "dec": Z, "ref_url": inv_url(inv),
+                       "is_opening": inv.is_opening})
     for a in allocs:
         events.append({"date": a.created_at.date(), "kind": alloc_label, "doc_no": alloc_doc(a),
                        "inc": Z, "dec": a.amount, "ref_url": alloc_url(a)})
@@ -489,7 +507,7 @@ def partner_ledger(company, partner, kind, dfrom, dto):
     opening = Z
     period = []
     for e in events:
-        if e["date"] < dfrom:
+        if e.get("is_opening") or e["date"] < dfrom:
             opening += e["inc"] - e["dec"]
         elif e["date"] <= dto:
             period.append(e)
@@ -704,7 +722,7 @@ def receivable_notes_balance(company, dfrom, dto):
     rows = []
     for n in notes:
         opening = income = outgo = Z
-        if n.draw_date < dfrom:
+        if n.is_opening or n.draw_date < dfrom:
             opening += n.amount
         elif n.draw_date <= dto:
             income += n.amount
@@ -725,7 +743,7 @@ def note_ledger(company, note, dfrom, dto):
     """应收票据使用明细：出票(增) + 使用(冲应收/背书抵应付，减) 按时间滚动未用额。"""
     from apps.core.docrefs import invoice_url
     events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
-               "inc": note.amount, "dec": Z, "ref_url": ""}]
+               "inc": note.amount, "dec": Z, "ref_url": "", "is_opening": note.is_opening}]
     for s in NoteSettlement.objects.filter(company=company, note_id=note.pk,
                                            note_kind=NoteSettlement.NoteKind.RECEIVABLE):
         events.append({"date": s.created_at.date(),
@@ -735,7 +753,7 @@ def note_ledger(company, note, dfrom, dto):
     opening = Z
     period = []
     for e in events:
-        if e["date"] < dfrom:
+        if e.get("is_opening") or e["date"] < dfrom:
             opening += e["inc"] - e["dec"]
         elif e["date"] <= dto:
             period.append(e)
