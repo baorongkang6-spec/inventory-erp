@@ -1078,26 +1078,52 @@ def received_uninvoiced_report(request):
 @permission_required("finance.view_salesinvoice", raise_exception=True)
 def sales_cost_by_outbound_report(request):
     """销售收入成本计算表（按出库口径、按商品；期间可选，默认本月）。"""
+    from django.db.models import Sum
+
+    from apps.core.money import round_money
     from apps.opening.reports import sales_revenue_cost_by_outbound
+    from .models import ExpenseRecord
     company = resolve_company(request)
     today = timezone.localdate()
     dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
     dto = _parse_date(request.GET.get("to")) or today
     rows = sales_revenue_cost_by_outbound(company, dfrom, dto) if company else []
-    totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("revenue", "cost", "profit")}
+    # 佣金列：仅总经理可见，按产品归集当期佣金，毛利=收入−成本−佣金
+    show_commission = _is_gm(request.user)
+    if show_commission and company:
+        comm = {r["product_id"]: round_money(r["a"] or Decimal("0.00")) for r in
+                ExpenseRecord.objects.filter(company=company, category="commission",
+                                             date__gte=dfrom, date__lte=dto)
+                .exclude(product=None).values("product_id").annotate(a=Sum("amount"))}
+        for r in rows:
+            pid = r["product"].pk if r["product"] else None
+            c = comm.get(pid, Decimal("0.00"))
+            r["commission"] = c
+            r["profit"] = r["revenue"] - r["cost"] - c
+            r["margin"] = (r["profit"] / r["revenue"] * 100).quantize(Decimal("0.1")) \
+                if r["revenue"] else Decimal("0.0")
+    keys = ("revenue", "cost", "commission", "profit") if show_commission else ("revenue", "cost", "profit")
+    totals = {k: sum((r.get(k, Decimal("0.00")) for r in rows), Decimal("0.00")) for k in keys}
     totals["margin"] = (totals["profit"] / totals["revenue"] * 100).quantize(Decimal("0.1")) \
         if totals["revenue"] else Decimal("0.0")
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
-        headers = ["商品编码", "商品名称", "销售数量", "销售收入(不含税)", "销售成本", "销售毛利", "毛利率%"]
-        out = [[(r["product"].code if r["product"] else ""),
-                (r["product"].name if r["product"] else ""),
-                r["qty"], r["revenue"], r["cost"], r["profit"], r["margin"]] for r in rows]
-        out.append(["合计", "", "", totals["revenue"], totals["cost"], totals["profit"], totals["margin"]])
+        if show_commission:
+            headers = ["商品编码", "商品名称", "销售数量", "销售收入(不含税)", "销售成本", "佣金", "销售毛利", "毛利率%"]
+            out = [[(r["product"].code if r["product"] else ""), (r["product"].name if r["product"] else ""),
+                    r["qty"], r["revenue"], r["cost"], r.get("commission", Decimal("0.00")), r["profit"], r["margin"]]
+                   for r in rows]
+            out.append(["合计", "", "", totals["revenue"], totals["cost"], totals["commission"],
+                        totals["profit"], totals["margin"]])
+        else:
+            headers = ["商品编码", "商品名称", "销售数量", "销售收入(不含税)", "销售成本", "销售毛利", "毛利率%"]
+            out = [[(r["product"].code if r["product"] else ""), (r["product"].name if r["product"] else ""),
+                    r["qty"], r["revenue"], r["cost"], r["profit"], r["margin"]] for r in rows]
+            out.append(["合计", "", "", totals["revenue"], totals["cost"], totals["profit"], totals["margin"]])
         return xlsx_response("销售收入成本计算表(按出库)", headers, out, company=company, period=(dfrom, dto))
     return render(request, "finance/sales_cost_by_outbound.html", {
         "rows": rows, "totals": totals, "active_company": company,
-        "date_from": dfrom, "date_to": dto})
+        "date_from": dfrom, "date_to": dto, "show_commission": show_commission})
 
 
 @login_required
