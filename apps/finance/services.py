@@ -392,6 +392,119 @@ def allocate_receipt(*, receipt, allocations, user=None):
     return receipt
 
 
+def _cash_doc_block_reason(doc, today):
+    """收/付款单可否修改/删除：非作废、未核销、未对账、当月。可改返回 None。"""
+    if doc.status == doc.Status.VOID:
+        return "已作废，不可修改/删除"
+    if doc.settled_amount > 0:
+        return "已核销，请先撤销核销后再操作"
+    if doc.bank_journal_id and doc.bank_journal.reconciled:
+        return "该笔已银行对账，不可修改/删除"
+    if (doc.doc_date.year, doc.doc_date.month) != (today.year, today.month):
+        return "仅当月单据可修改/删除"
+    return None
+
+
+def receipt_edit_block_reason(rec, today):
+    return _cash_doc_block_reason(rec, today)
+
+
+def payment_edit_block_reason(pay, today):
+    return _cash_doc_block_reason(pay, today)
+
+
+@transaction.atomic
+def update_receipt(rec, *, user, doc_date, bank_account, customer, amount, summary=""):
+    """修改收款（仅银行方式、未核销）：同步更新对应银行日记账。"""
+    if rec.settled_amount > 0:
+        raise SettlementError("已核销的收款不可修改，请先撤销核销")
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("收款金额必须大于 0")
+    rec.doc_date = doc_date
+    rec.bank_account = bank_account
+    rec.customer = customer
+    rec.amount = amount
+    rec.summary = summary
+    rec.save(update_fields=["doc_date", "bank_account", "customer", "amount", "summary"])
+    j = rec.bank_journal
+    if j is not None:
+        j.date = doc_date
+        j.bank_account = bank_account
+        j.amount = amount
+        j.entry_type = (BankJournal.EntryType.SETTLEMENT if customer
+                        else BankJournal.EntryType.OTHER)
+        j.counterparty = str(customer) if customer else ""
+        j.summary = summary or f"收款 {rec.doc_no}"
+        j.save(update_fields=["date", "bank_account", "amount", "entry_type",
+                              "counterparty", "summary"])
+    AuditLog.record(actor=user, company=rec.company, action=AuditLog.Action.UPDATE, target=rec,
+                    summary=f"修改收款 {rec.doc_no} 收 {customer or '其他'} {amount}（{bank_account}）")
+    return rec
+
+
+@transaction.atomic
+def delete_receipt(rec, *, user):
+    """删除收款（未核销）：连同自动生成的银行日记账一并删除。"""
+    if rec.settled_amount > 0:
+        raise SettlementError("已核销的收款不可删除，请先撤销核销")
+    company, doc_no = rec.company, rec.doc_no
+    j = rec.bank_journal
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=rec,
+                    summary=f"删除收款 {doc_no} {rec.amount}")
+    rec.bank_journal = None
+    rec.save(update_fields=["bank_journal"])
+    rec.delete()
+    if j is not None:
+        j.delete()
+
+
+@transaction.atomic
+def update_payment(pay, *, user, doc_date, bank_account, supplier, amount, summary=""):
+    """修改付款（仅银行方式、未核销）：同步更新对应银行日记账。"""
+    if pay.settled_amount > 0:
+        raise SettlementError("已核销的付款不可修改，请先撤销核销")
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("付款金额必须大于 0")
+    pay.doc_date = doc_date
+    pay.bank_account = bank_account
+    pay.supplier = supplier
+    pay.amount = amount
+    pay.summary = summary
+    pay.save(update_fields=["doc_date", "bank_account", "supplier", "amount", "summary"])
+    j = pay.bank_journal
+    if j is not None:
+        j.date = doc_date
+        j.bank_account = bank_account
+        j.amount = amount
+        j.entry_type = (BankJournal.EntryType.SETTLEMENT if supplier
+                        else BankJournal.EntryType.OTHER)
+        j.counterparty = str(supplier) if supplier else ""
+        j.summary = summary or f"付款 {pay.doc_no}"
+        j.save(update_fields=["date", "bank_account", "amount", "entry_type",
+                              "counterparty", "summary"])
+    AuditLog.record(actor=user, company=pay.company, action=AuditLog.Action.UPDATE, target=pay,
+                    summary=f"修改付款 {pay.doc_no} 付 {supplier or '其他'} {amount}（{bank_account}）")
+    return pay
+
+
+@transaction.atomic
+def delete_payment(pay, *, user):
+    """删除付款（未核销）：连同自动生成的银行日记账一并删除。"""
+    if pay.settled_amount > 0:
+        raise SettlementError("已核销的付款不可删除，请先撤销核销")
+    company, doc_no = pay.company, pay.doc_no
+    j = pay.bank_journal
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=pay,
+                    summary=f"删除付款 {doc_no} {pay.amount}")
+    pay.bank_journal = None
+    pay.save(update_fields=["bank_journal"])
+    pay.delete()
+    if j is not None:
+        j.delete()
+
+
 # ============================= 票据（M3）=====================================
 @transaction.atomic
 def create_note_receivable(*, company, user, draw_date, amount, customer=None,

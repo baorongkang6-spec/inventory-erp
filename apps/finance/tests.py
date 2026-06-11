@@ -6,7 +6,14 @@ from decimal import Decimal
 from django.test import TestCase
 
 from apps.core.models import Company
-from apps.finance.models import BankAccount, BankJournal, NotePayable, NoteReceivable  # noqa: F401
+from apps.finance.models import (  # noqa: F401
+    BankAccount,
+    BankJournal,
+    NotePayable,
+    NoteReceivable,
+    Payment,
+    Receipt,
+)
 from apps.finance.services import (
     SettlementError,
     allocate_payment,
@@ -1062,3 +1069,108 @@ class PurchaseInvoiceEditTests(TestCase):
         self.assertEqual(inv.term_days, 30)
         self.assertEqual(inv.amount_untaxed, Decimal("1500.00"))
         self.assertEqual(inv.amount_taxed, Decimal("1695.00"))
+
+
+class ReceiptPaymentEditDeleteTests(TestCase):
+    """收款/付款 修改与删除：同步银行日记账、当月+未核销限制、删除即移除日记账。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+        cls.acc2 = BankAccount.objects.create(company=cls.c1, name="一般户")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.user = U.objects.create_user(username="cash2", password="x",
+                                         can_view_all_companies=True)
+        for code in ("add_receipt", "add_payment", "view_receipt", "view_payment"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    # ---- service：修改同步日记账 ----
+    def test_update_receipt_syncs_journal(self):
+        from apps.finance.services import update_receipt
+        from django.utils import timezone
+        rec = create_receipt(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                             bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
+        update_receipt(rec, user=self.user, doc_date=timezone.localdate(),
+                       bank_account=self.acc2, customer=None, amount=Decimal("800"), summary="改")
+        rec.refresh_from_db()
+        self.assertEqual(rec.amount, Decimal("800.00"))
+        self.assertEqual(rec.bank_account_id, self.acc2.pk)
+        j = rec.bank_journal
+        self.assertEqual(j.amount, Decimal("800.00"))           # 日记账同步
+        self.assertEqual(j.bank_account_id, self.acc2.pk)
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+
+    # ---- service：删除连带日记账 ----
+    def test_delete_payment_removes_journal(self):
+        from apps.finance.services import delete_payment
+        from django.utils import timezone
+        pay = create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                            bank_account=self.acc, supplier=self.sup, amount=Decimal("600"))
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+        delete_payment(pay, user=self.user)
+        self.assertEqual(Payment.objects.filter(company=self.c1).count(), 0)
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+
+    # ---- 已核销不可删 ----
+    def test_settled_receipt_blocked(self):
+        from apps.finance.services import delete_receipt, receipt_edit_block_reason
+        from django.utils import timezone
+        rec = create_receipt(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                             bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
+        rec.settled_amount = Decimal("100"); rec.save(update_fields=["settled_amount"])
+        self.assertIsNotNone(receipt_edit_block_reason(rec, timezone.localdate()))
+        with self.assertRaises(SettlementError):
+            delete_receipt(rec, user=self.user)
+
+    # ---- 跨月不可改 ----
+    def test_crossmonth_blocked(self):
+        from apps.finance.services import receipt_edit_block_reason
+        rec = create_receipt(company=self.c1, user=self.user, doc_date=date(2026, 5, 8),
+                             bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
+        self.assertEqual(receipt_edit_block_reason(rec, date(2026, 6, 11)), "仅当月单据可修改/删除")
+
+    # ---- 已对账不可改 ----
+    def test_reconciled_blocked(self):
+        from apps.finance.services import payment_edit_block_reason
+        from django.utils import timezone
+        pay = create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                            bank_account=self.acc, supplier=self.sup, amount=Decimal("600"))
+        j = pay.bank_journal; j.reconciled = True; j.save(update_fields=["reconciled"])
+        pay.refresh_from_db()
+        self.assertEqual(payment_edit_block_reason(pay, timezone.localdate()),
+                         "该笔已银行对账，不可修改/删除")
+
+    # ---- 视图：删除收款 ----
+    def test_receipt_delete_view(self):
+        from django.utils import timezone
+        rec = create_receipt(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                             bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/receipts/{rec.pk}/delete/",
+                             SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(Receipt.objects.filter(company=self.c1).count(), 0)
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+
+    # ---- 视图：修改付款 ----
+    def test_payment_edit_view_post(self):
+        from django.utils import timezone
+        pay = create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                            bank_account=self.acc, supplier=self.sup, amount=Decimal("600"))
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/payments/{pay.pk}/edit/", {
+            "doc_date": timezone.localdate().strftime("%Y-%m-%d"),
+            "bank_account": self.acc2.pk, "supplier": self.sup.pk,
+            "amount": "999", "summary": "改后",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        pay.refresh_from_db()
+        self.assertEqual(pay.amount, Decimal("999.00"))
+        self.assertEqual(pay.bank_account_id, self.acc2.pk)
+        self.assertEqual(pay.bank_journal.amount, Decimal("999.00"))

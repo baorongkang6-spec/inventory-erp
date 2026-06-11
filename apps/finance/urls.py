@@ -19,6 +19,8 @@ urlpatterns = [
     path("payments/", views.PaymentListView.as_view(), name="payment_list"),
     path("payments/new/", views.payment_create, name="payment_create"),
     path("payments/<int:pk>/", views.PaymentDetailView.as_view(), name="payment_detail"),
+    path("payments/<int:pk>/edit/", views.payment_edit, name="payment_edit"),
+    path("payments/<int:pk>/delete/", views.payment_delete, name="payment_delete"),
     path("payments/<int:pk>/allocate/", views.payment_allocate, name="payment_allocate"),
     # 销售发票（→应收）
     path("sales-invoices/", views.SalesInvoiceListView.as_view(), name="sales_invoice_list"),
@@ -30,6 +32,8 @@ urlpatterns = [
     path("receipts/", views.ReceiptListView.as_view(), name="receipt_list"),
     path("receipts/new/", views.receipt_create, name="receipt_create"),
     path("receipts/<int:pk>/", views.ReceiptDetailView.as_view(), name="receipt_detail"),
+    path("receipts/<int:pk>/edit/", views.receipt_edit, name="receipt_edit"),
+    path("receipts/<int:pk>/delete/", views.receipt_delete, name="receipt_delete"),
     path("receipts/<int:pk>/allocate/", views.receipt_allocate, name="receipt_allocate"),
     # 报表（M2-6）
     path("reports/bank-accounts/", views.bank_accounts_report, name="bank_accounts_report"),

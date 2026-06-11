@@ -25,9 +25,11 @@ from .forms import (
     BankAccountForm,
     NotePayableForm,
     NoteReceivableForm,
+    PaymentEditForm,
     PaymentForm,
     PurchaseInvoiceHeaderForm,
     PurchaseInvoiceLineFormSet,
+    ReceiptEditForm,
     ReceiptForm,
     SalesInvoiceHeaderForm,
     SalesInvoiceLineFormSet,
@@ -52,9 +54,15 @@ from .services import (
     create_purchase_invoice,
     create_receipt,
     create_sales_invoice,
+    delete_payment,
+    delete_receipt,
     endorse_receivable_against_purchase,
+    payment_edit_block_reason,
+    receipt_edit_block_reason,
     settle_payable_against_purchase,
     settle_receivable_against_sales,
+    update_payment,
+    update_receipt,
 )
 
 
@@ -286,7 +294,14 @@ class PaymentListView(FilteredListMixin, CompanyScopedMixin, ListView):
     context_object_name = "payments"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("supplier", "bank_account")
+        return super().get_queryset().select_related("supplier", "bank_account", "bank_journal")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        today = timezone.localdate()
+        for p in ctx.get(self.context_object_name, []):
+            p.can_edit = payment_edit_block_reason(p, today) is None
+        return ctx
 
 
 class PaymentDetailView(CompanyScopedMixin, DetailView):
@@ -403,6 +418,57 @@ def _handle_payment_by_note(request, company, cd, inv_candidates):
         return None
     messages.success(request, f"已用应收票据 {note.doc_no} 背书付款 {amount}，抵付 {len(allocations)} 张采购发票")
     return redirect("note_receivable_list")
+
+
+@login_required
+@permission_required("finance.add_payment", raise_exception=True)
+def payment_edit(request, pk):
+    """修改付款（仅银行方式、当月、未核销/未对账）。同步更新银行日记账。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    pay = get_object_or_404(Payment, pk=pk, company=company)
+    reason = payment_edit_block_reason(pay, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect("payment_detail", pk=pay.pk)
+    if request.method == "POST":
+        form = PaymentEditForm(request.POST, instance=pay, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            try:
+                update_payment(pay, user=request.user, doc_date=cd["doc_date"],
+                               bank_account=cd["bank_account"], supplier=cd["supplier"],
+                               amount=cd["amount"], summary=cd.get("summary", ""))
+            except (SettlementError, ValueError) as e:
+                messages.error(request, f"修改失败：{e}")
+            else:
+                messages.success(request, f"付款已修改：{pay.doc_no}")
+                return redirect("payment_detail", pk=pay.pk)
+    else:
+        form = PaymentEditForm(instance=pay, company=company)
+    return render(request, "finance/cash_doc_edit.html",
+                  {"form": form, "title": f"修改付款 {pay.doc_no}",
+                   "cancel_url": "payment_detail", "obj_pk": pay.pk, "amount_label": "付款金额"})
+
+
+@login_required
+@permission_required("finance.add_payment", raise_exception=True)
+@require_POST
+def payment_delete(request, pk):
+    """删除付款（仅银行方式、当月、未核销/未对账）。连同银行日记账删除。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    pay = get_object_or_404(Payment, pk=pk, company=company)
+    reason = payment_edit_block_reason(pay, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可删除：{reason}")
+        return redirect("payment_detail", pk=pay.pk)
+    doc_no = pay.doc_no
+    try:
+        delete_payment(pay, user=request.user)
+    except SettlementError as e:
+        messages.error(request, f"删除失败：{e}")
+        return redirect("payment_detail", pk=pk)
+    messages.success(request, f"付款已删除：{doc_no}")
+    return redirect("payment_list")
 
 
 @login_required
@@ -663,7 +729,14 @@ class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
     context_object_name = "receipts"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("customer", "bank_account")
+        return super().get_queryset().select_related("customer", "bank_account", "bank_journal")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        today = timezone.localdate()
+        for r in ctx.get(self.context_object_name, []):
+            r.can_edit = receipt_edit_block_reason(r, today) is None
+        return ctx
 
 
 class ReceiptDetailView(CompanyScopedMixin, DetailView):
@@ -737,6 +810,57 @@ def _handle_receipt_by_note(request, company, cd, inv_candidates):
     tail = f"，并冲抵 {len(allocations)} 张销售发票" if allocations else "（在手，未冲销）"
     messages.success(request, f"已收到应收票据 {note.doc_no} 票面 {amount}{tail}")
     return redirect("note_receivable_list")
+
+
+@login_required
+@permission_required("finance.add_receipt", raise_exception=True)
+def receipt_edit(request, pk):
+    """修改收款（仅银行方式、当月、未核销/未对账）。同步更新银行日记账。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    rec = get_object_or_404(Receipt, pk=pk, company=company)
+    reason = receipt_edit_block_reason(rec, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect("receipt_detail", pk=rec.pk)
+    if request.method == "POST":
+        form = ReceiptEditForm(request.POST, instance=rec, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            try:
+                update_receipt(rec, user=request.user, doc_date=cd["doc_date"],
+                               bank_account=cd["bank_account"], customer=cd["customer"],
+                               amount=cd["amount"], summary=cd.get("summary", ""))
+            except (SettlementError, ValueError) as e:
+                messages.error(request, f"修改失败：{e}")
+            else:
+                messages.success(request, f"收款已修改：{rec.doc_no}")
+                return redirect("receipt_detail", pk=rec.pk)
+    else:
+        form = ReceiptEditForm(instance=rec, company=company)
+    return render(request, "finance/cash_doc_edit.html",
+                  {"form": form, "title": f"修改收款 {rec.doc_no}",
+                   "cancel_url": "receipt_detail", "obj_pk": rec.pk, "amount_label": "收款金额"})
+
+
+@login_required
+@permission_required("finance.add_receipt", raise_exception=True)
+@require_POST
+def receipt_delete(request, pk):
+    """删除收款（仅银行方式、当月、未核销/未对账）。连同银行日记账删除。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    rec = get_object_or_404(Receipt, pk=pk, company=company)
+    reason = receipt_edit_block_reason(rec, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可删除：{reason}")
+        return redirect("receipt_detail", pk=rec.pk)
+    doc_no = rec.doc_no
+    try:
+        delete_receipt(rec, user=request.user)
+    except SettlementError as e:
+        messages.error(request, f"删除失败：{e}")
+        return redirect("receipt_detail", pk=pk)
+    messages.success(request, f"收款已删除：{doc_no}")
+    return redirect("receipt_list")
 
 
 @login_required
