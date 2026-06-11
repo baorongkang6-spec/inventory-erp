@@ -19,3 +19,9 @@ env/
 # 编辑器
 .idea/
 .vscode/
+
+# Windows 服务器本地文件（NSSM、运行日志，各机器各自有，不入库）
+/logs/
+nssm.exe
+nssm-2.24.zip
+/nssm/
