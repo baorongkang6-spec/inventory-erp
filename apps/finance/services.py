@@ -706,6 +706,17 @@ def delete_other_cashflow(*, journal, user):
     journal.delete()
 
 
+def other_cashflow_block_reason(journal, today):
+    """其他收支可否修改/删除：仅手工登记(Other)、未对账、当月。可改返回 None。"""
+    if journal.source_type != "Other":
+        return "仅手工登记的其他收支可修改/删除；往来收付请到对应单据操作"
+    if journal.reconciled:
+        return "该笔已银行对账，不可修改/删除"
+    if (journal.date.year, journal.date.month) != (today.year, today.month):
+        return "仅当月单据可修改/删除"
+    return None
+
+
 @transaction.atomic
 def update_other_cashflow(*, journal, user, doc_date, bank_account, direction, amount,
                           entry_type, counterparty="", summary="", txn_no=""):

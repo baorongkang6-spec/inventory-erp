@@ -1221,6 +1221,15 @@ class OtherCashflowEditTests(TestCase):
                                   bank_account=self.acc, direction=BankJournal.Direction.OUT,
                                   amount=Decimal("350"), entry_type=BankJournal.EntryType.EXPENSE)
 
+    def test_block_reason_crossmonth(self):
+        from apps.finance.services import create_other_cashflow, other_cashflow_block_reason
+        j = create_other_cashflow(
+            company=self.c1, user=self.user, doc_date=date(2026, 5, 8),
+            bank_account=self.acc, direction=BankJournal.Direction.OUT, amount=Decimal("200"),
+            entry_type=BankJournal.EntryType.EXPENSE, summary="上月电费")
+        self.assertEqual(other_cashflow_block_reason(j, date(2026, 6, 11)),
+                         "仅当月单据可修改/删除")
+
     def test_non_other_journal_cannot_be_edited(self):
         # 往来生成的（如付款）source_type != Other，不可走此修改
         from apps.finance.services import create_payment, update_other_cashflow

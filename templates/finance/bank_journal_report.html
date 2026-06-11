@@ -80,13 +80,14 @@
           <td class="text-end">{% if r.j.direction == 'out' %}{{ r.j.amount }}{% endif %}</td>
           <td class="text-end">{{ r.balance }}</td>
           <td class="text-end">
-            {% if r.j.source_type == 'Other' and not r.j.reconciled and perms.finance.add_bankjournal %}
-            <a href="{% url 'other_cashflow_edit' r.j.pk %}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
-            {% endif %}
-            {% if r.j.source_type == 'Other' and perms.finance.delete_bankjournal %}
-            <a href="{% url 'other_cashflow_delete' r.j.pk %}" class="btn btn-sm btn-outline-danger py-0">删除</a>
-            {% endif %}
-            {% if r.j.source_type != 'Other' %}—{% endif %}
+            {% if r.j.source_type == 'Other' and not r.j.reconciled and r.j.date|date:'Y-m' == today|date:'Y-m' %}
+              {% if perms.finance.add_bankjournal %}
+              <a href="{% url 'other_cashflow_edit' r.j.pk %}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
+              {% endif %}
+              {% if perms.finance.delete_bankjournal %}
+              <a href="{% url 'other_cashflow_delete' r.j.pk %}" class="btn btn-sm btn-outline-danger py-0">删除</a>
+              {% endif %}
+            {% else %}—{% endif %}
           </td>
         </tr>
         {% empty %}

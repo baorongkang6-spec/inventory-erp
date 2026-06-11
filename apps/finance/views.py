@@ -1044,7 +1044,7 @@ def bank_journal_report(request):
         "entry_type": entry_type, "entry_types": BankJournal.EntryType.choices,
         "date_from": request.GET.get("from", ""), "date_to": request.GET.get("to", ""),
         "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
-        "multi": account is None,
+        "multi": account is None, "today": timezone.localdate(),
     })
 
 
@@ -1653,14 +1653,13 @@ def other_cashflow_edit(request, pk):
     from .forms import OtherCashflowForm
     from .services import SettlementError, update_other_cashflow
 
+    from .services import other_cashflow_block_reason
     company = get_active_company(request, list(get_visible_companies(request.user)))
     journal = get_object_or_404(BankJournal, pk=pk, company=company)
     back = f"{reverse_lazy('bank_journal_report')}?account={journal.bank_account_id}"
-    if journal.source_type != "Other":
-        messages.error(request, "仅手工登记的其他收支可修改")
-        return redirect(back)
-    if journal.reconciled:
-        messages.error(request, "该笔已银行对账，不可修改")
+    reason = other_cashflow_block_reason(journal, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
         return redirect(back)
 
     if request.method == "POST":
@@ -1692,12 +1691,16 @@ def other_cashflow_edit(request, pk):
 @login_required
 @permission_required("finance.delete_bankjournal", raise_exception=True)
 def other_cashflow_delete(request, pk):
-    """删除手工登记的其他收支（仅 source_type=Other）。"""
-    from .services import SettlementError, delete_other_cashflow
+    """删除手工登记的其他收支（仅 source_type=Other、当月、未对账）。"""
+    from .services import SettlementError, delete_other_cashflow, other_cashflow_block_reason
 
     company = get_active_company(request, list(get_visible_companies(request.user)))
     journal = get_object_or_404(BankJournal, pk=pk, company=company)
     acc_id = journal.bank_account_id
+    reason = other_cashflow_block_reason(journal, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可删除：{reason}")
+        return redirect(f"{reverse_lazy('bank_journal_report')}?account={acc_id}")
     if request.method == "POST":
         try:
             delete_other_cashflow(journal=journal, user=request.user)
