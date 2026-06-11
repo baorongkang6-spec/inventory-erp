@@ -17,7 +17,7 @@
         <tr><th>单据编号</th><th>开票日期</th><th>发票号码</th><th>供应商</th>
             <th class="text-end">不含税</th><th class="text-end">税额</th>
             <th class="text-end">含税(应付)</th><th class="text-end">已核销</th>
-            <th class="text-end">未核销</th><th>状态</th></tr>
+            <th class="text-end">未核销</th><th>状态</th><th class="text-end">操作</th></tr>
       </thead>
       <tbody>
         {% for inv in invoices %}
@@ -32,9 +32,14 @@
           <td class="text-end">{{ inv.settled_amount }}</td>
           <td class="text-end fw-semibold">{{ inv.outstanding }}</td>
           <td>{{ inv.get_status_display }}</td>
+          <td class="text-end">
+            {% if inv.status != 'void' and not inv.is_opening and inv.settled_amount == 0 and perms.finance.add_purchaseinvoice %}
+            <a href="{% url 'purchase_invoice_edit' inv.pk %}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
+            {% endif %}
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="10" class="text-center text-muted py-4">当前账套暂无采购发票</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-4">当前账套暂无采购发票</td></tr>
         {% endfor %}
       </tbody>
     </table>
