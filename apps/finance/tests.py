@@ -957,8 +957,10 @@ class ReceiptPaymentByNoteTests(TestCase):
         }, SERVER_NAME="localhost", follow=True)
         self.assertEqual(r.status_code, 200)
         note.refresh_from_db()
-        self.assertEqual(note.status, NoteReceivable.Status.ENDORSED)
+        # 部分背书：票面 1000 用了 800，余 200 仍「在手」可继续使用
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
         self.assertEqual(note.settled_amount, Decimal("800.00"))
+        self.assertEqual(note.unused, Decimal("200.00"))
         inv.refresh_from_db()
         self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应付已冲平
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
@@ -1258,3 +1260,72 @@ class OtherCashflowEditTests(TestCase):
         j.refresh_from_db()
         self.assertEqual(j.amount, Decimal("500.00"))
         self.assertEqual(j.counterparty, "电力公司")
+
+
+class NoteMixedUseTests(TestCase):
+    """一张应收票据可分次混合使用：部分冲应收 + 部分背书抵应付，未用完保持在手。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+
+    def _note(self, amount):
+        from apps.finance.services import create_note_receivable
+        return create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 6, 11),
+            amount=Decimal(amount), customer=self.cust, note_no="BJ-MIX")
+
+    def _sales(self, amount):
+        return create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal(amount),
+                    "tax_rate": Decimal("0")}])
+
+    def _purchase(self, amount):
+        return create_purchase_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), supplier=self.sup,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal(amount),
+                    "tax_rate": Decimal("0")}])
+
+    def test_partial_settle_then_partial_endorse_keeps_on_hand(self):
+        from apps.finance.services import (endorse_receivable_against_purchase,
+                                           settle_receivable_against_sales)
+        note = self._note("1000")
+        si = self._sales("1000")
+        pi = self._purchase("1000")
+
+        # 先冲应收 400
+        settle_receivable_against_sales(
+            note=note, allocations=[{"invoice": si, "amount": Decimal("400")}])
+        note.refresh_from_db()
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)   # 仍在手
+        self.assertEqual(note.unused, Decimal("600.00"))
+
+        # 再背书抵应付 300（关键：以前这一步会立刻锁成「已背书」）
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": pi, "amount": Decimal("300")}])
+        note.refresh_from_db()
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)   # 仍可继续用
+        self.assertEqual(note.unused, Decimal("300.00"))
+
+        si.refresh_from_db(); pi.refresh_from_db()
+        self.assertEqual(si.settled_amount, Decimal("400.00"))         # 应收冲了 400
+        self.assertEqual(pi.settled_amount, Decimal("300.00"))         # 应付抵了 300
+
+        # 用完剩余 300（再冲应收），票面归零 → 因含背书，终态为「已背书」
+        settle_receivable_against_sales(
+            note=note, allocations=[{"invoice": si, "amount": Decimal("300")}])
+        note.refresh_from_db()
+        self.assertEqual(note.unused, Decimal("0.00"))
+        self.assertEqual(note.status, NoteReceivable.Status.ENDORSED)
+
+    def test_pure_full_settle_marks_settled(self):
+        from apps.finance.services import settle_receivable_against_sales
+        note = self._note("500")
+        si = self._sales("500")
+        settle_receivable_against_sales(
+            note=note, allocations=[{"invoice": si, "amount": Decimal("500")}])
+        note.refresh_from_db()
+        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)   # 纯冲应收全额 → 已结算

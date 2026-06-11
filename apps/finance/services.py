@@ -581,10 +581,18 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         inv.save(update_fields=["settled_amount"])
 
     note.settled_amount += total
-    if is_endorsement:
-        note.status = NoteReceivable.Status.ENDORSED
-    elif note.unused == 0:
-        note.status = type(note).Status.SETTLED
+    # 仅在票面全部用完时才定终态；未用完保持「在手」，可继续冲应收 / 背书抵应付混合使用
+    if note.unused == 0:
+        endorsed_any = is_endorsement
+        if (not endorsed_any
+                and note_kind == NoteSettlement.NoteKind.RECEIVABLE):
+            endorsed_any = NoteSettlement.objects.filter(
+                company=note.company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+                note_id=note.pk, is_endorsement=True).exists()
+        if endorsed_any:
+            note.status = NoteReceivable.Status.ENDORSED   # 任一部分已背书 → 票据已转让
+        else:
+            note.status = type(note).Status.SETTLED
     note.save(update_fields=["settled_amount", "status"])
 
     AuditLog.record(
