@@ -312,6 +312,11 @@ class PaymentDetailView(CompanyScopedMixin, DetailView):
     def get_queryset(self):
         return super().get_queryset().select_related("supplier", "bank_account", "bank_journal")
 
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["can_edit"] = payment_edit_block_reason(self.object, timezone.localdate()) is None
+        return ctx
+
 
 def _collect_allocations(request, candidates):
     """从 POST 收集逐张发票的冲销额：alloc-<pk>。返回 (allocations, error_msg)。"""
@@ -746,6 +751,11 @@ class ReceiptDetailView(CompanyScopedMixin, DetailView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("customer", "bank_account", "bank_journal")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["can_edit"] = receipt_edit_block_reason(self.object, timezone.localdate()) is None
+        return ctx
 
 
 @login_required
@@ -1632,7 +1642,51 @@ def other_cashflow_create(request):
                 return redirect(f"{reverse_lazy('bank_journal_report')}?account={j.bank_account_id}")
     else:
         form = OtherCashflowForm(company=company, initial={"doc_date": timezone.localdate()})
-    return render(request, "finance/other_cashflow_form.html", {"form": form, "title": "其他收支登记"})
+    return render(request, "finance/other_cashflow_form.html",
+                  {"form": form, "title": "其他收支登记", "submit_label": "登记"})
+
+
+@login_required
+@permission_required("finance.add_bankjournal", raise_exception=True)
+def other_cashflow_edit(request, pk):
+    """修改手工登记的其他收支（仅 source_type=Other、未对账）。"""
+    from .forms import OtherCashflowForm
+    from .services import SettlementError, update_other_cashflow
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    journal = get_object_or_404(BankJournal, pk=pk, company=company)
+    back = f"{reverse_lazy('bank_journal_report')}?account={journal.bank_account_id}"
+    if journal.source_type != "Other":
+        messages.error(request, "仅手工登记的其他收支可修改")
+        return redirect(back)
+    if journal.reconciled:
+        messages.error(request, "该笔已银行对账，不可修改")
+        return redirect(back)
+
+    if request.method == "POST":
+        form = OtherCashflowForm(request.POST, company=company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            try:
+                update_other_cashflow(
+                    journal=journal, user=request.user, doc_date=cd["doc_date"],
+                    bank_account=cd["bank_account"], direction=cd["direction"],
+                    amount=cd["amount"], entry_type=cd["entry_type"],
+                    counterparty=cd.get("counterparty", ""), summary=cd.get("summary", ""),
+                    txn_no=cd.get("txn_no", ""))
+            except SettlementError as e:
+                messages.error(request, str(e))
+            else:
+                messages.success(request, "其他收支已修改")
+                return redirect(f"{reverse_lazy('bank_journal_report')}?account={journal.bank_account_id}")
+    else:
+        form = OtherCashflowForm(company=company, initial={
+            "doc_date": journal.date, "bank_account": journal.bank_account_id,
+            "direction": journal.direction, "entry_type": journal.entry_type,
+            "amount": journal.amount, "counterparty": journal.counterparty,
+            "summary": journal.summary, "txn_no": journal.txn_no})
+    return render(request, "finance/other_cashflow_form.html",
+                  {"form": form, "title": "修改其他收支", "submit_label": "保存"})
 
 
 @login_required

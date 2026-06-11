@@ -1174,3 +1174,78 @@ class ReceiptPaymentEditDeleteTests(TestCase):
         self.assertEqual(pay.amount, Decimal("999.00"))
         self.assertEqual(pay.bank_account_id, self.acc2.pk)
         self.assertEqual(pay.bank_journal.amount, Decimal("999.00"))
+
+
+class OtherCashflowEditTests(TestCase):
+    """其他收支：修改（仅 source_type=Other、未对账）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+        cls.user = U.objects.create_user(username="oc", password="x", can_view_all_companies=True)
+        for code in ("add_bankjournal", "view_bankjournal"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _other(self):
+        from apps.finance.services import create_other_cashflow
+        from django.utils import timezone
+        return create_other_cashflow(
+            company=self.c1, user=self.user, doc_date=timezone.localdate(),
+            bank_account=self.acc, direction=BankJournal.Direction.OUT, amount=Decimal("200"),
+            entry_type=BankJournal.EntryType.EXPENSE, summary="电费")
+
+    def test_update_other_cashflow(self):
+        from apps.finance.services import update_other_cashflow
+        from django.utils import timezone
+        j = self._other()
+        update_other_cashflow(journal=j, user=self.user, doc_date=timezone.localdate(),
+                              bank_account=self.acc, direction=BankJournal.Direction.OUT,
+                              amount=Decimal("350"), entry_type=BankJournal.EntryType.EXPENSE,
+                              summary="改电费")
+        j.refresh_from_db()
+        self.assertEqual(j.amount, Decimal("350.00"))
+        self.assertEqual(j.summary, "改电费")
+
+    def test_reconciled_other_cashflow_blocked(self):
+        from apps.finance.services import update_other_cashflow
+        from django.utils import timezone
+        j = self._other()
+        j.reconciled = True; j.save(update_fields=["reconciled"])
+        with self.assertRaises(SettlementError):
+            update_other_cashflow(journal=j, user=self.user, doc_date=timezone.localdate(),
+                                  bank_account=self.acc, direction=BankJournal.Direction.OUT,
+                                  amount=Decimal("350"), entry_type=BankJournal.EntryType.EXPENSE)
+
+    def test_non_other_journal_cannot_be_edited(self):
+        # 往来生成的（如付款）source_type != Other，不可走此修改
+        from apps.finance.services import create_payment, update_other_cashflow
+        from apps.masterdata.models import Supplier
+        from django.utils import timezone
+        sup = Supplier.objects.create(company=self.c1, code="S1", name="供应商甲")
+        pay = create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                            bank_account=self.acc, supplier=sup, amount=Decimal("100"))
+        with self.assertRaises(SettlementError):
+            update_other_cashflow(journal=pay.bank_journal, user=self.user,
+                                  doc_date=timezone.localdate(), bank_account=self.acc,
+                                  direction=BankJournal.Direction.OUT, amount=Decimal("50"),
+                                  entry_type=BankJournal.EntryType.EXPENSE)
+
+    def test_edit_view_post(self):
+        from django.utils import timezone
+        j = self._other()
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/other-cashflow/{j.pk}/edit/", {
+            "doc_date": timezone.localdate().strftime("%Y-%m-%d"),
+            "bank_account": self.acc.pk, "direction": "out",
+            "entry_type": BankJournal.EntryType.EXPENSE, "amount": "500",
+            "counterparty": "电力公司", "summary": "改后", "txn_no": "",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        j.refresh_from_db()
+        self.assertEqual(j.amount, Decimal("500.00"))
+        self.assertEqual(j.counterparty, "电力公司")

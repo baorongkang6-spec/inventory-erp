@@ -43,6 +43,7 @@ urlpatterns = [
     path("reports/bank-journal/template/", views.bank_journal_template, name="bank_journal_template"),
     path("reports/bank-reconcile/", views.bank_reconcile, name="bank_reconcile"),
     path("other-cashflow/new/", views.other_cashflow_create, name="other_cashflow_create"),
+    path("other-cashflow/<int:pk>/edit/", views.other_cashflow_edit, name="other_cashflow_edit"),
     path("other-cashflow/<int:pk>/delete/", views.other_cashflow_delete, name="other_cashflow_delete"),
     path("reports/payables/", views.payables_report, name="payables_report"),
     path("reports/receivables/", views.receivables_report, name="receivables_report"),

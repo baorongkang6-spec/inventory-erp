@@ -3,7 +3,7 @@
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-12 col-lg-7">
-    <h4 class="mb-3">其他收支登记<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+    <h4 class="mb-3">{{ title|default:"其他收支登记" }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
     <div class="card">
       <div class="card-body">
         <form method="post">
@@ -17,7 +17,7 @@
           </div>
           {% endfor %}
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary">登记</button>
+            <button type="submit" class="btn btn-primary">{{ submit_label|default:"登记" }}</button>
             <a href="{% url 'bank_journal_report' %}" class="btn btn-outline-secondary">取消</a>
           </div>
           <p class="text-muted small mt-2">用于费用、税费、工资、内部划转等<b>非往来</b>的银行收支，直接生成银行存款日记账。

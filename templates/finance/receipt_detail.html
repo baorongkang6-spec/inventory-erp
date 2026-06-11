@@ -7,6 +7,13 @@
     {% if rec.unallocated > 0 and perms.finance.add_receiptallocation %}
     <a href="{% url 'receipt_allocate' rec.pk %}" class="btn btn-success btn-sm">核销应收</a>
     {% endif %}
+    {% if can_edit and perms.finance.add_receipt %}
+    <a href="{% url 'receipt_edit' rec.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
+    <form method="post" action="{% url 'receipt_delete' rec.pk %}" class="d-inline"
+          onsubmit="return confirm('确认删除收款 {{ rec.doc_no }}？将同时删除对应银行日记账，且不可恢复。');">
+      {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">删除</button>
+    </form>
+    {% endif %}
     <a href="{% url 'receipt_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
   </div>
 </div>

@@ -706,6 +706,36 @@ def delete_other_cashflow(*, journal, user):
     journal.delete()
 
 
+@transaction.atomic
+def update_other_cashflow(*, journal, user, doc_date, bank_account, direction, amount,
+                          entry_type, counterparty="", summary="", txn_no=""):
+    """修改手工登记的其他收支日记账（仅 source_type=Other、未对账）。"""
+    if journal.source_type != "Other":
+        raise SettlementError("仅可修改手工登记的其他收支；往来收付请到对应单据修改")
+    if journal.reconciled:
+        raise SettlementError("该笔已银行对账，不可修改")
+    if amount is None or amount <= ZERO_MONEY:
+        raise SettlementError("金额必须大于 0")
+    if entry_type == BankJournal.EntryType.SETTLEMENT:
+        raise SettlementError("往来结算请走付款/收款登记")
+    journal.date = doc_date
+    journal.bank_account = bank_account
+    journal.direction = direction
+    journal.amount = round_money(amount)
+    journal.entry_type = entry_type
+    journal.counterparty = counterparty
+    journal.summary = summary
+    journal.txn_no = txn_no
+    journal.save(update_fields=["date", "bank_account", "direction", "amount",
+                                "entry_type", "counterparty", "summary", "txn_no"])
+    AuditLog.record(
+        actor=user, company=journal.company, action=AuditLog.Action.UPDATE, target=journal,
+        summary=f"修改其他收支 {journal.get_entry_type_display()} "
+                f"{journal.get_direction_display()} {journal.amount}",
+    )
+    return journal
+
+
 # ============================= 银行对账（M8-3）===============================
 @transaction.atomic
 def reconcile_bank_journal(*, company, user, account, parsed, filename=""):
