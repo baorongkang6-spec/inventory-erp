@@ -979,3 +979,86 @@ class ReceiptPaymentByNoteTests(TestCase):
         }, SERVER_NAME="localhost", follow=True)
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
         self.assertEqual(NoteReceivable.objects.filter(company=self.c1).count(), 0)
+
+
+class PurchaseInvoiceEditTests(TestCase):
+    """采购发票修改：重算应付、已核销/期初/跨月拦截、视图入口。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.sup2 = Supplier.objects.create(company=cls.c1, code="S2", name="供应商乙")
+        cls.user = U.objects.create_user(username="purch", password="x",
+                                         can_view_all_companies=True)
+        for code in ("add_purchaseinvoice", "view_purchaseinvoice"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _invoice(self, amount, day=None):
+        from django.utils import timezone
+        d = timezone.localdate() if day is None else day
+        return create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=d, supplier=self.sup,
+            lines=[{"product": None, "description": "货", "amount_untaxed": amount,
+                    "tax_rate": Decimal("0.13")}])
+
+    def test_update_recomputes_payable(self):
+        from apps.finance.services import update_purchase_invoice
+        inv = self._invoice(Decimal("1000"))
+        doc_no = inv.doc_no
+        update_purchase_invoice(
+            inv, user=self.user, doc_date=inv.doc_date, supplier=self.sup2,
+            lines=[{"product": None, "description": "改后", "amount_untaxed": Decimal("2000"),
+                    "tax_rate": Decimal("0.13")}])
+        inv.refresh_from_db()
+        self.assertEqual(inv.doc_no, doc_no)                 # 单号保留
+        self.assertEqual(inv.supplier_id, self.sup2.pk)      # 供应商可改
+        self.assertEqual(inv.amount_untaxed, Decimal("2000.00"))
+        self.assertEqual(inv.tax_amount, Decimal("260.00"))
+        self.assertEqual(inv.amount_taxed, Decimal("2260.00"))
+        self.assertEqual(inv.lines.count(), 1)
+
+    def test_settled_invoice_blocked(self):
+        from apps.finance.services import update_purchase_invoice
+        inv = self._invoice(Decimal("1000"))
+        inv.settled_amount = Decimal("100")
+        inv.save(update_fields=["settled_amount"])
+        with self.assertRaises(SettlementError):
+            update_purchase_invoice(
+                inv, user=self.user, doc_date=inv.doc_date, supplier=self.sup,
+                lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("5"),
+                        "tax_rate": Decimal("0")}])
+
+    def test_block_reason_crossmonth_and_opening(self):
+        from apps.finance.services import purchase_invoice_edit_block_reason
+        today = date(2026, 6, 11)
+        inv = self._invoice(Decimal("1000"), day=date(2026, 6, 8))
+        self.assertIsNone(purchase_invoice_edit_block_reason(inv, today))   # 本月可改
+        inv2 = self._invoice(Decimal("1000"), day=date(2026, 5, 8))
+        self.assertEqual(purchase_invoice_edit_block_reason(inv2, today), "跨月发票不可修改")
+
+    def test_edit_view_get_and_post(self):
+        inv = self._invoice(Decimal("1000"))
+        self.client.force_login(self.user)
+        url = f"/finance/purchase-invoices/{inv.pk}/edit/"
+        r = self.client.get(url, SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        r2 = self.client.post(url, {
+            "doc_date": inv.doc_date.strftime("%Y-%m-%d"),
+            "supplier": self.sup.pk, "invoice_no": "FP-NEW", "remark": "改备注", "term_days": "30",
+            "form-TOTAL_FORMS": "1", "form-INITIAL_FORMS": "0",
+            "form-MIN_NUM_FORMS": "0", "form-MAX_NUM_FORMS": "1000",
+            "form-0-product": "", "form-0-description": "改后货", "form-0-quantity": "",
+            "form-0-amount_untaxed": "1500", "form-0-tax_rate": "0.13",
+            "form-0-tax_amount": "", "form-0-amount_taxed": "", "form-0-source_inbound_line": "",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r2.status_code, 200)
+        inv.refresh_from_db()
+        self.assertEqual(inv.invoice_no, "FP-NEW")
+        self.assertEqual(inv.term_days, 30)
+        self.assertEqual(inv.amount_untaxed, Decimal("1500.00"))
+        self.assertEqual(inv.amount_taxed, Decimal("1695.00"))

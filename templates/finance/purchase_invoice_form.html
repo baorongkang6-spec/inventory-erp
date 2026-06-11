@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}登记采购发票 · 库存 ERP{% endblock %}
 {% block content %}
-<h4 class="mb-3">登记采购发票<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<h4 class="mb-3">{{ title|default:"登记采购发票" }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
 
 {# 从入库单带入明细（可选）#}
 <form method="get" class="card card-body mb-2 py-2">

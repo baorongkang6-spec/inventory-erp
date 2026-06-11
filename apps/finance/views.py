@@ -196,8 +196,80 @@ def purchase_invoice_create(request):
     # 可选择的入库单（供「从入库单带入」下拉）
     inbounds = PurchaseInbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
     return render(request, "finance/purchase_invoice_form.html",
-                  {"header": header, "formset": formset, "inbounds": inbounds, "title": "采购发票",
+                  {"header": header, "formset": formset, "inbounds": inbounds, "title": "登记采购发票",
                    "selected_inbound_id": request.GET.get("inbound", "")})
+
+
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def purchase_invoice_edit(request, pk):
+    """修改采购发票（保留单号、可重设关联入库单）。未核销、本月、非期初方可改。"""
+    from .services import purchase_invoice_edit_block_reason, update_purchase_invoice
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    inv = get_object_or_404(PurchaseInvoice, pk=pk, company=company)
+    reason = purchase_invoice_edit_block_reason(inv, timezone.localdate())
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect("purchase_invoice_detail", pk=inv.pk)
+
+    if request.method == "POST":
+        header = PurchaseInvoiceHeaderForm(request.POST, company=company)
+        formset = PurchaseInvoiceLineFormSet(request.POST, company=company)
+        if header.is_valid() and formset.is_valid():
+            lines = [
+                {"product": cd.get("product"), "description": cd.get("description", ""),
+                 "quantity": cd.get("quantity"), "amount_untaxed": cd["amount_untaxed"],
+                 "tax_rate": cd["tax_rate"],
+                 "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed"),
+                 "source_inbound_line": _resolve_inbound_line(company, cd.get("source_inbound_line"))}
+                for cd in formset.valid_lines
+            ]
+            try:
+                update_purchase_invoice(
+                    inv, user=request.user, doc_date=header.cleaned_data["doc_date"],
+                    supplier=header.cleaned_data["supplier"],
+                    invoice_no=header.cleaned_data.get("invoice_no", ""),
+                    remark=header.cleaned_data.get("remark", ""),
+                    term_days=header.cleaned_data.get("term_days") or 0, lines=lines)
+            except SettlementError as e:
+                messages.error(request, f"修改失败：{e}")
+            else:
+                messages.success(request, f"采购发票已修改：{inv.doc_no}")
+                return redirect("purchase_invoice_detail", pk=inv.pk)
+    else:
+        inbound_id = request.GET.get("inbound")
+        if inbound_id:
+            # 修改时也支持「从入库单带入」：用所选入库单覆盖明细并建立关联
+            h, line_init, inbound = _inbound_prefill(company, inbound_id)
+            header_initial = {"doc_date": inv.doc_date, "supplier": inv.supplier_id,
+                              "invoice_no": inv.invoice_no, "remark": inv.remark,
+                              "term_days": inv.term_days}
+            if inbound:
+                header_initial.update(h)
+                messages.info(request, f"已从入库单 {inbound.doc_no} 带出明细，请核对后保存")
+            header = PurchaseInvoiceHeaderForm(company=company, initial=header_initial)
+            formset = PurchaseInvoiceLineFormSet(company=company, initial=line_init)
+        else:
+            header = PurchaseInvoiceHeaderForm(company=company, initial={
+                "doc_date": inv.doc_date, "supplier": inv.supplier_id,
+                "invoice_no": inv.invoice_no, "remark": inv.remark,
+                "term_days": inv.term_days})
+            line_init = [{
+                "product": ln.product_id, "description": ln.description, "quantity": ln.quantity,
+                "amount_untaxed": ln.amount_untaxed, "tax_rate": ln.tax_rate,
+                "source_inbound_line": ln.source_inbound_line_id,
+            } for ln in inv.lines.all()]
+            formset = PurchaseInvoiceLineFormSet(company=company, initial=line_init)
+
+    inbounds = PurchaseInbound.objects.filter(company=company).order_by("-doc_date", "-id")[:50]
+    if request.GET.get("inbound"):
+        sel_ib = request.GET.get("inbound")
+    else:
+        linked = inv.lines.exclude(source_inbound_line=None).first()
+        sel_ib = linked.source_inbound_line.inbound_id if linked else ""
+    return render(request, "finance/purchase_invoice_form.html",
+                  {"header": header, "formset": formset, "inbounds": inbounds,
+                   "title": f"修改采购发票 {inv.doc_no}", "selected_inbound_id": sel_ib})
 
 
 # --- 付款登记（自动生成银行日记账）------------------------------------------
