@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
@@ -305,28 +305,122 @@ def purchase_invoice_edit(request, pk):
                    "title": f"修改采购发票 {inv.doc_no}", "selected_inbound_id": sel_ib})
 
 
-# --- 付款登记（自动生成银行日记账）------------------------------------------
-class PaymentListView(FilteredListMixin, CompanyScopedMixin, ListView):
-    search_fields = ["doc_no", "supplier__name"]
-    date_filter_field = "doc_date"
-    q_placeholder = "单号/供应商"
-    export_filename = "付款登记"
-    export_columns = [("单据编号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
-                      ("供应商","supplier__name"),("付款金额","amount"),("已核销","settled_amount"),
-                      ("未核销","unallocated"),("状态","get_status_display")]
-    model = Payment
-    template_name = "finance/payment_list.html"
-    context_object_name = "payments"
+# --- 收款/付款登记（统一一览：银行 + 应收票据）-------------------------------
+def _cash_list_filter(request, rows, q_placeholder):
+    """对统一行做日期区间 + 关键字过滤、排序，并构造筛选条上下文。"""
+    df = _parse_date(request.GET.get("from"))
+    dt = _parse_date(request.GET.get("to"))
+    if df:
+        rows = [r for r in rows if r["date"] and r["date"] >= df]
+    if dt:
+        rows = [r for r in rows if r["date"] and r["date"] <= dt]
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        ql = q.lower()
+        rows = [r for r in rows
+                if ql in r["doc_no"].lower() or ql in (r["party"] or "").lower()]
+    rows.sort(key=lambda r: (r["date"], r["doc_no"]), reverse=True)
+    params = request.GET.copy()
+    params["export"] = "xlsx"
+    fctx = {"q": q, "from": request.GET.get("from", ""), "to": request.GET.get("to", ""),
+            "has_q": True, "has_date": True, "q_placeholder": q_placeholder,
+            "can_export": True, "export_url": "?" + params.urlencode()}
+    return rows, fctx
 
-    def get_queryset(self):
-        return super().get_queryset().select_related("supplier", "bank_account", "bank_journal")
 
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        today = timezone.localdate()
-        for p in ctx.get(self.context_object_name, []):
-            p.can_edit = payment_edit_block_reason(p, today) is None
-        return ctx
+def _export_cash_rows(name, rows, company, party_label):
+    from apps.core.exports import xlsx_response
+    headers = ["单据编号", "日期", "方式", party_label, "金额", "已核销", "未核销", "状态"]
+    data = [[r["doc_no"], r["date"], r["method"], r["party"], r["amount"],
+             r["settled"], r["unsettled"], r["status"]] for r in rows]
+    return xlsx_response(name, headers, data, company=company)
+
+
+def _payment_rows(company):
+    """付款一览行：银行付款 + 应收票据背书抵应付（按票据归并）。"""
+    from .models import NoteSettlement
+    today = timezone.localdate()
+    rows = []
+    for p in (Payment.objects.filter(company=company)
+              .select_related("supplier", "bank_account", "bank_journal")):
+        rows.append({
+            "doc_no": p.doc_no, "date": p.doc_date,
+            "method": p.bank_account.name if p.bank_account_id else "—",
+            "party": str(p.supplier) if p.supplier_id else "其他付款",
+            "amount": p.amount, "settled": p.settled_amount, "unsettled": p.unallocated,
+            "status": p.get_status_display(), "is_note": False,
+            "detail_url": reverse("payment_detail", args=[p.pk]),
+            "can_edit": payment_edit_block_reason(p, today) is None,
+            "edit_url": reverse("payment_edit", args=[p.pk]),
+            "delete_url": reverse("payment_delete", args=[p.pk])})
+    endos = list(NoteSettlement.objects.filter(
+        company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+        is_endorsement=True, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE))
+    if endos:
+        notes = {n.doc_no: n for n in NoteReceivable.objects.filter(
+            company=company, doc_no__in={e.note_no for e in endos})}
+        sup_by_inv = {i.pk: (str(i.supplier) if i.supplier_id else "")
+                      for i in PurchaseInvoice.objects.filter(pk__in={e.invoice_id for e in endos})
+                      .select_related("supplier")}
+        grp = {}
+        for e in endos:
+            g = grp.setdefault(e.note_no, {"amount": Decimal("0.00"), "suppliers": set()})
+            g["amount"] += e.amount
+            s = sup_by_inv.get(e.invoice_id)
+            if s:
+                g["suppliers"].add(s)
+        for note_no, g in grp.items():
+            n = notes.get(note_no)
+            sup = sorted(g["suppliers"])
+            party = (sup[0] if len(sup) == 1
+                     else (f"{len(sup)} 个供应商" if sup else "—"))
+            rows.append({
+                "doc_no": note_no, "date": n.draw_date if n else None,
+                "method": "应收票据背书", "party": party,
+                "amount": g["amount"], "settled": g["amount"], "unsettled": Decimal("0.00"),
+                "status": n.get_status_display() if n else "已背书", "is_note": True,
+                "detail_url": reverse("note_receivable_list"),
+                "can_edit": False, "edit_url": "", "delete_url": ""})
+    return rows
+
+
+def _receipt_rows(company):
+    """收款一览行：银行收款 + 收到的应收票据。"""
+    today = timezone.localdate()
+    rows = []
+    for r in (Receipt.objects.filter(company=company)
+              .select_related("customer", "bank_account", "bank_journal")):
+        rows.append({
+            "doc_no": r.doc_no, "date": r.doc_date,
+            "method": r.bank_account.name if r.bank_account_id else "—",
+            "party": str(r.customer) if r.customer_id else "其他收款",
+            "amount": r.amount, "settled": r.settled_amount, "unsettled": r.unallocated,
+            "status": r.get_status_display(), "is_note": False,
+            "detail_url": reverse("receipt_detail", args=[r.pk]),
+            "can_edit": receipt_edit_block_reason(r, today) is None,
+            "edit_url": reverse("receipt_edit", args=[r.pk]),
+            "delete_url": reverse("receipt_delete", args=[r.pk])})
+    for n in NoteReceivable.objects.filter(company=company).select_related("customer"):
+        rows.append({
+            "doc_no": n.doc_no, "date": n.draw_date, "method": "应收票据",
+            "party": str(n.customer) if n.customer_id else "—",
+            "amount": n.amount, "settled": n.settled_amount, "unsettled": n.unused,
+            "status": n.get_status_display(), "is_note": True,
+            "detail_url": reverse("note_receivable_list"),
+            "can_edit": False, "edit_url": "", "delete_url": ""})
+    return rows
+
+
+@login_required
+@permission_required("finance.view_payment", raise_exception=True)
+def payment_list(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    rows = _payment_rows(company) if company else []
+    rows, fctx = _cash_list_filter(request, rows, "单号/供应商")
+    if company and request.GET.get("export") == "xlsx":
+        return _export_cash_rows("付款登记", rows, company, "供应商")
+    return render(request, "finance/payment_list.html",
+                  {"rows": rows, "filter": fctx, "party_label": "供应商"})
 
 
 class PaymentDetailView(CompanyScopedMixin, DetailView):
@@ -833,27 +927,16 @@ def sales_invoice_edit(request, pk):
                    "title": f"修改销售发票 {inv.doc_no}", "selected_outbound_id": sel_ob})
 
 
-class ReceiptListView(FilteredListMixin, CompanyScopedMixin, ListView):
-    search_fields = ["doc_no", "customer__name"]
-    date_filter_field = "doc_date"
-    q_placeholder = "单号/客户"
-    export_filename = "收款登记"
-    export_columns = [("单据编号","doc_no"),("日期","doc_date"),("银行账户","bank_account__name"),
-                      ("客户","customer__name"),("收款金额","amount"),("已核销","settled_amount"),
-                      ("未核销","unallocated"),("状态","get_status_display")]
-    model = Receipt
-    template_name = "finance/receipt_list.html"
-    context_object_name = "receipts"
-
-    def get_queryset(self):
-        return super().get_queryset().select_related("customer", "bank_account", "bank_journal")
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        today = timezone.localdate()
-        for r in ctx.get(self.context_object_name, []):
-            r.can_edit = receipt_edit_block_reason(r, today) is None
-        return ctx
+@login_required
+@permission_required("finance.view_receipt", raise_exception=True)
+def receipt_list(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    rows = _receipt_rows(company) if company else []
+    rows, fctx = _cash_list_filter(request, rows, "单号/客户")
+    if company and request.GET.get("export") == "xlsx":
+        return _export_cash_rows("收款登记", rows, company, "客户")
+    return render(request, "finance/receipt_list.html",
+                  {"rows": rows, "filter": fctx, "party_label": "客户"})
 
 
 class ReceiptDetailView(CompanyScopedMixin, DetailView):

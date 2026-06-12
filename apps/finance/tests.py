@@ -1515,3 +1515,60 @@ class InvoiceSettlementBreakdownTests(TestCase):
         self.assertIn("核销明细", html)
         self.assertIn("应收票据背书抵付", html)     # 核销方式标明是背书
         self.assertIn("YSP-C1-20260611-005", html)  # 指向那张票据
+
+
+class UnifiedCashListTests(TestCase):
+    """收款/付款列表统一一览：银行 + 应收票据都出现，方式列正确。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="招商银行")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.user = U.objects.create_user(username="cl", password="x", can_view_all_companies=True)
+        for code in ("view_receipt", "view_payment"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def test_receipt_list_includes_bank_and_note(self):
+        from apps.finance.services import create_receipt
+        from django.utils import timezone
+        create_receipt(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                       bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
+        NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260611-005", note_no="BJ1",
+            draw_date=date(2026, 6, 11), customer=self.cust, amount=Decimal("232000.03"))
+        self.client.force_login(self.user)
+        h = self.client.get("/finance/receipts/", SERVER_NAME="localhost").content.decode()
+        self.assertIn("收款方式", h)
+        self.assertIn("招商银行", h)                  # 银行收款行
+        self.assertIn("应收票据", h)                  # 票据收款行
+        self.assertIn("YSP-C1-20260611-005", h)
+        self.assertIn("232,000.03", h)               # 千分位显示
+
+    def test_payment_list_includes_bank_and_endorsement(self):
+        from apps.finance.services import (create_payment, create_purchase_invoice,
+                                           endorse_receivable_against_purchase)
+        from django.utils import timezone
+        create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                       bank_account=self.acc, supplier=self.sup, amount=Decimal("600"))
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260611-009", note_no="BJ9",
+            draw_date=date(2026, 6, 11), customer=self.cust, amount=Decimal("1000"))
+        inv = create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=timezone.localdate(), supplier=self.sup,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("800"),
+                    "tax_rate": Decimal("0")}])
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("800")}], user=self.user)
+        self.client.force_login(self.user)
+        h = self.client.get("/finance/payments/", SERVER_NAME="localhost").content.decode()
+        self.assertIn("付款方式", h)
+        self.assertIn("招商银行", h)                  # 银行付款行
+        self.assertIn("应收票据背书", h)              # 背书付款行
+        self.assertIn("YSP-C1-20260611-009", h)
+        self.assertIn("供应商甲", h)                  # 背书行的供应商

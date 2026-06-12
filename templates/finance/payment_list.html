@@ -14,26 +14,26 @@
   <div class="table-responsive">
     <table class="table table-hover table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>单据编号</th><th>日期</th><th>银行账户</th><th>供应商</th>
+        <tr><th>单据编号</th><th>日期</th><th>付款方式</th><th>{{ party_label }}</th>
             <th class="text-end">付款金额</th><th class="text-end">已核销</th>
             <th class="text-end">未核销</th><th>状态</th><th class="text-end">操作</th></tr>
       </thead>
       <tbody>
-        {% for p in payments %}
+        {% for r in rows %}
         <tr>
-          <td><a href="{% url 'payment_detail' p.pk %}">{{ p.doc_no }}</a></td>
-          <td>{{ p.doc_date }}</td>
-          <td>{{ p.bank_account }}</td>
-          <td>{{ p.supplier|default:"其他付款" }}</td>
-          <td class="text-end">{{ p.amount }}</td>
-          <td class="text-end">{{ p.settled_amount }}</td>
-          <td class="text-end fw-semibold">{{ p.unallocated }}</td>
-          <td>{{ p.get_status_display }}</td>
+          <td>{% if r.detail_url %}<a href="{{ r.detail_url }}">{{ r.doc_no }}</a>{% else %}{{ r.doc_no }}{% endif %}</td>
+          <td>{{ r.date|date:"Y年n月j日" }}</td>
+          <td>{% if r.is_note %}<span class="badge text-bg-info">{{ r.method }}</span>{% else %}{{ r.method }}{% endif %}</td>
+          <td>{{ r.party }}</td>
+          <td class="text-end">{{ r.amount }}</td>
+          <td class="text-end">{{ r.settled }}</td>
+          <td class="text-end fw-semibold">{{ r.unsettled }}</td>
+          <td>{{ r.status }}</td>
           <td class="text-end text-nowrap">
-            {% if p.can_edit and perms.finance.add_payment %}
-            <a href="{% url 'payment_edit' p.pk %}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
-            <form method="post" action="{% url 'payment_delete' p.pk %}" class="d-inline"
-                  onsubmit="return confirm('确认删除付款 {{ p.doc_no }}？将同时删除对应银行日记账，且不可恢复。');">
+            {% if not r.is_note and r.can_edit and perms.finance.add_payment %}
+            <a href="{{ r.edit_url }}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
+            <form method="post" action="{{ r.delete_url }}" class="d-inline"
+                  onsubmit="return confirm('确认删除付款 {{ r.doc_no }}？将同时删除对应银行日记账，且不可恢复。');">
               {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
             </form>
             {% endif %}
@@ -46,4 +46,5 @@
     </table>
   </div>
 </div>
+<p class="text-muted small mt-2">「付款方式」为<strong>应收票据背书</strong>的行来自票据背书抵应付（不产生付款单、不记银行日记账），其修改/作废请到「资金 ▸ 应收票据」。</p>
 {% endblock %}

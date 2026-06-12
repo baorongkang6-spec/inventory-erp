@@ -17,7 +17,7 @@ urlpatterns = [
     path("purchase-invoices/<int:pk>/void/", views.purchase_invoice_void, name="purchase_invoice_void"),
     path("purchase-invoices/<int:pk>/delete/", views.purchase_invoice_delete, name="purchase_invoice_delete"),
     # 付款登记
-    path("payments/", views.PaymentListView.as_view(), name="payment_list"),
+    path("payments/", views.payment_list, name="payment_list"),
     path("payments/new/", views.payment_create, name="payment_create"),
     path("payments/<int:pk>/", views.PaymentDetailView.as_view(), name="payment_detail"),
     path("payments/<int:pk>/edit/", views.payment_edit, name="payment_edit"),
@@ -31,7 +31,7 @@ urlpatterns = [
     path("sales-invoices/<int:pk>/void/", views.sales_invoice_void, name="sales_invoice_void"),
     path("sales-invoices/<int:pk>/delete/", views.sales_invoice_delete, name="sales_invoice_delete"),
     # 收款登记 + 应收核销
-    path("receipts/", views.ReceiptListView.as_view(), name="receipt_list"),
+    path("receipts/", views.receipt_list, name="receipt_list"),
     path("receipts/new/", views.receipt_create, name="receipt_create"),
     path("receipts/<int:pk>/", views.ReceiptDetailView.as_view(), name="receipt_detail"),
     path("receipts/<int:pk>/edit/", views.receipt_edit, name="receipt_edit"),
