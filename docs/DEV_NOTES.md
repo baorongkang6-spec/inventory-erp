@@ -151,3 +151,43 @@
 - **长尾零根因=SQLite**：对 DecimalField 做 SUM 返回浮点→Decimal 带长尾零。reports 的 `_s`/`bank_open0` 用 round_money、收开票数量 round_qty 量化。
 - **Excel**：xlsx_response 数字单元格 + 银行日记账导出金额列(D/E/G) 设 `number_format="#,##0.00"`。
 - 备注：数量仍按 3 位小数显示(保精度)；金额 2 位。
+
+---
+
+## 进度快照（2026-06-12）
+
+> 交接存档：新 session 读 `CLAUDE.md` + `SPEC.md` + 本节即可无缝接续。
+
+### 一、项目当前状态
+- **已上线生产，进入"按需迭代"阶段**，早已远超 SPEC §11 的 M0–M6 里程碑（M0–M10 均完成，见 TaskList）。
+- 生产部署：公司 Windows Server 2022（内网 `192.168.10.245`），**SQLite** + Waitress + NSSM 服务（`InventoryERP`，开机自启），花生壳 HTTPS `https://10vtcu2238888.vicp.fun`，Gitee 私有仓库（SSH 免密）远程更新（`update.bat`）。
+- **全量测试 155 个全绿**（`uv run python manage.py test`）。`manage.py check` 无警告。`git` 工作区干净、全部已推送 Gitee `master`。
+
+### 二、本轮（近几个 session）做完的增量（均已测试+提交+部署）
+1. **应收票据收付集成**：收款方式/付款方式下拉加「应收票据」——收款=银行账户+收到应收票据；付款=银行账户+应收票据背书抵应付。复用既有 `create_note_receivable / settle_receivable_against_sales / endorse_receivable_against_purchase`，不重写账务内核。
+2. **发票尾差手工微调**：采购/销售发票行的「税额」「含税金额」可手填（`_resolve_tax` 优先用录入值），尾差不再被自动算覆盖。
+3. **采购发票「修改」**：`update_purchase_invoice` + `purchase_invoice_edit`（对齐销售发票，保留单号、重算应付）。
+4. **各列表「修改」快捷入口**：采购入库/销售出库/采购发票/销售发票列表操作列加「修改」。
+5. **收款/付款「修改」「删除」**：仅「当月+未核销+未对账」；修改同步对应银行日记账，删除连带删日记账。`_cash_doc_block_reason` 统一判定。
+6. **其他收支「修改」**：`update_other_cashflow`（仅手工 source_type=Other + 当月 + 未对账）；银行日记账报表行加「修改/删除」。
+7. **应收票据可分次混合使用（修了真 bug）**：`_apply_note` 原先一背书就锁「已背书」、剩余票面用不了；改为**仅票面全用完(unused==0)才定终态**，未用完保持「在手」，可"部分冲应收 + 部分背书"混用。终态：含任一背书→已背书，否则已结算。
+8. **采购/销售发票「删除」**（彻底移除，区别于作废）：`delete_purchase_invoice / delete_sales_invoice`，未核销+非期初才可删；列表+详情都有按钮（含已作废未核销的清理）。
+9. **采购入库「受限硬删除」**：`delete_purchase_inbound` + `inbound_delete_block_reason`。因移动加权成本链式，**仅当该入库后相关商品再无任何出入库变动**（即"刚录错马上撤")、且非镜像/未开票/当月/本人或管理员时才允许；用 `reverse_move` 精确反冲再删两条流水不留痕。其余情况用「作废」。
+10. **修改收付时可切换为票据**：付款「修改」改用完整 `PaymentForm`、收款「修改」改用完整 `ReceiptForm`；若把方式改成应收票据(背书)/应收票据，保存时**原子地删旧银行单+日记账、改记为票据**（误记更正）；校验失败整体回滚。删掉了 `PaymentEditForm/ReceiptEditForm` 与 `cash_doc_edit.html`。
+11. **发票详情「核销明细」**：列出已核销来自哪些付款/票据（`_invoice_settlements` 合并 PaymentAllocation/ReceiptAllocation + NoteSettlement，标明"应收票据背书抵付"等）。解决用户疑惑"已核销但付款里没有"。
+12. **统一收/付一览（最近一项，已完成）**：收款/付款列表「银行账户」列改「收款/付款方式」，**合并两类数据源**——
+    - 列表视图由 ClassView 改为**函数视图** `receipt_list / payment_list`（`apps/finance/views.py`）；`_receipt_rows / _payment_rows` 产出统一行 dict，`_cash_list_filter` 做日期+关键字过滤、`_export_cash_rows` 导出。
+    - 收款行 = `Receipt`(银行) + `NoteReceivable`(应收票据)；付款行 = `Payment`(银行) + `NoteSettlement` 背书(按票据 `note_no` 归并、汇总供应商)。
+    - 票据行只读（无修改/删除，操作在「资金▸应收票据」），方式列带蓝色 badge。保留筛选+Excel 导出。
+    - 已删除 `PaymentListView/ReceiptListView` 类，URL 指向函数视图。
+
+### 三、已知问题 / 临时凑合（下次回头看）
+- **死代码**：`InsufficientStockError` 类自负库存放开后已无处抛出；`apps/sales/views.py` 的对应 `except` 成无害死代码（可清理）。
+- **付款一览「应收票据背书」归并口径偏简化**：按票据 `note_no` 归并求和；若一张票分多次背书给不同供应商，会显示"N 个供应商"，日期取**票据出票日**（非背书日）。够看不够精细，必要时可改为按背书批次/日期拆行。
+- **销售出库还没有「删除」按钮**（只有作废）；采购入库已加受限硬删除。对称性待补（用户说"需要的话再加"，见待定 Q-003）。
+- **DB 状态偏差（本轮已修文档）**：CLAUDE.md/DEPLOY.md 原写生产用 PostgreSQL，**实际生产跑的是 SQLite**（代码两者都支持，靠 `DB_ENGINE` 切换）。已在本轮把文档改为"实际 SQLite"。
+
+### 四、下一步建议从哪继续
+- 本项目无固定 backlog，处于**用户驱动按需迭代**。下次大概率是用户截图提新需求/报 bug，照现有"服务层守账务 + 视图层管策略 + 模板按 can_xxx 显隐 + 写测试 + 重生成手册 docx/pdf + 提交推送"的节奏做即可。
+- 若用户无新需求，自然的候选：①销售出库「删除」（对称采购入库，见 Q-003）；②应付票据（开本公司票付供应商）相关功能（目前明确"暂不考虑"，Q-004）；③清理 InsufficientStockError 死代码。
+- **改完务必**：`uv run python manage.py test` 全绿 + 重生成 `docs/操作手册.docx/.pdf`（脚本：`uv run --with python-docx python docs/_md2docx.py …`；PDF 走 `_md2html.py` + headless Chrome 打印，命令见近期 commit）。

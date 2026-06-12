@@ -178,7 +178,7 @@
 |---|---|---|
 | 后端 | **Python + Django** | 自带用户/权限/后台/ORM，表单与 Excel 处理方便，适合财务类数据系统 |
 | 前端 | **Django 模板 + Bootstrap 5** | 服务端渲染，天然响应式，电脑/手机一套界面，复杂度低 |
-| 数据库 | **PostgreSQL**（开发期可用 SQLite） | 事务强一致，适合金额/库存数据 |
+| 数据库 | PostgreSQL 与 SQLite 均支持（`DB_ENGINE` 切换）；**实际生产用 SQLite**（数据量小够用） | 事务强一致，适合金额/库存数据 |
 | Excel | **openpyxl / pandas** | 导入导出 |
 | 部署 | **公司 Windows 主机**，Waitress 运行；**花生壳内网穿透**支持外网手机/电脑访问（强制 HTTPS）；详见 `DEPLOY.md` | A1 + 外网访问需求 |
 

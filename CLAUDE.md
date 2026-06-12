@@ -8,8 +8,14 @@
 **`SPEC.md` 是唯一需求来源。动手前必读。** 需求变更先改 SPEC，再改代码。
 部署/上线/安全见 **`DEPLOY.md`**。可复用经验（架构决策/模式/踩坑）随手记在 **`docs/DEV_NOTES.md`**，做完一块顺手追加。
 
+## 当前状态（先读这条）
+**项目已上线生产、进入"按需迭代"阶段**（M0–M10 均完成，远超 SPEC §11 里程碑）。
+接续开发前，务必读 **`docs/DEV_NOTES.md` 末尾的「进度快照」**——里面有最新完成项、已知问题、下一步建议、待定问题（`docs/requirements-checklist.md` 文末清单）。
+节奏：**服务层守账务一致性 + 视图层管策略（block_reason）+ 模板按 `can_xxx` 显隐 + 写测试 + 重生成手册 docx/pdf + 提交推送 Gitee**。改完必跑 `uv run python manage.py test`（现 155 全绿）。
+
 ## ⚠️ 生产将暴露公网（影响设计，开发期就要内置）
-生产 = Windows 主机 + **花生壳内网穿透**（手机/电脑外网可访问）+ PostgreSQL + Waitress（gunicorn 在 Windows 不可用）。
+生产 = Windows 主机 + **花生壳内网穿透**（手机/电脑外网可访问）+ Waitress（gunicorn 在 Windows 不可用）。
+**数据库：实际生产部署用的是 SQLite**（数据量小够用）。代码两种库都支持，靠 `DB_ENGINE` 环境变量切换；如需迁 PostgreSQL 见 DEPLOY.md。
 因此从一开始就要：`ALLOWED_HOSTS`/`CSRF_TRUSTED_ORIGINS`/`SECRET_KEY`/`DEBUG`/`DB_ENGINE` **全走环境变量**；
 生产强制 HTTPS（`SECURE_SSL_REDIRECT`、`*_COOKIE_SECURE`、HSTS）；登录加防爆破锁定；弱密码仅限开发。详见 DEPLOY.md §2。
 

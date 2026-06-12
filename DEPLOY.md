@@ -7,7 +7,7 @@
 ## 1. 部署形态（已确认）
 
 - **生产主机**：公司一台 **Windows** 主机（开发在 Mac，跨平台，上线前需在 Windows 实测一遍）。
-- **数据库**：生产用 **PostgreSQL**（开发期 SQLite），靠 `DB_ENGINE` 环境变量切换。
+- **数据库**：代码支持 PostgreSQL 与 SQLite，靠 `DB_ENGINE` 环境变量切换。**实际生产部署用的是 SQLite**（数据量小、够用、免装 PG）；下文 PostgreSQL 相关步骤为可选的将来迁移方案。
 - **WSGI 服务器**：Windows 上用 **Waitress**（⚠️ gunicorn 在 Windows 跑不了）。
 - **外网访问**：公司服务器已装 **花生壳（Oray）做内网穿透 + 动态域名(DDNS)**，让手机/电脑在外网也能访问。
 - **自启动**：用 **NSSM** 把 ERP 注册成 Windows 服务（开机自启、崩溃自重启）。
