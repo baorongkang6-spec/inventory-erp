@@ -42,6 +42,17 @@
         <tr><td colspan="6" class="text-center text-muted">无数据</td></tr>
         {% endfor %}
       </tbody>
+      {% if b.rows %}
+      <tfoot class="table-light fw-semibold">
+        <tr>
+          <td class="text-start" colspan="2">合计</td>
+          <td>{{ b.total.opening }}</td>
+          <td>{{ b.total.income }}</td>
+          <td>{{ b.total.outgo }}</td>
+          <td>{{ b.total.ending }}</td>
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
 </div>

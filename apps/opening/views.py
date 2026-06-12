@@ -268,12 +268,22 @@ def account_balance(request):
         {"key": "payable", "label": "应付账款（按供应商）", "rows": sections["payable"]},
         {"key": "stock", "label": "库存商品（按品种·金额）", "rows": sections["stock"]},
     ]
+    from apps.core.money import ZERO_MONEY
+    for b in blocks:
+        b["total"] = {col: sum((r[col] for r in b["rows"]), ZERO_MONEY)
+                      for col in ("opening", "income", "outgo", "ending")}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
         headers = ["类别", "公司", "账户/科目", "期初", "本期收入", "本期发出", "期末余额"]
-        rows = [[b["label"], r["company"].short_name or str(r["company"]), r["name"],
-                 r["opening"], r["income"], r["outgo"], r["ending"]]
-                for b in blocks for r in b["rows"]]
+        rows = []
+        for b in blocks:
+            rows += [[b["label"], r["company"].short_name or str(r["company"]), r["name"],
+                      r["opening"], r["income"], r["outgo"], r["ending"]]
+                     for r in b["rows"]]
+            if b["rows"]:
+                t = b["total"]
+                rows.append([b["label"], "", "合计",
+                             t["opening"], t["income"], t["outgo"], t["ending"]])
         company_arg = companies[0] if len(companies) == 1 else None
         return xlsx_response("账户余额表", headers, rows, company=company_arg, period=(dfrom, dto))
     return render(request, "opening/account_balance.html", {

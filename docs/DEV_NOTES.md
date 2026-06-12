@@ -175,7 +175,8 @@
 9. **采购入库「受限硬删除」**：`delete_purchase_inbound` + `inbound_delete_block_reason`。因移动加权成本链式，**仅当该入库后相关商品再无任何出入库变动**（即"刚录错马上撤")、且非镜像/未开票/当月/本人或管理员时才允许；用 `reverse_move` 精确反冲再删两条流水不留痕。其余情况用「作废」。
 10. **修改收付时可切换为票据**：付款「修改」改用完整 `PaymentForm`、收款「修改」改用完整 `ReceiptForm`；若把方式改成应收票据(背书)/应收票据，保存时**原子地删旧银行单+日记账、改记为票据**（误记更正）；校验失败整体回滚。删掉了 `PaymentEditForm/ReceiptEditForm` 与 `cash_doc_edit.html`。
 11. **发票详情「核销明细」**：列出已核销来自哪些付款/票据（`_invoice_settlements` 合并 PaymentAllocation/ReceiptAllocation + NoteSettlement，标明"应收票据背书抵付"等）。解决用户疑惑"已核销但付款里没有"。
-12. **统一收/付一览（最近一项，已完成）**：收款/付款列表「银行账户」列改「收款/付款方式」，**合并两类数据源**——
+12. **账户余额表分组合计（2026-06-12）**：四个分组（银行/应收/应付/库存）网页 tfoot + Excel 导出各加「合计」行；视图统一算 `block["total"]`，模板/导出共用。
+13. **统一收/付一览（已完成）**：收款/付款列表「银行账户」列改「收款/付款方式」，**合并两类数据源**——
     - 列表视图由 ClassView 改为**函数视图** `receipt_list / payment_list`（`apps/finance/views.py`）；`_receipt_rows / _payment_rows` 产出统一行 dict，`_cash_list_filter` 做日期+关键字过滤、`_export_cash_rows` 导出。
     - 收款行 = `Receipt`(银行) + `NoteReceivable`(应收票据)；付款行 = `Payment`(银行) + `NoteSettlement` 背书(按票据 `note_no` 归并、汇总供应商)。
     - 票据行只读（无修改/删除，操作在「资金▸应收票据」），方式列带蓝色 badge。保留筛选+Excel 导出。

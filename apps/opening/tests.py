@@ -181,6 +181,47 @@ class AccountBalanceTableTests(TestCase):
         for sec in (bank, stock, ap):
             self.assertEqual(sec["opening"] + sec["income"] - sec["outgo"], sec["ending"])
 
+    def _login_fin(self):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        user = get_user_model().objects.create_user(
+            username="fin", password="x", can_view_all_companies=True)
+        user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="finance", codename="view_bankjournal"))
+        self.client.force_login(user)
+
+    def test_account_balance_page_section_totals(self):
+        """每个分组（银行/应收/应付/库存）底部有「合计」行，数值=各行之和。"""
+        self._login_fin()
+        resp = self.client.get("/account-balance/?from=2026-01-01&to=2030-01-01",
+                               SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        blocks = {b["key"]: b for b in resp.context["blocks"]}
+        # 银行合计 = 唯一账户期末 500；应付合计 = 630
+        self.assertEqual(blocks["bank"]["total"]["ending"], Decimal("500.00"))
+        self.assertEqual(blocks["payable"]["total"]["ending"], Decimal("630.00"))
+        self.assertEqual(blocks["stock"]["total"]["ending"], Decimal("1500.00"))
+        for b in blocks.values():
+            t = b["total"]
+            self.assertEqual(t["opening"] + t["income"] - t["outgo"], t["ending"])
+        self.assertContains(resp, "合计")
+
+    def test_account_balance_export_has_total_rows(self):
+        """导出 Excel 在每个有数据的分组后附「合计」行。"""
+        from openpyxl import load_workbook
+        self._login_fin()
+        resp = self.client.get(
+            "/account-balance/?from=2026-01-01&to=2030-01-01&export=xlsx",
+            SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        ws = load_workbook(BytesIO(resp.content)).active
+        rows = list(ws.iter_rows(values_only=True))
+        total_rows = [r for r in rows if r[2] == "合计"]
+        # 本数据有 银行/应付/库存 三个分组有数据（无应收）
+        self.assertEqual(len(total_rows), 3)
+        bank_total = next(r for r in total_rows if r[0] == "银行存款明细账户")
+        self.assertEqual(Decimal(str(bank_total[6])), Decimal("500.00"))
+
 
 class QueryCenterTests(TestCase):
     """查询中心（M11）：跨公司组合查询。"""
