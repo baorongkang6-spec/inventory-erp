@@ -114,6 +114,26 @@ class PurchaseInvoiceListView(FilteredListMixin, CompanyScopedMixin, ListView):
         return super().get_queryset().select_related("supplier")
 
 
+def _invoice_settlements(inv, invoice_kind):
+    """汇总一张发票的核销来源（付款/收款核销 + 票据抵冲），返回 [{kind, doc_no, amount}]。"""
+    from .models import NoteSettlement
+    rows = []
+    if invoice_kind == NoteSettlement.InvoiceKind.PURCHASE:
+        for a in inv.allocations.select_related("payment").all():
+            rows.append({"kind": "付款核销", "doc_no": a.payment.doc_no, "amount": a.amount})
+    else:
+        for a in inv.allocations.select_related("receipt").all():
+            rows.append({"kind": "收款核销", "doc_no": a.receipt.doc_no, "amount": a.amount})
+    for s in NoteSettlement.objects.filter(
+            company=inv.company, invoice_kind=invoice_kind, invoice_id=inv.pk):
+        if s.note_kind == NoteSettlement.NoteKind.RECEIVABLE:
+            kind = "应收票据背书抵付" if s.is_endorsement else "应收票据冲销"
+        else:
+            kind = "应付票据抵付"
+        rows.append({"kind": kind, "doc_no": s.note_no, "amount": s.amount})
+    return rows
+
+
 class PurchaseInvoiceDetailView(CompanyScopedMixin, DetailView):
     model = PurchaseInvoice
     template_name = "finance/purchase_invoice_detail.html"
@@ -121,6 +141,13 @@ class PurchaseInvoiceDetailView(CompanyScopedMixin, DetailView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("supplier")
+
+    def get_context_data(self, **kwargs):
+        from .models import NoteSettlement
+        ctx = super().get_context_data(**kwargs)
+        ctx["settlements"] = _invoice_settlements(
+            self.object, NoteSettlement.InvoiceKind.PURCHASE)
+        return ctx
 
 
 def _inbound_prefill(company, inbound_id):
@@ -582,6 +609,13 @@ class SalesInvoiceDetailView(CompanyScopedMixin, DetailView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("customer")
+
+    def get_context_data(self, **kwargs):
+        from .models import NoteSettlement
+        ctx = super().get_context_data(**kwargs)
+        ctx["settlements"] = _invoice_settlements(
+            self.object, NoteSettlement.InvoiceKind.SALES)
+        return ctx
 
 
 def _resolve_outbound_line(company, line_id):

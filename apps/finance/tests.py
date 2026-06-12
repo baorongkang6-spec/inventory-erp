@@ -1478,3 +1478,40 @@ class InvoiceDeleteTests(TestCase):
                              SERVER_NAME="localhost", follow=True)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(SalesInvoice.objects.filter(pk=inv.pk).count(), 0)
+
+
+class InvoiceSettlementBreakdownTests(TestCase):
+    """发票详情「核销明细」：区分付款核销 vs 票据背书抵付。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.user = U.objects.create_user(username="b", password="x", can_view_all_companies=True)
+        for code in ("view_purchaseinvoice",):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def test_endorsement_shows_in_settlement_breakdown(self):
+        from apps.finance.services import endorse_receivable_against_purchase
+        from django.utils import timezone
+        inv = create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=timezone.localdate(), supplier=self.sup,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0")}])
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260611-005", note_no="BJ232",
+            draw_date=date(2026, 6, 11), customer=self.cust, amount=Decimal("232000.03"))
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("600")}], user=self.user)
+        self.client.force_login(self.user)
+        r = self.client.get(f"/finance/purchase-invoices/{inv.pk}/", SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        self.assertIn("核销明细", html)
+        self.assertIn("应收票据背书抵付", html)     # 核销方式标明是背书
+        self.assertIn("YSP-C1-20260611-005", html)  # 指向那张票据
