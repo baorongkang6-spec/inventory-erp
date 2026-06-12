@@ -11,4 +11,5 @@ urlpatterns = [
     path("inbound/<int:pk>/print/", views.inbound_print, name="inbound_print"),
     path("inbound/<int:pk>/edit/", views.inbound_edit, name="inbound_edit"),
     path("inbound/<int:pk>/void/", views.inbound_void, name="inbound_void"),
+    path("inbound/<int:pk>/delete/", views.inbound_delete, name="inbound_delete"),
 ]

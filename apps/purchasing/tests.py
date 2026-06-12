@@ -176,3 +176,83 @@ class InboundListFilterTests(TestCase):
         data = rows[hdr_idx + 1:]
         self.assertEqual(len(data), 1)                     # 筛选后仅 1 行
         self.assertEqual(data[0][0], "RK-C1-20260620-001")
+
+
+class InboundDeleteTests(TestCase):
+    """采购入库硬删除（安全条件下）：反冲库存、彻底移除；非安全场景拦截。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.p2 = Product.objects.create(company=cls.c1, code="P002", name="货B")
+        cls.u = get_user_model().objects.create_user(
+            username="op", password="x", can_view_all_companies=True)
+
+    def _today(self):
+        from django.utils import timezone
+        return timezone.localdate()
+
+    def _inbound(self, product=None, qty="10", price="5"):
+        return create_and_post_inbound(
+            company=self.c1, user=self.u, doc_date=self._today(),
+            lines=[{"product": product or self.p, "quantity": Decimal(qty),
+                    "unit_price": Decimal(price)}])
+
+    def test_delete_latest_inbound_reverses_stock(self):
+        from apps.purchasing.services import delete_purchase_inbound
+        from apps.purchasing.models import PurchaseInbound
+        from apps.inventory.models import StockMove
+        doc = self._inbound(qty="10", price="5")
+        self.assertEqual(StockBalance.objects.get(company=self.c1, product=self.p).quantity,
+                         Decimal("10.000"))
+        delete_purchase_inbound(doc, user=self.u, today=self._today(), is_manager=False)
+        self.assertEqual(PurchaseInbound.objects.filter(pk=doc.pk).count(), 0)   # 单据没了
+        bal = StockBalance.objects.get(company=self.c1, product=self.p)
+        self.assertEqual(bal.quantity, Decimal("0.000"))                          # 库存反冲
+        self.assertEqual(bal.amount, Decimal("0.00"))
+        # 该商品不留任何流水（含原始与反冲）
+        self.assertFalse(StockMove.objects.filter(company=self.c1, product=self.p).exists())
+
+    def test_delete_blocked_when_later_movement_exists(self):
+        from apps.purchasing.services import delete_purchase_inbound, inbound_delete_block_reason
+        first = self._inbound(qty="10", price="5")
+        self._inbound(qty="5", price="6")   # 同商品后续又入库 → first 不再是最后一笔
+        self.assertIsNotNone(inbound_delete_block_reason(first, self.u, self._today(), False))
+        with self.assertRaises(Exception):
+            delete_purchase_inbound(first, user=self.u, today=self._today(), is_manager=False)
+
+    def test_other_product_later_movement_does_not_block(self):
+        from apps.purchasing.services import inbound_delete_block_reason
+        doc = self._inbound(product=self.p, qty="10", price="5")
+        self._inbound(product=self.p2, qty="3", price="2")   # 别的商品，不影响
+        self.assertIsNone(inbound_delete_block_reason(doc, self.u, self._today(), False))
+
+    def test_delete_blocked_when_invoiced(self):
+        from apps.finance.services import create_purchase_invoice
+        from apps.masterdata.models import Supplier
+        from apps.purchasing.services import inbound_delete_block_reason
+        sup = Supplier.objects.create(company=self.c1, code="S1", name="供应商甲")
+        doc = create_and_post_inbound(
+            company=self.c1, user=self.u, doc_date=self._today(), supplier=sup,
+            lines=[{"product": self.p, "quantity": Decimal("10"), "unit_price": Decimal("5")}])
+        ln = doc.lines.first()
+        create_purchase_invoice(
+            company=self.c1, user=self.u, doc_date=self._today(), supplier=sup,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("50"),
+                    "tax_rate": Decimal("0"), "source_inbound_line": ln}])
+        self.assertIn("发票", inbound_delete_block_reason(doc, self.u, self._today(), False))
+
+    def test_delete_view(self):
+        from apps.purchasing.models import PurchaseInbound
+        doc = self._inbound()
+        self.client.force_login(self.u)
+        from django.contrib.auth.models import Permission
+        for code in ("add_purchaseinbound", "view_purchaseinbound"):
+            self.u.user_permissions.add(
+                Permission.objects.get(content_type__app_label="purchasing", codename=code))
+        r = self.client.post(f"/purchasing/inbound/{doc.pk}/delete/",
+                             SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(PurchaseInbound.objects.filter(pk=doc.pk).count(), 0)

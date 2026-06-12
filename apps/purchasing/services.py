@@ -238,3 +238,55 @@ def void_purchase_inbound(doc, user=None, *, _from_source=False):
     AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.VOID, target=doc,
                     summary=f"作废采购入库 {doc.doc_no}（反冲库存）")
     return doc
+
+
+def inbound_delete_block_reason(doc, user, today, is_manager=False):
+    """返回不可硬删除的原因；可删返回 None。
+
+    硬删=彻底移除单据与流水。为不破坏移动加权成本，仅当「该入库后相关商品再无任何
+    出入库变动」时允许；另需：非作废、非镜像、未开票、当月、本人或管理员。
+    其余情况请改用「作废」（反冲库存、留痕）。
+    """
+    from apps.finance.models import PurchaseInvoiceLine
+    from apps.inventory.models import StockMove
+    if doc.status == PurchaseInbound.Status.VOID:
+        return "已作废的入库单无需再删除"
+    if doc.source_outbound_id:
+        return "本单由关联销售出库自动生成，请作废源销售出库单"
+    if not (is_manager or doc.created_by_id == getattr(user, "pk", None)):
+        return "只有录入人本人或管理员可删除"
+    if (doc.doc_date.year, doc.doc_date.month) != (today.year, today.month):
+        return "跨月单据不可删除，请改用作废"
+    if PurchaseInvoiceLine.objects.filter(source_inbound_line__inbound=doc).exists():
+        return "已被采购发票引用，请先删除采购发票"
+    for line in doc.lines.select_related("stock_move"):
+        mv = line.stock_move
+        if mv and StockMove.objects.filter(
+                company=doc.company, product_id=mv.product_id, id__gt=mv.id).exists():
+            return "该入库后相关商品已有其它出入库变动，硬删会影响成本核算，请改用作废"
+    return None
+
+
+@transaction.atomic
+def delete_purchase_inbound(doc, *, user, today, is_manager=False):
+    """硬删除采购入库单（安全条件下）：精确反冲库存，彻底移除单据与其库存流水。"""
+    reason = inbound_delete_block_reason(doc, user, today, is_manager)
+    if reason:
+        raise InventoryError(reason)
+    for line in doc.lines.select_related("stock_move"):
+        mv = line.stock_move
+        if mv:
+            # 借用 reverse_move 精确回退结存（该商品最后一笔，安全），再删掉两条流水不留痕
+            rev = reverse_move(mv, date=doc.doc_date, source_type="PurchaseInboundDelete",
+                               source_id=doc.pk, source_no=f"删除{doc.doc_no}")
+            line.stock_move = None
+            line.save(update_fields=["stock_move"])
+            rev.delete()
+            mv.delete()
+    from apps.finance.models import BorrowTransaction
+    BorrowTransaction.objects.filter(
+        company=doc.company, source_type="PurchaseInbound", source_id=str(doc.pk)).delete()
+    doc_no = doc.doc_no
+    AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.DELETE, target=doc,
+                    summary=f"删除采购入库 {doc_no}（彻底移除并反冲库存）")
+    doc.delete()

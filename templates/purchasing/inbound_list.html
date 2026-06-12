@@ -33,6 +33,12 @@
             {% if doc.status != 'void' and not doc.source_outbound_id and perms.purchasing.add_purchaseinbound %}
             <a href="{% url 'inbound_edit' doc.pk %}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
             {% endif %}
+            {% if doc.can_delete and perms.purchasing.add_purchaseinbound %}
+            <form method="post" action="{% url 'inbound_delete' doc.pk %}" class="d-inline"
+                  onsubmit="return confirm('确认删除采购入库 {{ doc.doc_no }}？将反冲库存并彻底移除该单，且不可恢复。');">
+              {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
+            </form>
+            {% endif %}
             {% if doc.status != 'void' and perms.finance.add_purchaseinvoice %}
               {% if doc.pk in fully_invoiced_ids %}
               <span class="text-success small">发票已收</span>

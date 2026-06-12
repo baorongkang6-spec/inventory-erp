@@ -36,6 +36,11 @@ class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["fully_invoiced_ids"] = _fully_invoiced_inbound_ids(ctx["docs"])
+        from .services import inbound_delete_block_reason
+        today = timezone.localdate()
+        mgr = _inbound_is_manager(self.request.user)
+        for d in ctx["docs"]:
+            d.can_delete = inbound_delete_block_reason(d, self.request.user, today, mgr) is None
         return ctx
 
 
@@ -84,6 +89,10 @@ class InboundDetailView(CompanyScopedMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["fully_invoiced"] = self.object.pk in _fully_invoiced_inbound_ids([self.object])
+        from .services import inbound_delete_block_reason
+        ctx["can_delete"] = inbound_delete_block_reason(
+            self.object, self.request.user, timezone.localdate(),
+            _inbound_is_manager(self.request.user)) is None
         return ctx
 
 
@@ -211,3 +220,22 @@ def inbound_void(request, pk):
     else:
         messages.success(request, f"已作废采购入库 {doc.doc_no}")
     return redirect("inbound_detail", pk=doc.pk)
+
+
+@require_POST
+@login_required
+@permission_required("purchasing.add_purchaseinbound", raise_exception=True)
+def inbound_delete(request, pk):
+    """硬删除采购入库单（安全条件下）：彻底移除单据并反冲库存。"""
+    from .services import delete_purchase_inbound
+    company = _active_company(request)
+    doc = get_object_or_404(PurchaseInbound, pk=pk, company=company)
+    doc_no = doc.doc_no
+    try:
+        delete_purchase_inbound(doc, user=request.user, today=timezone.localdate(),
+                                is_manager=_inbound_is_manager(request.user))
+    except InventoryError as e:
+        messages.error(request, f"删除失败：{e}")
+        return redirect("inbound_detail", pk=pk)
+    messages.success(request, f"采购入库已删除：{doc_no}")
+    return redirect("inbound_list")
