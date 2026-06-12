@@ -979,6 +979,54 @@ class ReceiptPaymentByNoteTests(TestCase):
         inv.refresh_from_db()
         self.assertEqual(inv.outstanding, Decimal("800.00"))          # 未被冲销
 
+    def test_edit_bank_payment_convert_to_note_endorsement(self):
+        # 误记成银行付款 → 修改时切换为「应收票据(背书)」：删旧付款+日记账，改记背书
+        from apps.finance.services import create_payment
+        from django.utils import timezone
+        acc = BankAccount.objects.create(company=self.c1, name="基本户")
+        pay = create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                            bank_account=acc, supplier=self.sup, amount=Decimal("800"),
+                            summary="承兑")
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260601-009", note_no="BJ020",
+            draw_date=date(2026, 6, 1), customer=self.cust, amount=Decimal("1000"))
+        inv = self._purchase_invoice(Decimal("800"))
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/payments/{pay.pk}/edit/", {
+            "doc_date": timezone.localdate().strftime("%Y-%m-%d"),
+            "method": "note", "supplier": self.sup.pk,
+            "note_no": "BJ020", "amount": "800", f"alloc-{inv.pk}": "800",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        # 原银行付款及其日记账已删除
+        self.assertEqual(Payment.objects.filter(pk=pay.pk).count(), 0)
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+        # 票据已背书抵应付
+        note.refresh_from_db(); inv.refresh_from_db()
+        self.assertEqual(note.settled_amount, Decimal("800.00"))
+        self.assertEqual(inv.outstanding, Decimal("0.00"))
+
+    def test_edit_convert_rolls_back_on_bad_allocation(self):
+        # 切换票据时校验失败（合计≠付款金额）→ 原银行付款不应被删
+        from apps.finance.services import create_payment
+        from django.utils import timezone
+        acc = BankAccount.objects.create(company=self.c1, name="基本户")
+        pay = create_payment(company=self.c1, user=self.user, doc_date=timezone.localdate(),
+                            bank_account=acc, supplier=self.sup, amount=Decimal("800"))
+        NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260601-010", note_no="BJ021",
+            draw_date=date(2026, 6, 1), customer=self.cust, amount=Decimal("1000"))
+        inv = self._purchase_invoice(Decimal("800"))
+        self.client.force_login(self.user)
+        self.client.post(f"/finance/payments/{pay.pk}/edit/", {
+            "doc_date": timezone.localdate().strftime("%Y-%m-%d"),
+            "method": "note", "supplier": self.sup.pk,
+            "note_no": "BJ021", "amount": "900", f"alloc-{inv.pk}": "800",  # 不符
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(Payment.objects.filter(pk=pay.pk).count(), 1)       # 仍在
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+
     def test_bank_receipt_still_creates_journal(self):
         acc = BankAccount.objects.create(company=self.c1, name="基本户")
         self.client.force_login(self.user)
@@ -1168,7 +1216,7 @@ class ReceiptPaymentEditDeleteTests(TestCase):
         self.client.force_login(self.user)
         r = self.client.post(f"/finance/payments/{pay.pk}/edit/", {
             "doc_date": timezone.localdate().strftime("%Y-%m-%d"),
-            "bank_account": self.acc2.pk, "supplier": self.sup.pk,
+            "method": f"bank:{self.acc2.pk}", "supplier": self.sup.pk,
             "amount": "999", "summary": "改后",
         }, SERVER_NAME="localhost", follow=True)
         self.assertEqual(r.status_code, 200)

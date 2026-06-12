@@ -25,7 +25,6 @@ from .forms import (
     BankAccountForm,
     NotePayableForm,
     NoteReceivableForm,
-    PaymentEditForm,
     PaymentForm,
     PurchaseInvoiceHeaderForm,
     PurchaseInvoiceLineFormSet,
@@ -392,29 +391,40 @@ def payment_create(request):
                   {"form": form, "title": "付款登记", "inv_candidates": inv_candidates})
 
 
-def _handle_payment_by_note(request, company, cd, inv_candidates):
-    """付款方式=应收票据(背书)：找在手票据→按勾选采购发票背书抵应付。成功返回 redirect。"""
+def _resolve_endorsement(request, company, cd, inv_candidates):
+    """校验背书：找在手票据、金额≤可用余额、勾选采购发票且合计=金额。
+
+    成功返回 (note, allocations, amount)；失败已 messages.error 并返回 (None, None, None)。
+    """
     from apps.core.money import round_money
     note = (NoteReceivable.objects.filter(
         company=company, note_no=cd["note_no"], status=NoteReceivable.Status.ON_HAND)
         .order_by("-draw_date", "-id").first())
     if note is None or note.unused <= 0:
         messages.error(request, f"未找到可用的在手应收票据：{cd['note_no']}")
-        return None
+        return None, None, None
     amount = round_money(cd["amount"])
     if amount > note.unused:
         messages.error(request, f"付款金额 {amount} 超过票据可用余额 {note.unused}")
-        return None
+        return None, None, None
     allocations, err = _collect_allocations(request, inv_candidates)
     if err:
         messages.error(request, err)
-        return None
+        return None, None, None
     if not allocations:
         messages.error(request, "背书付款需勾选至少一张要冲抵的采购发票")
-        return None
+        return None, None, None
     total = round_money(sum(a["amount"] for a in allocations))
     if total != amount:
         messages.error(request, f"勾选发票冲销合计 {total} 应等于付款金额 {amount}")
+        return None, None, None
+    return note, allocations, amount
+
+
+def _handle_payment_by_note(request, company, cd, inv_candidates):
+    """付款方式=应收票据(背书)：找在手票据→按勾选采购发票背书抵应付。成功返回 redirect。"""
+    note, allocations, amount = _resolve_endorsement(request, company, cd, inv_candidates)
+    if note is None:
         return None
     try:
         endorse_receivable_against_purchase(note=note, allocations=allocations, user=request.user)
@@ -428,31 +438,64 @@ def _handle_payment_by_note(request, company, cd, inv_candidates):
 @login_required
 @permission_required("finance.add_payment", raise_exception=True)
 def payment_edit(request, pk):
-    """修改付款（仅银行方式、当月、未核销/未对账）。同步更新银行日记账。"""
+    """修改付款（仅当月、未核销/未对账）。
+
+    可改银行付款字段并同步银行日记账；也可把付款方式切换为「应收票据(背书)」——
+    此时自动删除原银行付款及其日记账，改记为票据背书抵应付。
+    """
+    from django.db import transaction
     company = get_active_company(request, list(get_visible_companies(request.user)))
     pay = get_object_or_404(Payment, pk=pk, company=company)
     reason = payment_edit_block_reason(pay, timezone.localdate())
     if reason:
         messages.error(request, f"不可修改：{reason}")
         return redirect("payment_detail", pk=pay.pk)
+
+    inv_candidates = [i for i in PurchaseInvoice.objects.filter(
+        company=company, status=PurchaseInvoice.Status.REGISTERED)
+        .select_related("supplier").order_by("doc_date", "id") if i.outstanding > 0]
+
     if request.method == "POST":
-        form = PaymentEditForm(request.POST, instance=pay, company=company)
+        form = PaymentForm(request.POST, company=company)
         if form.is_valid():
             cd = form.cleaned_data
-            try:
-                update_payment(pay, user=request.user, doc_date=cd["doc_date"],
-                               bank_account=cd["bank_account"], supplier=cd["supplier"],
-                               amount=cd["amount"], summary=cd.get("summary", ""))
-            except (SettlementError, ValueError) as e:
-                messages.error(request, f"修改失败：{e}")
+            if cd["method"] == PaymentForm.METHOD_NOTE:
+                # 切换为票据背书：先校验，再原子地「删旧银行付款 + 建背书」
+                note, allocations, amount = _resolve_endorsement(
+                    request, company, cd, inv_candidates)
+                if note is not None:
+                    try:
+                        with transaction.atomic():
+                            old_no = pay.doc_no
+                            delete_payment(pay, user=request.user)
+                            endorse_receivable_against_purchase(
+                                note=note, allocations=allocations, user=request.user)
+                    except (SettlementError, ValueError) as e:
+                        messages.error(request, f"转为票据背书失败：{e}")
+                    else:
+                        messages.success(
+                            request,
+                            f"原银行付款 {old_no} 已删除，改为应收票据 {note.doc_no} "
+                            f"背书付款 {amount}，抵付 {len(allocations)} 张采购发票")
+                        return redirect("note_receivable_list")
             else:
-                messages.success(request, f"付款已修改：{pay.doc_no}")
-                return redirect("payment_detail", pk=pay.pk)
+                try:
+                    update_payment(pay, user=request.user, doc_date=cd["doc_date"],
+                                   bank_account=cd["bank_account"], supplier=cd["supplier"],
+                                   amount=cd["amount"], summary=cd.get("summary", ""))
+                except (SettlementError, ValueError) as e:
+                    messages.error(request, f"修改失败：{e}")
+                else:
+                    messages.success(request, f"付款已修改：{pay.doc_no}")
+                    return redirect("payment_detail", pk=pay.pk)
     else:
-        form = PaymentEditForm(instance=pay, company=company)
-    return render(request, "finance/cash_doc_edit.html",
+        form = PaymentForm(company=company, initial={
+            "doc_date": pay.doc_date, "method": f"bank:{pay.bank_account_id}",
+            "supplier": pay.supplier_id, "amount": pay.amount, "summary": pay.summary})
+
+    return render(request, "finance/payment_form.html",
                   {"form": form, "title": f"修改付款 {pay.doc_no}",
-                   "cancel_url": "payment_detail", "obj_pk": pay.pk, "amount_label": "付款金额"})
+                   "inv_candidates": inv_candidates})
 
 
 @login_required

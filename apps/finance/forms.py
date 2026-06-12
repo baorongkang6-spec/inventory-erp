@@ -399,34 +399,6 @@ class ReceiptEditForm(forms.ModelForm):
         return amount
 
 
-class PaymentEditForm(forms.ModelForm):
-    """修改付款：方式固定为银行，仅改日期/账户/供应商/金额/摘要。"""
-
-    class Meta:
-        model = Payment
-        fields = ["doc_date", "bank_account", "supplier", "amount", "summary"]
-        widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
-
-    def __init__(self, *args, company=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        if company is not None:
-            self.fields["bank_account"].queryset = BankAccount.objects.filter(
-                company=company, is_active=True)
-            self.fields["supplier"].queryset = Supplier.objects.filter(
-                company=company, is_active=True)
-        self.fields["supplier"].required = False
-        self.fields["supplier"].empty_label = "（其他付款，可不选）"
-        for name, field in self.fields.items():
-            w = field.widget
-            w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
-
-    def clean_amount(self):
-        amount = self.cleaned_data["amount"]
-        if amount is None or amount <= 0:
-            raise forms.ValidationError("付款金额必须大于 0")
-        return amount
-
-
 # --- 票据登记（M3）-----------------------------------------------------------
 class _NoteFormMixin:
     """票据表单公共：日期控件 ISO、字段样式、对手按账套过滤。"""
