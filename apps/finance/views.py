@@ -691,6 +691,42 @@ def purchase_invoice_void(request, pk):
     return redirect("purchase_invoice_detail", pk=inv.pk)
 
 
+@require_POST
+@login_required
+@permission_required("finance.add_salesinvoice", raise_exception=True)
+def sales_invoice_delete(request, pk):
+    """删除销售发票（彻底移除）：未核销、非期初才可删。"""
+    from .services import delete_sales_invoice
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    inv = get_object_or_404(SalesInvoice, pk=pk, company=company)
+    doc_no = inv.doc_no
+    try:
+        delete_sales_invoice(inv, user=request.user)
+    except SettlementError as e:
+        messages.error(request, f"删除失败：{e}")
+        return redirect("sales_invoice_detail", pk=pk)
+    messages.success(request, f"销售发票已删除：{doc_no}")
+    return redirect("sales_invoice_list")
+
+
+@require_POST
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def purchase_invoice_delete(request, pk):
+    """删除采购发票（彻底移除）：未核销、非期初才可删。"""
+    from .services import delete_purchase_invoice
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    inv = get_object_or_404(PurchaseInvoice, pk=pk, company=company)
+    doc_no = inv.doc_no
+    try:
+        delete_purchase_invoice(inv, user=request.user)
+    except SettlementError as e:
+        messages.error(request, f"删除失败：{e}")
+        return redirect("purchase_invoice_detail", pk=pk)
+    messages.success(request, f"采购发票已删除：{doc_no}")
+    return redirect("purchase_invoice_list")
+
+
 @login_required
 @permission_required("finance.add_salesinvoice", raise_exception=True)
 def sales_invoice_edit(request, pk):

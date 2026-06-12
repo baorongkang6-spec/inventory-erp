@@ -12,7 +12,9 @@ from apps.finance.models import (  # noqa: F401
     NotePayable,
     NoteReceivable,
     Payment,
+    PurchaseInvoice,
     Receipt,
+    SalesInvoice,
 )
 from apps.finance.services import (
     SettlementError,
@@ -1401,3 +1403,78 @@ class NoteMixedUseTests(TestCase):
             note=note, allocations=[{"invoice": si, "amount": Decimal("500")}])
         note.refresh_from_db()
         self.assertEqual(note.status, NoteReceivable.Status.SETTLED)   # 纯冲应收全额 → 已结算
+
+
+class InvoiceDeleteTests(TestCase):
+    """采购/销售发票删除（彻底移除）：未核销、非期初才可删。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.user = U.objects.create_user(username="inv", password="x", can_view_all_companies=True)
+        for code in ("add_purchaseinvoice", "view_purchaseinvoice",
+                     "add_salesinvoice", "view_salesinvoice"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _purchase(self, amount=Decimal("1000")):
+        from django.utils import timezone
+        return create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=timezone.localdate(), supplier=self.sup,
+            lines=[{"product": None, "description": "x", "amount_untaxed": amount,
+                    "tax_rate": Decimal("0.13")}])
+
+    def test_delete_unsettled_purchase_invoice(self):
+        from apps.finance.services import delete_purchase_invoice
+        inv = self._purchase()
+        delete_purchase_invoice(inv, user=self.user)
+        self.assertEqual(PurchaseInvoice.objects.filter(company=self.c1).count(), 0)
+
+    def test_settled_invoice_delete_blocked(self):
+        from apps.finance.services import delete_purchase_invoice
+        inv = self._purchase()
+        inv.settled_amount = Decimal("100"); inv.save(update_fields=["settled_amount"])
+        with self.assertRaises(SettlementError):
+            delete_purchase_invoice(inv, user=self.user)
+        self.assertEqual(PurchaseInvoice.objects.filter(company=self.c1).count(), 1)
+
+    def test_opening_invoice_delete_blocked(self):
+        from apps.finance.services import create_opening_payable, delete_purchase_invoice
+        from django.utils import timezone
+        inv = create_opening_payable(company=self.c1, user=self.user, supplier=self.sup,
+                                     amount=Decimal("500"), doc_date=timezone.localdate())
+        with self.assertRaises(SettlementError):
+            delete_purchase_invoice(inv, user=self.user)
+
+    def test_delete_voided_purchase_invoice_allowed(self):
+        # 已作废且未核销的也可彻底删除（清理）
+        from apps.finance.services import delete_purchase_invoice, void_purchase_invoice_doc
+        inv = self._purchase()
+        void_purchase_invoice_doc(inv, self.user)
+        delete_purchase_invoice(inv, user=self.user)
+        self.assertEqual(PurchaseInvoice.objects.filter(company=self.c1).count(), 0)
+
+    def test_purchase_delete_view(self):
+        inv = self._purchase()
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/purchase-invoices/{inv.pk}/delete/",
+                             SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(PurchaseInvoice.objects.filter(pk=inv.pk).count(), 0)
+
+    def test_sales_delete_view(self):
+        from django.utils import timezone
+        inv = create_sales_invoice(
+            company=self.c1, user=self.user, doc_date=timezone.localdate(), customer=self.cust,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("800"),
+                    "tax_rate": Decimal("0")}])
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/sales-invoices/{inv.pk}/delete/",
+                             SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(SalesInvoice.objects.filter(pk=inv.pk).count(), 0)

@@ -226,6 +226,39 @@ def void_purchase_invoice_doc(inv, user=None):
     return inv
 
 
+def invoice_delete_block_reason(inv):
+    """发票可否删除（彻底移除记录）：未核销、非期初。可删返回 None。"""
+    if inv.settled_amount > 0:
+        return "已核销（或部分核销）不可删除，请先撤销核销"
+    if inv.is_opening:
+        return "期初发票请到期初导入解锁后处理，不能在此删除"
+    return None
+
+
+@transaction.atomic
+def delete_purchase_invoice(inv, *, user):
+    """删除采购发票（彻底移除）：未核销、非期初才可删；连同明细一并删除。"""
+    reason = invoice_delete_block_reason(inv)
+    if reason:
+        raise SettlementError(reason)
+    company, doc_no, taxed = inv.company, inv.doc_no, inv.amount_taxed
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=inv,
+                    summary=f"删除采购发票 {doc_no}（撤销应付 {taxed}）")
+    inv.delete()
+
+
+@transaction.atomic
+def delete_sales_invoice(inv, *, user):
+    """删除销售发票（彻底移除）：未核销、非期初才可删；连同明细一并删除。"""
+    reason = invoice_delete_block_reason(inv)
+    if reason:
+        raise SettlementError(reason)
+    company, doc_no, taxed = inv.company, inv.doc_no, inv.amount_taxed
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=inv,
+                    summary=f"删除销售发票 {doc_no}（撤销应收 {taxed}）")
+    inv.delete()
+
+
 def sales_invoice_edit_block_reason(inv, today):
     """返回不可修改原因；可改返回 None。规则：非期初、未核销、本月。"""
     if inv.is_opening:
