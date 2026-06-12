@@ -28,7 +28,6 @@ from .forms import (
     PaymentForm,
     PurchaseInvoiceHeaderForm,
     PurchaseInvoiceLineFormSet,
-    ReceiptEditForm,
     ReceiptForm,
     SalesInvoiceHeaderForm,
     SalesInvoiceLineFormSet,
@@ -837,26 +836,39 @@ def receipt_create(request):
                   {"form": form, "title": "收款登记", "inv_candidates": inv_candidates})
 
 
-def _handle_receipt_by_note(request, company, cd, inv_candidates):
-    """收款方式=应收票据：建一张在手应收票据，并按勾选销售发票冲应收。成功返回 redirect。"""
+def _resolve_note_receipt(request, company, cd, inv_candidates):
+    """收票校验：勾选销售发票合计≤票面。返回 (amount, allocations) 或 (None, None)。"""
     from apps.core.money import round_money
     amount = round_money(cd["amount"])
     allocations, err = _collect_allocations(request, inv_candidates)
     if err:
         messages.error(request, err)
-        return None
+        return None, None
     total = round_money(sum(a["amount"] for a in allocations)) if allocations else round_money(0)
     if total > amount:
         messages.error(request, f"勾选发票冲销合计 {total} 不能超过票面金额 {amount}")
+        return None, None
+    return amount, allocations
+
+
+def _create_note_receipt(request, company, cd, amount, allocations):
+    """建在手应收票据，并按勾选销售发票冲应收。返回 note；异常由调用方处理。"""
+    note = create_note_receivable(
+        company=company, user=request.user, draw_date=cd["draw_date"],
+        amount=amount, customer=cd["customer"], note_no=cd["note_no"],
+        due_date=cd["due_date"], remark=cd.get("summary", ""))
+    if allocations:
+        settle_receivable_against_sales(note=note, allocations=allocations, user=request.user)
+    return note
+
+
+def _handle_receipt_by_note(request, company, cd, inv_candidates):
+    """收款方式=应收票据：建一张在手应收票据，并按勾选销售发票冲应收。成功返回 redirect。"""
+    amount, allocations = _resolve_note_receipt(request, company, cd, inv_candidates)
+    if amount is None:
         return None
     try:
-        note = create_note_receivable(
-            company=company, user=request.user, draw_date=cd["draw_date"],
-            amount=amount, customer=cd["customer"], note_no=cd["note_no"],
-            due_date=cd["due_date"], remark=cd.get("summary", ""),
-        )
-        if allocations:
-            settle_receivable_against_sales(note=note, allocations=allocations, user=request.user)
+        note = _create_note_receipt(request, company, cd, amount, allocations)
     except (SettlementError, ValueError) as e:
         messages.error(request, f"收票失败：{e}")
         return None
@@ -868,31 +880,66 @@ def _handle_receipt_by_note(request, company, cd, inv_candidates):
 @login_required
 @permission_required("finance.add_receipt", raise_exception=True)
 def receipt_edit(request, pk):
-    """修改收款（仅银行方式、当月、未核销/未对账）。同步更新银行日记账。"""
+    """修改收款（仅当月、未核销/未对账）。
+
+    可改银行收款字段并同步银行日记账；也可把收款方式切换为「应收票据」——
+    此时自动删除原银行收款及其日记账，改记为收到一张应收票据（可顺带冲销售发票）。
+    """
+    from django.db import transaction
     company = get_active_company(request, list(get_visible_companies(request.user)))
     rec = get_object_or_404(Receipt, pk=pk, company=company)
     reason = receipt_edit_block_reason(rec, timezone.localdate())
     if reason:
         messages.error(request, f"不可修改：{reason}")
         return redirect("receipt_detail", pk=rec.pk)
+
+    inv_candidates = [i for i in SalesInvoice.objects.filter(
+        company=company, status=SalesInvoice.Status.REGISTERED)
+        .select_related("customer").order_by("doc_date", "id") if i.outstanding > 0]
+
     if request.method == "POST":
-        form = ReceiptEditForm(request.POST, instance=rec, company=company)
+        form = ReceiptForm(request.POST, company=company)
         if form.is_valid():
             cd = form.cleaned_data
-            try:
-                update_receipt(rec, user=request.user, doc_date=cd["doc_date"],
-                               bank_account=cd["bank_account"], customer=cd["customer"],
-                               amount=cd["amount"], summary=cd.get("summary", ""))
-            except (SettlementError, ValueError) as e:
-                messages.error(request, f"修改失败：{e}")
+            if cd["method"] == ReceiptForm.METHOD_NOTE:
+                # 切换为应收票据：先校验，再原子地「删旧银行收款 + 建票据」
+                amount, allocations = _resolve_note_receipt(
+                    request, company, cd, inv_candidates)
+                if amount is not None:
+                    try:
+                        with transaction.atomic():
+                            old_no = rec.doc_no
+                            delete_receipt(rec, user=request.user)
+                            note = _create_note_receipt(
+                                request, company, cd, amount, allocations)
+                    except (SettlementError, ValueError) as e:
+                        messages.error(request, f"转为应收票据失败：{e}")
+                    else:
+                        tail = (f"，冲抵 {len(allocations)} 张销售发票"
+                                if allocations else "（在手）")
+                        messages.success(
+                            request,
+                            f"原银行收款 {old_no} 已删除，改记为应收票据 {note.doc_no} "
+                            f"票面 {amount}{tail}")
+                        return redirect("note_receivable_list")
             else:
-                messages.success(request, f"收款已修改：{rec.doc_no}")
-                return redirect("receipt_detail", pk=rec.pk)
+                try:
+                    update_receipt(rec, user=request.user, doc_date=cd["doc_date"],
+                                   bank_account=cd["bank_account"], customer=cd["customer"],
+                                   amount=cd["amount"], summary=cd.get("summary", ""))
+                except (SettlementError, ValueError) as e:
+                    messages.error(request, f"修改失败：{e}")
+                else:
+                    messages.success(request, f"收款已修改：{rec.doc_no}")
+                    return redirect("receipt_detail", pk=rec.pk)
     else:
-        form = ReceiptEditForm(instance=rec, company=company)
-    return render(request, "finance/cash_doc_edit.html",
+        form = ReceiptForm(company=company, initial={
+            "doc_date": rec.doc_date, "method": f"bank:{rec.bank_account_id}",
+            "customer": rec.customer_id, "amount": rec.amount, "summary": rec.summary})
+
+    return render(request, "finance/receipt_form.html",
                   {"form": form, "title": f"修改收款 {rec.doc_no}",
-                   "cancel_url": "receipt_detail", "obj_pk": rec.pk, "amount_label": "收款金额"})
+                   "inv_candidates": inv_candidates})
 
 
 @login_required

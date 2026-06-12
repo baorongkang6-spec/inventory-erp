@@ -3,7 +3,7 @@
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-12 col-lg-9">
-    <h4 class="mb-3">收款登记<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+    <h4 class="mb-3">{{ title|default:"收款登记" }}<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
     <form method="post" id="recform">
       {% csrf_token %}
       {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}

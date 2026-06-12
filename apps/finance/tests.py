@@ -1027,6 +1027,30 @@ class ReceiptPaymentByNoteTests(TestCase):
         self.assertEqual(Payment.objects.filter(pk=pay.pk).count(), 1)       # 仍在
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
 
+    def test_edit_bank_receipt_convert_to_note(self):
+        # 误记成银行收款 → 修改时切换为「应收票据」：删旧收款+日记账，改记为收到票据并冲应收
+        acc = BankAccount.objects.create(company=self.c1, name="基本户")
+        rec = create_receipt(company=self.c1, user=self.user, doc_date=date(2026, 6, 10),
+                             bank_account=acc, customer=self.cust, amount=Decimal("1000"),
+                             summary="承兑")
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
+        si = self._sales_invoice(Decimal("1000"))
+        self.client.force_login(self.user)
+        r = self.client.post(f"/finance/receipts/{rec.pk}/edit/", {
+            "doc_date": "2026-06-10", "method": "note", "customer": self.cust.pk,
+            "note_no": "BJ-CV1", "draw_date": "2026-06-10", "due_date": "2026-09-10",
+            "amount": "1000", f"alloc-{si.pk}": "1000",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(r.status_code, 200)
+        # 原银行收款及其日记账已删除
+        self.assertEqual(Receipt.objects.filter(pk=rec.pk).count(), 0)
+        self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+        # 生成在手/已结算应收票据，且冲平应收
+        note = NoteReceivable.objects.get(company=self.c1, note_no="BJ-CV1")
+        self.assertEqual(note.amount, Decimal("1000.00"))
+        si.refresh_from_db()
+        self.assertEqual(si.outstanding, Decimal("0.00"))
+
     def test_bank_receipt_still_creates_journal(self):
         acc = BankAccount.objects.create(company=self.c1, name="基本户")
         self.client.force_login(self.user)
