@@ -396,6 +396,10 @@ class NoteReceivableForm(_NoteFormMixin, forms.ModelForm):
         super().__init__(*args, **kwargs)
         if company is not None:
             self.fields["customer"].queryset = Customer.objects.filter(company=company, is_active=True)
+        # 修改已使用的票据时，票面金额锁定（改额会破坏已用/未用勾稽）
+        if self.instance and self.instance.pk and self.instance.settled_amount > 0:
+            self.fields["amount"].disabled = True
+            self.fields["amount"].help_text = "票据已使用，票面金额不可修改（如需更正请作废后重录）"
         self._style()
 
     def clean_amount(self):

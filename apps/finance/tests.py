@@ -795,6 +795,101 @@ class NoteRegistrationTests(TestCase):
         self.assertEqual(npay.unused, Decimal("3000.00"))
 
 
+class NoteReceivableEditTests(TestCase):
+    """应收票据修改/补录（到期日、来源客户、票号等）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="cashier", password="x",
+                                         can_view_all_companies=True)
+        for code in ("add_notereceivable", "view_notereceivable"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def test_edit_supplements_missing_fields(self):
+        """补录到期日/来源客户：导入或漏填的票据可补全。"""
+        from apps.finance.services import create_note_receivable, update_note_receivable
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("5000"))  # 无客户/无到期日/无票号
+        self.assertIsNone(note.customer)
+        update_note_receivable(note=note, user=self.user, draw_date=date(2026, 6, 11),
+                               amount=Decimal("5000"), customer=self.cust,
+                               note_no="BA999", due_date=date(2026, 9, 11), remark="补录")
+        note.refresh_from_db()
+        self.assertEqual(note.customer, self.cust)
+        self.assertEqual(note.note_no, "BA999")
+        self.assertEqual(note.due_date, date(2026, 9, 11))
+        self.assertEqual(note.amount, Decimal("5000.00"))  # 未用，票面可保持
+
+    def test_amount_locked_when_used(self):
+        """已使用的票据票面金额锁定，但描述字段仍可补录。"""
+        from apps.finance.services import (
+            SettlementError, create_note_receivable, create_sales_invoice,
+            settle_receivable_against_sales, update_note_receivable,
+        )
+        inv = create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
+            customer=self.cust, lines=[{"product": self.p, "description": "",
+            "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("2000"), customer=self.cust)
+        settle_receivable_against_sales(note=note,
+            allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        note.refresh_from_db()
+        # 改票面 → 拒绝
+        with self.assertRaises(SettlementError):
+            update_note_receivable(note=note, user=self.user, draw_date=note.draw_date,
+                                   amount=Decimal("3000"), customer=self.cust)
+        # 票面不变、只补到期日 → 通过
+        update_note_receivable(note=note, user=self.user, draw_date=note.draw_date,
+                               amount=Decimal("2000"), customer=self.cust,
+                               due_date=date(2026, 12, 11))
+        note.refresh_from_db()
+        self.assertEqual(note.due_date, date(2026, 12, 11))
+        self.assertEqual(note.settled_amount, Decimal("1000.00"))  # 已用不受影响
+
+    def test_void_note_not_editable(self):
+        from apps.finance.models import NoteReceivable
+        from apps.finance.services import (
+            SettlementError, create_note_receivable, update_note_receivable,
+        )
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("5000"), customer=self.cust)
+        note.status = NoteReceivable.Status.VOID
+        note.save(update_fields=["status"])
+        with self.assertRaises(SettlementError):
+            update_note_receivable(note=note, user=self.user, draw_date=note.draw_date,
+                                   amount=Decimal("5000"))
+
+    def test_edit_view_shows_button_and_saves(self):
+        from apps.finance.services import create_note_receivable
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("5000"))
+        self.client.force_login(self.user)
+        # 列表有「修改」按钮
+        lst = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertContains(lst, f"/finance/notes-receivable/{note.pk}/edit/")
+        # GET 表单 200
+        resp = self.client.get(f"/finance/notes-receivable/{note.pk}/edit/",
+                               SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        # POST 补录
+        resp = self.client.post(f"/finance/notes-receivable/{note.pk}/edit/", {
+            "note_no": "BJ777", "draw_date": "2026-06-11", "due_date": "2026-09-11",
+            "customer": self.cust.pk, "amount": "5000", "remark": "补录",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        note.refresh_from_db()
+        self.assertEqual(note.note_no, "BJ777")
+        self.assertEqual(note.customer, self.cust)
+
+
 class NoteSettlementTests(TestCase):
     @classmethod
     def setUpTestData(cls):

@@ -380,7 +380,9 @@ def _payment_rows(company):
                 "amount": g["amount"], "settled": g["amount"], "unsettled": Decimal("0.00"),
                 "status": n.get_status_display() if n else "已背书", "is_note": True,
                 "detail_url": reverse("note_receivable_list"),
-                "can_edit": False, "edit_url": "", "delete_url": ""})
+                "can_edit": bool(n) and n.status != NoteReceivable.Status.VOID,
+                "edit_url": reverse("note_receivable_edit", args=[n.pk]) if n else "",
+                "delete_url": ""})
     return rows
 
 
@@ -407,7 +409,8 @@ def _receipt_rows(company):
             "amount": n.amount, "settled": n.settled_amount, "unsettled": n.unused,
             "status": n.get_status_display(), "is_note": True,
             "detail_url": reverse("note_receivable_list"),
-            "can_edit": False, "edit_url": "", "delete_url": ""})
+            "can_edit": n.status != NoteReceivable.Status.VOID,
+            "edit_url": reverse("note_receivable_edit", args=[n.pk]), "delete_url": ""})
     return rows
 
 
@@ -2023,6 +2026,38 @@ def note_receivable_create(request):
     else:
         form = NoteReceivableForm(company=company, initial={"draw_date": timezone.localdate()})
     return render(request, "finance/note_form.html", {"form": form, "title": "应收票据登记"})
+
+
+@login_required
+@permission_required("finance.add_notereceivable", raise_exception=True)
+def note_receivable_edit(request, pk):
+    """修改/补录应收票据（票号、出票日、到期日、来源客户、票面、备注）。"""
+    from .services import note_receivable_edit_block_reason, update_note_receivable
+    note = get_object_or_404(
+        NoteReceivable, pk=pk, company__in=get_visible_companies(request.user))
+    block = note_receivable_edit_block_reason(note)
+    if block:
+        messages.error(request, block)
+        return redirect("note_receivable_list")
+    if request.method == "POST":
+        form = NoteReceivableForm(request.POST, instance=note, company=note.company)
+        if form.is_valid():
+            cd = form.cleaned_data
+            try:
+                update_note_receivable(
+                    note=note, user=request.user, draw_date=cd["draw_date"],
+                    amount=cd["amount"], customer=cd.get("customer"),
+                    note_no=cd.get("note_no", ""), due_date=cd.get("due_date"),
+                    remark=cd.get("remark", ""))
+            except (SettlementError, ValueError) as e:
+                messages.error(request, str(e))
+            else:
+                messages.success(request, "应收票据已修改")
+                return redirect("note_receivable_list")
+    else:
+        form = NoteReceivableForm(instance=note, company=note.company)
+    return render(request, "finance/note_form.html",
+                  {"form": form, "title": f"修改应收票据 {note.doc_no}"})
 
 
 @login_required

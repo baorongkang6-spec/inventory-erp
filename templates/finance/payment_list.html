@@ -36,6 +36,8 @@
                   onsubmit="return confirm('确认删除付款 {{ r.doc_no }}？将同时删除对应银行日记账，且不可恢复。');">
               {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
             </form>
+            {% elif r.is_note and r.can_edit and perms.finance.add_notereceivable %}
+            <a href="{{ r.edit_url }}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
             {% endif %}
           </td>
         </tr>
@@ -46,5 +48,5 @@
     </table>
   </div>
 </div>
-<p class="text-muted small mt-2">「付款方式」为<strong>应收票据背书</strong>的行来自票据背书抵应付（不产生付款单、不记银行日记账），其修改/作废请到「资金 ▸ 应收票据」。</p>
+<p class="text-muted small mt-2">「付款方式」为<strong>应收票据背书</strong>的行来自票据背书抵应付（不产生付款单、不记银行日记账），可就地「修改」补录票据信息；作废请到「资金 ▸ 应收票据」。</p>
 {% endblock %}

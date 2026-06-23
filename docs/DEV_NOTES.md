@@ -176,6 +176,7 @@
 10. **修改收付时可切换为票据**：付款「修改」改用完整 `PaymentForm`、收款「修改」改用完整 `ReceiptForm`；若把方式改成应收票据(背书)/应收票据，保存时**原子地删旧银行单+日记账、改记为票据**（误记更正）；校验失败整体回滚。删掉了 `PaymentEditForm/ReceiptEditForm` 与 `cash_doc_edit.html`。
 11. **发票详情「核销明细」**：列出已核销来自哪些付款/票据（`_invoice_settlements` 合并 PaymentAllocation/ReceiptAllocation + NoteSettlement，标明"应收票据背书抵付"等）。解决用户疑惑"已核销但付款里没有"。
 12. **账户余额表分组合计（2026-06-12）**：四个分组（银行/应收/应付/库存）网页 tfoot + Excel 导出各加「合计」行；视图统一算 `block["total"]`，模板/导出共用。
+13. **应收票据「修改」补录（2026-06-17）**：`update_note_receivable` + `note_receivable_edit_block_reason`（仅作废不可改；已使用则票面金额锁定、描述字段仍可补录——`NoteReceivableForm` 在 `instance.settled_amount>0` 时 `amount.disabled=True`）。入口：应收票据列表 + 收款/付款统一一览的票据行（`_receipt_rows/_payment_rows` 给票据行补 `edit_url`，原先 `can_edit=False`）。权限沿用 `add_notereceivable`（零权限迁移）。
 13. **统一收/付一览（已完成）**：收款/付款列表「银行账户」列改「收款/付款方式」，**合并两类数据源**——
     - 列表视图由 ClassView 改为**函数视图** `receipt_list / payment_list`（`apps/finance/views.py`）；`_receipt_rows / _payment_rows` 产出统一行 dict，`_cash_list_filter` 做日期+关键字过滤、`_export_cash_rows` 导出。
     - 收款行 = `Receipt`(银行) + `NoteReceivable`(应收票据)；付款行 = `Payment`(银行) + `NoteSettlement` 背书(按票据 `note_no` 归并、汇总供应商)。

@@ -557,6 +557,43 @@ def create_note_receivable(*, company, user, draw_date, amount, customer=None,
     return note
 
 
+def note_receivable_edit_block_reason(note) -> str | None:
+    """应收票据可否修改：仅「已作废」整单不可改。其余可补录（票面金额是否可改在 update 里按已用额控制）。"""
+    if note.status == NoteReceivable.Status.VOID:
+        return "已作废的应收票据不可修改"
+    return None
+
+
+@transaction.atomic
+def update_note_receivable(*, note, user, draw_date, amount, customer=None,
+                           note_no="", due_date=None, remark="") -> NoteReceivable:
+    """修改/补录应收票据信息（票号、出票日、到期日、来源客户、票面、备注）。
+
+    护栏：已作废不可改；已使用（settled_amount>0）则票面金额锁定，不得改动
+    （改票面会破坏已用/未用勾稽，需作废后重录）。其余字段任意补录。
+    """
+    note = NoteReceivable.objects.select_for_update().get(pk=note.pk)
+    reason = note_receivable_edit_block_reason(note)
+    if reason:
+        raise SettlementError(reason)
+    amount = round_money(amount)
+    if amount <= 0:
+        raise ValueError("票面金额必须大于 0")
+    if note.settled_amount > 0 and amount != note.amount:
+        raise SettlementError("票据已使用，票面金额不可修改（如需更正请作废后重新登记）")
+    note.note_no = note_no
+    note.draw_date = draw_date
+    note.due_date = due_date
+    note.customer = customer
+    note.amount = amount
+    note.remark = remark
+    note.save(update_fields=["note_no", "draw_date", "due_date", "customer",
+                             "amount", "remark", "updated_at"])
+    AuditLog.record(actor=user, company=note.company, action=AuditLog.Action.UPDATE, target=note,
+                    summary=f"修改应收票据 {note.doc_no}")
+    return note
+
+
 @transaction.atomic
 def create_note_payable(*, company, user, draw_date, supplier, amount,
                         note_no="", due_date=None, remark="", is_opening=False) -> NotePayable:

@@ -37,6 +37,9 @@
             <a href="{% url 'note_receivable_settle' n.pk %}" class="btn btn-sm btn-outline-success">冲应收</a>
             <a href="{% url 'note_receivable_endorse' n.pk %}" class="btn btn-sm btn-outline-primary">背书抵应付</a>
             {% endif %}
+            {% if n.status != 'void' and perms.finance.add_notereceivable %}
+            <a href="{% url 'note_receivable_edit' n.pk %}" class="btn btn-sm btn-outline-secondary">修改</a>
+            {% endif %}
           </td>
         </tr>
         {% empty %}

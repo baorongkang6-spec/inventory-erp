@@ -36,6 +36,8 @@
                   onsubmit="return confirm('确认删除收款 {{ r.doc_no }}？将同时删除对应银行日记账，且不可恢复。');">
               {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
             </form>
+            {% elif r.is_note and r.can_edit and perms.finance.add_notereceivable %}
+            <a href="{{ r.edit_url }}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
             {% endif %}
           </td>
         </tr>
@@ -46,5 +48,5 @@
     </table>
   </div>
 </div>
-<p class="text-muted small mt-2">「收款方式」为<strong>应收票据</strong>的行是收到的客户票据（不记银行日记账），其冲应收/背书/修改请到「资金 ▸ 应收票据」。</p>
+<p class="text-muted small mt-2">「收款方式」为<strong>应收票据</strong>的行是收到的客户票据（不记银行日记账），可就地「修改」补录信息；冲应收/背书请到「资金 ▸ 应收票据」。</p>
 {% endblock %}
