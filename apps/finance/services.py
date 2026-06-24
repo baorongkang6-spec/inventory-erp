@@ -594,6 +594,35 @@ def update_note_receivable(*, note, user, draw_date, amount, customer=None,
     return note
 
 
+def note_receivable_delete_block_reason(note) -> str | None:
+    """应收票据可否删除（彻底移除）：未使用、非期初才可删。可删返回 None。
+
+    已使用（settled_amount>0，即冲过应收/背书抵过应付）删除会留下孤儿冲销记录
+    （NoteSettlement 用 note_id 泛指引用，无外键级联），故必须先撤销；期初票据走期初导入。
+    """
+    if note.settled_amount > 0:
+        return "票据已使用（冲应收/背书抵应付），不可删除；如需更正请到对应发票撤销冲销后再删"
+    if note.is_opening:
+        return "期初票据请到期初导入处理，不能在此删除"
+    return None
+
+
+@transaction.atomic
+def delete_note_receivable(note, *, user):
+    """删除应收票据（彻底移除）：未使用、非期初才可删。
+
+    未使用的票据不挂应收/应付、无银行日记账、无镜像，删除是干净的（仅撤销该票据登记）。
+    """
+    note = NoteReceivable.objects.select_for_update().get(pk=note.pk)
+    reason = note_receivable_delete_block_reason(note)
+    if reason:
+        raise SettlementError(reason)
+    company, doc_no, amount = note.company, note.doc_no, note.amount
+    AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=note,
+                    summary=f"删除应收票据 {doc_no}（票面 {amount}）")
+    note.delete()
+
+
 @transaction.atomic
 def create_note_payable(*, company, user, draw_date, supplier, amount,
                         note_no="", due_date=None, remark="", is_opening=False) -> NotePayable:

@@ -890,6 +890,77 @@ class NoteReceivableEditTests(TestCase):
         self.assertEqual(note.customer, self.cust)
 
 
+class NoteReceivableDeleteTests(TestCase):
+    """应收票据删除（录错可彻底移除）：未使用、非期初才可删。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="cashier", password="x",
+                                         can_view_all_companies=True)
+        for code in ("add_notereceivable", "view_notereceivable"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def test_delete_unused_note(self):
+        from apps.finance.models import NoteReceivable
+        from apps.finance.services import create_note_receivable, delete_note_receivable
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("5000"), customer=self.cust)
+        delete_note_receivable(note, user=self.user)
+        self.assertFalse(NoteReceivable.objects.filter(pk=note.pk).exists())
+
+    def test_used_note_blocked(self):
+        """已使用（冲过应收）不可删——避免留下孤儿冲销记录。"""
+        from apps.finance.services import (
+            SettlementError, create_note_receivable, create_sales_invoice,
+            delete_note_receivable, note_receivable_delete_block_reason,
+            settle_receivable_against_sales,
+        )
+        inv = create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
+            customer=self.cust, lines=[{"product": self.p, "description": "",
+            "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("2000"), customer=self.cust)
+        settle_receivable_against_sales(note=note,
+            allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        note.refresh_from_db()
+        self.assertIsNotNone(note_receivable_delete_block_reason(note))
+        with self.assertRaises(SettlementError):
+            delete_note_receivable(note, user=self.user)
+
+    def test_opening_note_blocked(self):
+        from apps.finance.services import (
+            SettlementError, create_note_receivable, delete_note_receivable,
+        )
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 1),
+                                      amount=Decimal("3000"), customer=self.cust, is_opening=True)
+        with self.assertRaises(SettlementError):
+            delete_note_receivable(note, user=self.user)
+
+    def test_delete_view_button_and_post(self):
+        from apps.finance.models import NoteReceivable
+        from apps.finance.services import create_note_receivable
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("5000"))
+        self.client.force_login(self.user)
+        lst = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertContains(lst, f"/finance/notes-receivable/{note.pk}/delete/")
+        # GET 不删除（require_POST）
+        self.assertEqual(self.client.get(
+            f"/finance/notes-receivable/{note.pk}/delete/", SERVER_NAME="localhost").status_code, 405)
+        # POST 删除
+        resp = self.client.post(f"/finance/notes-receivable/{note.pk}/delete/",
+                                SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(NoteReceivable.objects.filter(pk=note.pk).exists())
+
+
 class NoteSettlementTests(TestCase):
     @classmethod
     def setUpTestData(cls):

@@ -36,8 +36,14 @@
                   onsubmit="return confirm('确认删除收款 {{ r.doc_no }}？将同时删除对应银行日记账，且不可恢复。');">
               {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
             </form>
-            {% elif r.is_note and r.can_edit and perms.finance.add_notereceivable %}
-            <a href="{{ r.edit_url }}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
+            {% elif r.is_note and perms.finance.add_notereceivable %}
+            {% if r.can_edit %}<a href="{{ r.edit_url }}" class="btn btn-sm btn-outline-secondary py-0">修改</a>{% endif %}
+            {% if r.can_delete %}
+            <form method="post" action="{{ r.delete_url }}" class="d-inline"
+                  onsubmit="return confirm('确认删除应收票据 {{ r.doc_no }}？将彻底移除该票据登记，且不可恢复。');">
+              {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
+            </form>
+            {% endif %}
             {% endif %}
           </td>
         </tr>

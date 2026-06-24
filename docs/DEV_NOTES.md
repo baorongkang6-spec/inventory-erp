@@ -175,6 +175,7 @@
 9. **采购入库「受限硬删除」**：`delete_purchase_inbound` + `inbound_delete_block_reason`。因移动加权成本链式，**仅当该入库后相关商品再无任何出入库变动**（即"刚录错马上撤")、且非镜像/未开票/当月/本人或管理员时才允许；用 `reverse_move` 精确反冲再删两条流水不留痕。其余情况用「作废」。
 10. **修改收付时可切换为票据**：付款「修改」改用完整 `PaymentForm`、收款「修改」改用完整 `ReceiptForm`；若把方式改成应收票据(背书)/应收票据，保存时**原子地删旧银行单+日记账、改记为票据**（误记更正）；校验失败整体回滚。删掉了 `PaymentEditForm/ReceiptEditForm` 与 `cash_doc_edit.html`。
 11. **发票详情「核销明细」**：列出已核销来自哪些付款/票据（`_invoice_settlements` 合并 PaymentAllocation/ReceiptAllocation + NoteSettlement，标明"应收票据背书抵付"等）。解决用户疑惑"已核销但付款里没有"。
+13. **应收票据「删除」（2026-06-17）**：`delete_note_receivable` + `note_receivable_delete_block_reason`——仅「未使用(settled_amount==0)+非期初」可删（未用票据不挂 AR/AP、无银行日记账、无镜像，删除干净）。已使用的票据删了会留孤儿 NoteSettlement（其用 `note_id` 泛指引用、无外键级联），故硬拦。入口：资金▸应收票据列表 + 收款统一一览的票据行「修改」旁加「删除」（背书抵付那种已用票据不显示删除按钮）；require_POST + confirm。沿用 `add_notereceivable` 权限。
 12. **账户余额表分组合计（2026-06-12）**：四个分组（银行/应收/应付/库存）网页 tfoot + Excel 导出各加「合计」行；视图统一算 `block["total"]`，模板/导出共用。
 13. **应收票据「修改」补录（2026-06-17）**：`update_note_receivable` + `note_receivable_edit_block_reason`（仅作废不可改；已使用则票面金额锁定、描述字段仍可补录——`NoteReceivableForm` 在 `instance.settled_amount>0` 时 `amount.disabled=True`）。入口：应收票据列表 + 收款/付款统一一览的票据行（`_receipt_rows/_payment_rows` 给票据行补 `edit_url`，原先 `can_edit=False`）。权限沿用 `add_notereceivable`（零权限迁移）。
 13. **统一收/付一览（已完成）**：收款/付款列表「银行账户」列改「收款/付款方式」，**合并两类数据源**——

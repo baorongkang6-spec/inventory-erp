@@ -402,7 +402,9 @@ def _receipt_rows(company):
             "can_edit": receipt_edit_block_reason(r, today) is None,
             "edit_url": reverse("receipt_edit", args=[r.pk]),
             "delete_url": reverse("receipt_delete", args=[r.pk])})
+    from .services import note_receivable_delete_block_reason
     for n in NoteReceivable.objects.filter(company=company).select_related("customer"):
+        can_delete = note_receivable_delete_block_reason(n) is None
         rows.append({
             "doc_no": n.doc_no, "date": n.draw_date, "method": "应收票据",
             "party": str(n.customer) if n.customer_id else "—",
@@ -410,7 +412,9 @@ def _receipt_rows(company):
             "status": n.get_status_display(), "is_note": True,
             "detail_url": reverse("note_receivable_list"),
             "can_edit": n.status != NoteReceivable.Status.VOID,
-            "edit_url": reverse("note_receivable_edit", args=[n.pk]), "delete_url": ""})
+            "edit_url": reverse("note_receivable_edit", args=[n.pk]),
+            "can_delete": can_delete,
+            "delete_url": reverse("note_receivable_delete", args=[n.pk]) if can_delete else ""})
     return rows
 
 
@@ -1988,6 +1992,13 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     def get_queryset(self):
         return super().get_queryset().select_related("customer")
 
+    def get_context_data(self, **kwargs):
+        from .services import note_receivable_delete_block_reason
+        ctx = super().get_context_data(**kwargs)
+        for n in ctx[self.context_object_name]:
+            n.can_delete = note_receivable_delete_block_reason(n) is None
+        return ctx
+
 
 class NotePayableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     search_fields = ["doc_no", "note_no", "supplier__name"]
@@ -2058,6 +2069,23 @@ def note_receivable_edit(request, pk):
         form = NoteReceivableForm(instance=note, company=note.company)
     return render(request, "finance/note_form.html",
                   {"form": form, "title": f"修改应收票据 {note.doc_no}"})
+
+
+@login_required
+@permission_required("finance.add_notereceivable", raise_exception=True)
+@require_POST
+def note_receivable_delete(request, pk):
+    """删除应收票据（彻底移除）：未使用、非期初才可删。"""
+    from .services import delete_note_receivable
+    note = get_object_or_404(
+        NoteReceivable, pk=pk, company__in=get_visible_companies(request.user))
+    try:
+        delete_note_receivable(note, user=request.user)
+    except SettlementError as e:
+        messages.error(request, str(e))
+    else:
+        messages.success(request, "应收票据已删除")
+    return redirect("note_receivable_list")
 
 
 @login_required

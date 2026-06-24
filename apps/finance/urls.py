@@ -69,6 +69,7 @@ urlpatterns = [
     path("notes-receivable/", views.NoteReceivableListView.as_view(), name="note_receivable_list"),
     path("notes-receivable/new/", views.note_receivable_create, name="note_receivable_create"),
     path("notes-receivable/<int:pk>/edit/", views.note_receivable_edit, name="note_receivable_edit"),
+    path("notes-receivable/<int:pk>/delete/", views.note_receivable_delete, name="note_receivable_delete"),
     path("notes-receivable/<int:pk>/settle/", views.note_receivable_settle, name="note_receivable_settle"),
     path("notes-receivable/<int:pk>/endorse/", views.note_receivable_endorse, name="note_receivable_endorse"),
     path("notes-receivable/export/", views.note_receivable_export, name="note_receivable_export"),

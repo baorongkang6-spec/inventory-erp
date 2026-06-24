@@ -40,6 +40,12 @@
             {% if n.status != 'void' and perms.finance.add_notereceivable %}
             <a href="{% url 'note_receivable_edit' n.pk %}" class="btn btn-sm btn-outline-secondary">修改</a>
             {% endif %}
+            {% if n.can_delete and perms.finance.add_notereceivable %}
+            <form method="post" action="{% url 'note_receivable_delete' n.pk %}" class="d-inline"
+                  onsubmit="return confirm('确认删除应收票据 {{ n.doc_no }}？将彻底移除该票据登记，且不可恢复。');">
+              {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
+            </form>
+            {% endif %}
           </td>
         </tr>
         {% empty %}
