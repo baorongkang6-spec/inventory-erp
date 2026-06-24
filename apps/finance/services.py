@@ -595,21 +595,21 @@ def update_note_receivable(*, note, user, draw_date, amount, customer=None,
 
 
 def note_receivable_delete_block_reason(note) -> str | None:
-    """应收票据可否删除（彻底移除）：未使用、非期初才可删。可删返回 None。
+    """应收票据可否删除（彻底移除）：仅「未使用」即可删（含期初票据）。可删返回 None。
 
     已使用（settled_amount>0，即冲过应收/背书抵过应付）删除会留下孤儿冲销记录
-    （NoteSettlement 用 note_id 泛指引用，无外键级联），故必须先撤销；期初票据走期初导入。
+    （NoteSettlement 用 note_id 泛指引用，无外键级联），故必须先到对应发票撤销冲销。
+    未使用的票据（含期初导入的）不挂应收/应付、无日记账、无镜像，删除是干净的——
+    期初票据正是导入时最易录错、最需删的，故不再额外拦期初。
     """
     if note.settled_amount > 0:
         return "票据已使用（冲应收/背书抵应付），不可删除；如需更正请到对应发票撤销冲销后再删"
-    if note.is_opening:
-        return "期初票据请到期初导入处理，不能在此删除"
     return None
 
 
 @transaction.atomic
 def delete_note_receivable(note, *, user):
-    """删除应收票据（彻底移除）：未使用、非期初才可删。
+    """删除应收票据（彻底移除）：仅「未使用」即可删（含期初票据）。
 
     未使用的票据不挂应收/应付、无银行日记账、无镜像，删除是干净的（仅撤销该票据登记）。
     """

@@ -903,7 +903,7 @@ class NoteReceivableDeleteTests(TestCase):
         U = get_user_model()
         cls.user = U.objects.create_user(username="cashier", password="x",
                                          can_view_all_companies=True)
-        for code in ("add_notereceivable", "view_notereceivable"):
+        for code in ("add_notereceivable", "view_notereceivable", "view_receipt"):
             cls.user.user_permissions.add(
                 Permission.objects.get(content_type__app_label="finance", codename=code))
 
@@ -934,14 +934,34 @@ class NoteReceivableDeleteTests(TestCase):
         with self.assertRaises(SettlementError):
             delete_note_receivable(note, user=self.user)
 
-    def test_opening_note_blocked(self):
-        from apps.finance.services import (
-            SettlementError, create_note_receivable, delete_note_receivable,
-        )
+    def test_opening_unused_note_deletable(self):
+        """期初票据（导入最易录错）只要未使用即可删，不再额外拦期初。"""
+        from apps.finance.models import NoteReceivable
+        from apps.finance.services import create_note_receivable, delete_note_receivable
         note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 1),
                                       amount=Decimal("3000"), customer=self.cust, is_opening=True)
-        with self.assertRaises(SettlementError):
-            delete_note_receivable(note, user=self.user)
+        delete_note_receivable(note, user=self.user)
+        self.assertFalse(NoteReceivable.objects.filter(pk=note.pk).exists())
+
+    def test_receipt_list_shows_delete_for_unused_note(self):
+        """收款统一一览：未使用票据行出现「删除」表单，已使用的不出现。"""
+        from apps.finance.services import (
+            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+        )
+        cls_p = self.p
+        unused = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                        amount=Decimal("5000"), customer=self.cust)
+        inv = create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
+            customer=self.cust, lines=[{"product": cls_p, "description": "",
+            "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
+        used = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("2000"), customer=self.cust)
+        settle_receivable_against_sales(note=used,
+            allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        self.client.force_login(self.user)
+        resp = self.client.get("/finance/receipts/", SERVER_NAME="localhost")
+        self.assertContains(resp, f"/finance/notes-receivable/{unused.pk}/delete/")
+        self.assertNotContains(resp, f"/finance/notes-receivable/{used.pk}/delete/")
 
     def test_delete_view_button_and_post(self):
         from apps.finance.models import NoteReceivable
