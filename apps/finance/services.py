@@ -1,6 +1,7 @@
 """资金往来服务：采购发票登记（→应付账款）等。"""
 
 from django.db import transaction
+from django.db.models import Sum
 
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
@@ -579,8 +580,8 @@ def update_note_receivable(*, note, user, draw_date, amount, customer=None,
     amount = round_money(amount)
     if amount <= 0:
         raise ValueError("票面金额必须大于 0")
-    if note.settled_amount > 0 and amount != note.amount:
-        raise SettlementError("票据已使用，票面金额不可修改（如需更正请作废后重新登记）")
+    if amount != note.amount and note_has_usage(note):
+        raise SettlementError("票据已使用（核销应收/背书），票面金额不可修改（如需更正请先撤销其冲销）")
     note.note_no = note_no
     note.draw_date = draw_date
     note.due_date = due_date
@@ -597,13 +598,13 @@ def update_note_receivable(*, note, user, draw_date, amount, customer=None,
 def note_receivable_delete_block_reason(note) -> str | None:
     """应收票据可否删除（彻底移除）：仅「未使用」即可删（含期初票据）。可删返回 None。
 
-    已使用（settled_amount>0，即冲过应收/背书抵过应付）删除会留下孤儿冲销记录
+    已使用（核销过应收 / 背书抵过应付，存在 NoteSettlement）删除会留下孤儿冲销记录
     （NoteSettlement 用 note_id 泛指引用，无外键级联），故必须先到对应发票撤销冲销。
     未使用的票据（含期初导入的）不挂应收/应付、无日记账、无镜像，删除是干净的——
     期初票据正是导入时最易录错、最需删的，故不再额外拦期初。
     """
-    if note.settled_amount > 0:
-        return "票据已使用（冲应收/背书抵应付），不可删除；如需更正请到对应发票撤销冲销后再删"
+    if note_has_usage(note):
+        return "票据已使用（核销应收/背书抵应付），不可删除；如需更正请到对应发票撤销冲销后再删"
     return None
 
 
@@ -641,16 +642,40 @@ def create_note_payable(*, company, user, draw_date, supplier, amount,
     return note
 
 
+def _note_applied_ar(note):
+    """应收票据已抵应收账款的合计（核销应收=票进来抵应收，不消耗票面）。"""
+    return (NoteSettlement.objects.filter(
+        company=note.company, note_id=note.pk,
+        note_kind=NoteSettlement.NoteKind.RECEIVABLE, is_endorsement=False
+    ).aggregate(s=Sum("amount"))["s"] or ZERO_MONEY)
+
+
+def note_has_usage(note) -> bool:
+    """该票据是否有任何使用记录（核销应收 / 背书 / 抵应付）——用于禁改票面、禁删。"""
+    kind = (NoteSettlement.NoteKind.RECEIVABLE if isinstance(note, NoteReceivable)
+            else NoteSettlement.NoteKind.PAYABLE)
+    return NoteSettlement.objects.filter(
+        company=note.company, note_kind=kind, note_id=note.pk).exists()
+
+
 def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
                 is_endorsement, user):
-    """票据冲销通用核心：把票据未用额冲抵若干发票未核销额。
+    """票据冲销通用核心：把票据冲抵若干发票未核销额。
 
-    校验：金额>0、不超票据未用额、不超各发票未核销额；任一违反整体回滚。
+    口径（关键）：
+    - **应收票据核销应收账款**（is_endorsement=False，note_kind=RECEIVABLE）：票据是「收进来」
+      抵客户应收账款（借应收票据/贷应收账款），**不消耗票面**——票仍持有可背书/托收。
+      仅减发票未核销额；上限=票面−已抵应收额。
+    - **背书抵应付 / 应付票据抵应付**（票据「出去」）：**消耗票面**，减未用额、到 0 定终态。
+    校验：金额>0、不超相应额度、任一违反整体回滚。
     """
     NoteModel = type(note)
     note = NoteModel.objects.select_for_update().get(pk=note.pk)
-    if note.status in ("void", "settled", "endorsed"):
-        raise SettlementError(f"票据 {note.doc_no} 状态为「{note.get_status_display()}」，不可再冲销")
+    consumes = is_endorsement or note_kind == NoteSettlement.NoteKind.PAYABLE
+    if note.status == NoteModel.Status.VOID:
+        raise SettlementError(f"票据 {note.doc_no} 已作废，不可操作")
+    if consumes and note.unused <= 0:
+        raise SettlementError(f"票据 {note.doc_no} 已无未用额，不可再使用")
 
     total = ZERO_MONEY
     cleaned = []
@@ -667,8 +692,13 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
 
     if not cleaned:
         raise SettlementError("请填写有效的冲销金额")
-    if total > note.unused:
-        raise SettlementError(f"冲销合计 {total} 超过票据未用额 {note.unused}")
+    if consumes:
+        if total > note.unused:
+            raise SettlementError(f"冲销合计 {total} 超过票据未用额 {note.unused}")
+    else:
+        room = note.amount - _note_applied_ar(note)
+        if total > room:
+            raise SettlementError(f"核销应收合计 {total} 超过票据可抵应收额 {room}")
 
     for inv, amount in cleaned:
         NoteSettlement.objects.create(
@@ -679,24 +709,24 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         inv.settled_amount += amount
         inv.save(update_fields=["settled_amount"])
 
-    note.settled_amount += total
-    # 仅在票面全部用完时才定终态；未用完保持「在手」，可继续冲应收 / 背书抵应付混合使用
-    if note.unused == 0:
-        endorsed_any = is_endorsement
-        if (not endorsed_any
-                and note_kind == NoteSettlement.NoteKind.RECEIVABLE):
-            endorsed_any = NoteSettlement.objects.filter(
-                company=note.company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
-                note_id=note.pk, is_endorsement=True).exists()
-        if endorsed_any:
-            note.status = NoteReceivable.Status.ENDORSED   # 任一部分已背书 → 票据已转让
-        else:
-            note.status = type(note).Status.SETTLED
-    note.save(update_fields=["settled_amount", "status"])
+    if consumes:
+        note.settled_amount += total
+        # 票面全部用出 → 定终态（应收=已背书，应付=已结算）；未用完保持在手/已开出
+        if note.unused == 0:
+            note.status = (NoteReceivable.Status.ENDORSED
+                           if note_kind == NoteSettlement.NoteKind.RECEIVABLE
+                           else NoteModel.Status.SETTLED)
+        note.save(update_fields=["settled_amount", "status"])
 
+    if is_endorsement:
+        act = "背书抵应付"
+    elif note_kind == NoteSettlement.NoteKind.PAYABLE:
+        act = "应付票据抵应付"
+    else:
+        act = "核销应收账款"
     AuditLog.record(
         actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
-        summary=f"票据冲销 {note.doc_no} 冲 {total}（{len(cleaned)} 张发票{'，背书抵付' if is_endorsement else ''}）",
+        summary=f"票据{act} {note.doc_no} {total}（{len(cleaned)} 张发票）",
     )
     return note
 
@@ -767,15 +797,18 @@ def reverse_note_settlement(*, settlement, user):
     if inv is not None:
         inv.settled_amount -= s.amount
         inv.save(update_fields=["settled_amount"])
-    note.settled_amount -= s.amount
-    # 撤销后必有未用额 → 回到非终态（应收=在手，应付=已开出）
-    note.status = (NoteReceivable.Status.ON_HAND if isinstance(note, NoteReceivable)
-                   else NotePayable.Status.ISSUED)
-    note.save(update_fields=["settled_amount", "status"])
+    # 只有「消耗票面」的冲销（背书/应付票抵应付）才退回票据未用额；
+    # 核销应收（票进来抵应收账款）本就不消耗票面，撤销只退发票、不动票据。
+    consumes = s.is_endorsement or s.note_kind == NoteSettlement.NoteKind.PAYABLE
+    if consumes:
+        note.settled_amount -= s.amount
+        note.status = (NoteReceivable.Status.ON_HAND if isinstance(note, NoteReceivable)
+                       else NotePayable.Status.ISSUED)
+        note.save(update_fields=["settled_amount", "status"])
     AuditLog.record(
         actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
-        summary=(f"撤销票据冲销 {note.doc_no} 退回 {s.amount}"
-                 f"（{'背书抵付' if s.is_endorsement else '冲销'} {s.invoice_no}）"))
+        summary=(f"撤销票据{'背书抵付' if s.is_endorsement else '核销应收'} "
+                 f"{note.doc_no} 退回 {s.amount}（发票 {s.invoice_no}）"))
     s.delete()
     return note
 

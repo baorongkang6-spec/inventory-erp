@@ -95,10 +95,12 @@ def company_overview(company, dfrom, dto):
                                [(ar_rec, "created_at__date"), (ar_note, "created_at__date")], dfrom, dto)
     _add_opening(receivable, _s(ar_all.filter(is_opening=True), "amount_taxed"))
 
-    # 应收票据：期初票据(is_opening)恒计期初；增=本期出票；减=票据使用
+    # 应收票据：期初票据(is_opening)恒计期初；增=本期出票；减=票据「出去」(背书/托收)。
+    # 核销应收(is_endorsement=False)是票收进来抵应收账款、不消耗票面，不在此减。
     nr_all = NoteReceivable.objects.filter(company=company).exclude(status=NoteReceivable.Status.VOID)
     nr = nr_all.filter(is_opening=False)
-    nr_use = NoteSettlement.objects.filter(company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE)
+    nr_use = NoteSettlement.objects.filter(company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+                                           is_endorsement=True)
     note_recv = _merge_period(nr, "draw_date", "amount",
                               [(nr_use, "created_at__date")], dfrom, dto)
     _add_opening(note_recv, _s(nr_all.filter(is_opening=True), "amount"))
@@ -847,8 +849,10 @@ def receivable_notes_balance(company, dfrom, dto):
     notes = NoteReceivable.objects.filter(company=company).exclude(
         status=NoteReceivable.Status.VOID).order_by("doc_no")
     sett = {}
+    # 仅「背书/托收」减票据持有；核销应收不消耗票面，不计入减项
     for s in NoteSettlement.objects.filter(company=company,
-                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE):
+                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+                                           is_endorsement=True):
         sett.setdefault(s.note_id, []).append(s)
     rows = []
     for n in notes:
@@ -871,14 +875,19 @@ def receivable_notes_balance(company, dfrom, dto):
 
 
 def note_ledger(company, note, dfrom, dto):
-    """应收票据使用明细：出票(增) + 使用(冲应收/背书抵应付，减) 按时间滚动未用额。"""
+    """应收票据使用明细：出票(增) + 背书/托收(减) 按时间滚动未用额。
+
+    核销应收(冲应收账款)是票收进来抵应收、不消耗票面，不影响未用余额，故不在本表减项；
+    其与发票的勾稽见对应发票「核销明细」。
+    """
     from apps.core.docrefs import invoice_url
     events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
                "inc": note.amount, "dec": Z, "ref_url": "", "is_opening": note.is_opening}]
     for s in NoteSettlement.objects.filter(company=company, note_id=note.pk,
-                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE):
+                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+                                           is_endorsement=True):
         events.append({"date": s.created_at.date(),
-                       "kind": "背书抵应付" if s.is_endorsement else "冲应收",
+                       "kind": "背书抵应付",
                        "doc_no": s.invoice_no, "inc": Z, "dec": s.amount,
                        "ref_url": invoice_url(s.invoice_kind, s.invoice_id),
                        "settlement_id": s.pk})

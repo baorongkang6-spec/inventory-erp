@@ -698,19 +698,20 @@ class NoteDrilldownTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         from apps.finance.services import (
-            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+            create_note_receivable, create_purchase_invoice, endorse_receivable_against_purchase,
         )
-        from apps.masterdata.models import Customer
+        from apps.masterdata.models import Customer, Supplier
         cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
         cls.cust = Customer.objects.create(company=cls.c1, code="C9", name="客户甲")
-        # 6/5 出票 1000；6/20 用 600 冲一张销售发票
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S9", name="供应商甲")
+        # 6/5 出票 1000；用 600 背书抵一张采购发票（票出去→消耗未用额）
         cls.note = create_note_receivable(company=cls.c1, user=None, draw_date=date(2026, 6, 5),
                                           amount=Decimal("1000"), customer=cls.cust, note_no="BD001")
-        inv = create_sales_invoice(company=cls.c1, user=None, doc_date=date(2026, 6, 18),
-            customer=cls.cust, lines=[{"product": None, "description": "货",
-                                       "amount_untaxed": Decimal("600"), "tax_rate": Decimal("0")}])
-        settle_receivable_against_sales(note=cls.note,
-                                        allocations=[{"invoice": inv, "amount": Decimal("600")}])
+        pi = create_purchase_invoice(company=cls.c1, user=None, doc_date=date(2026, 6, 18),
+            supplier=cls.sup, lines=[{"product": None, "description": "货",
+                                      "amount_untaxed": Decimal("600"), "tax_rate": Decimal("0")}])
+        endorse_receivable_against_purchase(note=cls.note,
+                                            allocations=[{"invoice": pi, "amount": Decimal("600")}])
 
     def test_notes_balance(self):
         from apps.opening.reports import receivable_notes_balance
@@ -718,13 +719,13 @@ class NoteDrilldownTests(TestCase):
         r = rows[0]
         self.assertEqual(r["opening"], Decimal("0.00"))
         self.assertEqual(r["income"], Decimal("1000.00"))  # 本期出票
-        self.assertEqual(r["outgo"], Decimal("600.00"))    # 本期使用
+        self.assertEqual(r["outgo"], Decimal("600.00"))    # 本期背书(票出去)
         self.assertEqual(r["ending"], Decimal("400.00"))   # 未用
 
     def test_note_ledger(self):
         from apps.opening.reports import note_ledger
         d = note_ledger(self.c1, self.note, date(2026, 6, 1), date(2026, 6, 30))
-        self.assertEqual(len(d["rows"]), 2)               # 出票 + 冲应收
+        self.assertEqual(len(d["rows"]), 2)               # 出票 + 背书抵应付
         self.assertEqual(d["ending"], Decimal("400.00"))
         self.assertEqual(d["rows"][-1]["balance"], Decimal("400.00"))
 
@@ -829,7 +830,7 @@ class NoteReceivableEditTests(TestCase):
         self.assertEqual(note.amount, Decimal("5000.00"))  # 未用，票面可保持
 
     def test_amount_locked_when_used(self):
-        """已使用的票据票面金额锁定，但描述字段仍可补录。"""
+        """已使用的票据（有冲销记录）票面金额锁定，但描述字段仍可补录。"""
         from apps.finance.services import (
             SettlementError, create_note_receivable, create_sales_invoice,
             settle_receivable_against_sales, update_note_receivable,
@@ -839,10 +840,12 @@ class NoteReceivableEditTests(TestCase):
             "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
         note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
                                       amount=Decimal("2000"), customer=self.cust)
+        # 冲应收：产生使用记录（虽不消耗票面，但已与发票勾稽）→ 票面应锁定
         settle_receivable_against_sales(note=note,
             allocations=[{"invoice": inv, "amount": Decimal("1000")}])
         note.refresh_from_db()
-        # 改票面 → 拒绝
+        self.assertEqual(note.settled_amount, Decimal("0.00"))     # 核销应收不消耗票面
+        # 改票面 → 拒绝（有冲销勾稽）
         with self.assertRaises(SettlementError):
             update_note_receivable(note=note, user=self.user, draw_date=note.draw_date,
                                    amount=Decimal("3000"), customer=self.cust)
@@ -852,7 +855,6 @@ class NoteReceivableEditTests(TestCase):
                                due_date=date(2026, 12, 11))
         note.refresh_from_db()
         self.assertEqual(note.due_date, date(2026, 12, 11))
-        self.assertEqual(note.settled_amount, Decimal("1000.00"))  # 已用不受影响
 
     def test_void_note_not_editable(self):
         from apps.finance.models import NoteReceivable
@@ -890,28 +892,29 @@ class NoteReceivableEditTests(TestCase):
         self.assertEqual(note.customer, self.cust)
 
     def test_used_amount_links_to_usage_detail(self):
-        """已用金额可点 → 票据使用明细(all=1 看全部)，显示冲应收及被冲发票号。"""
+        """已用金额（背书）可点 → 票据使用明细(all=1 看全部)，显示背书及被抵发票号。"""
         from apps.finance.services import (
-            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+            create_note_receivable, create_purchase_invoice, endorse_receivable_against_purchase,
         )
-        inv = create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
-            customer=self.cust, lines=[{"product": self.p, "description": "",
+        pi = create_purchase_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
+            supplier=self.sup, lines=[{"product": None, "description": "x",
             "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
         note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
                                       amount=Decimal("1000"), customer=self.cust)
-        settle_receivable_against_sales(note=note,
-            allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        # 背书抵应付才消耗票面 → 已用>0
+        endorse_receivable_against_purchase(note=note,
+            allocations=[{"invoice": pi, "amount": Decimal("1000")}])
         self.client.force_login(self.user)
         # 列表「已用」是指向使用明细的链接
         lst = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
         self.assertContains(lst, "receivable-note-ledger")
         self.assertContains(lst, f"note={note.pk}")
-        # 使用明细 all=1 显示冲应收事件 + 被冲发票号
+        # 使用明细 all=1 显示背书事件 + 被抵发票号
         led = self.client.get(
             f"/finance/reports/receivable-note-ledger/?company={self.c1.pk}&note={note.pk}&all=1",
             SERVER_NAME="localhost")
         self.assertEqual(led.status_code, 200)
-        self.assertContains(led, inv.doc_no)
+        self.assertContains(led, pi.doc_no)
         self.assertContains(led, "冲应收")
 
 
@@ -1032,9 +1035,11 @@ class NoteSettlementTests(TestCase):
         settle_receivable_against_sales(note=note,
             allocations=[{"invoice": inv, "amount": Decimal("1130")}])
         inv.refresh_from_db(); note.refresh_from_db()
-        self.assertEqual(inv.outstanding, Decimal("0.00"))
-        self.assertEqual(note.unused, Decimal("0.00"))
-        self.assertEqual(note.status, "settled")
+        self.assertEqual(inv.outstanding, Decimal("0.00"))   # 应收账款已核销
+        # 核销应收=票收进来抵应收，不消耗票面：票仍持有、可继续背书/托收
+        self.assertEqual(note.unused, Decimal("1130.00"))
+        self.assertEqual(note.settled_amount, Decimal("0.00"))
+        self.assertEqual(note.status, "on_hand")
 
     def test_receivable_note_endorse_to_payable(self):
         from apps.finance.services import create_note_receivable, endorse_receivable_against_purchase
@@ -1135,7 +1140,9 @@ class ReceiptPaymentByNoteTests(TestCase):
         self.assertEqual(r.status_code, 200)
         note = NoteReceivable.objects.get(company=self.c1, note_no="BJ001")
         self.assertEqual(note.amount, Decimal("1000.00"))
-        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)  # 全额用掉
+        # 收票抵应收=票收进来抵应收账款，票仍持有（在手、未用=票面），可背书/托收
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertEqual(note.unused, Decimal("1000.00"))
         inv.refresh_from_db()
         self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应收已冲平
         # 不生成银行日记账
@@ -1151,9 +1158,10 @@ class ReceiptPaymentByNoteTests(TestCase):
         }, SERVER_NAME="localhost", follow=True)
         note = NoteReceivable.objects.get(company=self.c1, note_no="BJ002")
         self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
-        self.assertEqual(note.unused, Decimal("400.00"))             # 余额留在手
+        # 核销应收不消耗票：1000 票面全额仍持有（应收侧只冲了 600）
+        self.assertEqual(note.unused, Decimal("1000.00"))
         inv.refresh_from_db()
-        self.assertEqual(inv.outstanding, Decimal("0.00"))
+        self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应收 600 已冲平
 
     def test_payment_by_note_endorses_to_purchase(self):
         # 先有一张在手应收票据，再用它背书抵采购应付
@@ -1574,46 +1582,61 @@ class NoteMixedUseTests(TestCase):
             lines=[{"product": None, "description": "x", "amount_untaxed": Decimal(amount),
                     "tax_rate": Decimal("0")}])
 
-    def test_partial_settle_then_partial_endorse_keeps_on_hand(self):
+    def test_settle_ar_does_not_consume_note_then_endorse(self):
+        """收票抵应收账款不消耗票面（票留持有）；之后整张可背书出去。"""
         from apps.finance.services import (endorse_receivable_against_purchase,
                                            settle_receivable_against_sales)
         note = self._note("1000")
         si = self._sales("1000")
         pi = self._purchase("1000")
 
-        # 先冲应收 400
+        # 冲应收 1000：减应收账款，但票不消耗（借应收票据/贷应收账款）
         settle_receivable_against_sales(
-            note=note, allocations=[{"invoice": si, "amount": Decimal("400")}])
-        note.refresh_from_db()
+            note=note, allocations=[{"invoice": si, "amount": Decimal("1000")}])
+        note.refresh_from_db(); si.refresh_from_db()
         self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)   # 仍在手
-        self.assertEqual(note.unused, Decimal("600.00"))
+        self.assertEqual(note.settled_amount, Decimal("0.00"))         # 未消耗
+        self.assertEqual(note.unused, Decimal("1000.00"))             # 票面全额持有
+        self.assertEqual(si.settled_amount, Decimal("1000.00"))       # 应收账款已冲
 
-        # 再背书抵应付 300（关键：以前这一步会立刻锁成「已背书」）
+        # 持有的这张票再整额背书给供应商（票出去→消耗）
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": pi, "amount": Decimal("1000")}])
+        note.refresh_from_db(); pi.refresh_from_db()
+        self.assertEqual(note.unused, Decimal("0.00"))
+        self.assertEqual(note.status, NoteReceivable.Status.ENDORSED) # 票出尽 → 已背书
+        self.assertEqual(pi.settled_amount, Decimal("1000.00"))       # 应付已抵
+
+    def test_partial_endorse_keeps_on_hand(self):
+        from apps.finance.services import endorse_receivable_against_purchase
+        note = self._note("1000")
+        pi = self._purchase("1000")
         endorse_receivable_against_purchase(
             note=note, allocations=[{"invoice": pi, "amount": Decimal("300")}])
         note.refresh_from_db()
-        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)   # 仍可继续用
-        self.assertEqual(note.unused, Decimal("300.00"))
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)   # 部分背书仍在手
+        self.assertEqual(note.unused, Decimal("700.00"))
 
-        si.refresh_from_db(); pi.refresh_from_db()
-        self.assertEqual(si.settled_amount, Decimal("400.00"))         # 应收冲了 400
-        self.assertEqual(pi.settled_amount, Decimal("300.00"))         # 应付抵了 300
-
-        # 用完剩余 300（再冲应收），票面归零 → 因含背书，终态为「已背书」
-        settle_receivable_against_sales(
-            note=note, allocations=[{"invoice": si, "amount": Decimal("300")}])
-        note.refresh_from_db()
-        self.assertEqual(note.unused, Decimal("0.00"))
-        self.assertEqual(note.status, NoteReceivable.Status.ENDORSED)
-
-    def test_pure_full_settle_marks_settled(self):
+    def test_full_settle_ar_keeps_note_held(self):
+        """纯冲应收全额：应收冲平，但票仍在手（不再变「已结算」）。"""
         from apps.finance.services import settle_receivable_against_sales
         note = self._note("500")
         si = self._sales("500")
         settle_receivable_against_sales(
             note=note, allocations=[{"invoice": si, "amount": Decimal("500")}])
         note.refresh_from_db()
-        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)   # 纯冲应收全额 → 已结算
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertEqual(note.unused, Decimal("500.00"))
+        self.assertEqual(note.settled_amount, Decimal("0.00"))
+
+    def test_settle_ar_over_face_rejected(self):
+        """冲应收合计不得超过票面（票面−已抵应收）。"""
+        from apps.finance.services import SettlementError, settle_receivable_against_sales
+        note = self._note("500")
+        si = self._sales("1000")
+        with self.assertRaises(SettlementError):
+            settle_receivable_against_sales(
+                note=note, allocations=[{"invoice": si, "amount": Decimal("600")}])
 
 
 class InvoiceDeleteTests(TestCase):
@@ -1815,20 +1838,20 @@ class NoteSettlementReverseTests(TestCase):
         inv.refresh_from_db(); note.refresh_from_db()
         return inv, note
 
-    def test_reverse_restores_invoice_and_note(self):
+    def test_reverse_settle_ar_restores_invoice_only(self):
+        """撤销「核销应收」：只退回发票未核销额；票本就没被消耗，未用额不变。"""
         from apps.finance.models import NoteReceivable, NoteSettlement
         from apps.finance.services import reverse_note_settlement
         inv, note = self._settle_ar(Decimal("1000"), Decimal("1000"))
-        # 全额用完 → 票已结算、未用 0、发票已核销 1000
-        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)
-        self.assertEqual(note.unused, Decimal("0.00"))
+        # 核销应收不消耗票：票在手、未用满、发票已核销
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertEqual(note.unused, Decimal("1000.00"))
         self.assertEqual(inv.settled_amount, Decimal("1000.00"))
         s = NoteSettlement.objects.get(note_id=note.pk)
         reverse_note_settlement(settlement=s, user=self.user)
         inv.refresh_from_db(); note.refresh_from_db()
-        # 撤销后：票回在手、未用恢复、发票未核销额退回、冲销记录删除
+        # 撤销后：发票未核销额退回；票仍在手、未用不变（本就没消耗）
         self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
-        self.assertEqual(note.settled_amount, Decimal("0.00"))
         self.assertEqual(note.unused, Decimal("1000.00"))
         self.assertEqual(inv.settled_amount, Decimal("0.00"))
         self.assertFalse(NoteSettlement.objects.filter(pk=s.pk).exists())

@@ -2002,10 +2002,16 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
         return super().get_queryset().select_related("customer")
 
     def get_context_data(self, **kwargs):
-        from .services import note_receivable_delete_block_reason
+        from .models import NoteSettlement
+        from .services import _note_applied_ar, note_receivable_delete_block_reason
         ctx = super().get_context_data(**kwargs)
         for n in ctx[self.context_object_name]:
             n.can_delete = note_receivable_delete_block_reason(n) is None
+            void = n.status == NoteReceivable.Status.VOID
+            # 冲应收：票收进来抵应收账款，按「票面−已抵应收额」判可用，与未用额(背书侧)无关
+            n.can_settle_ar = (not void) and (n.amount - _note_applied_ar(n)) > 0
+            # 背书抵应付：票出去，消耗未用额
+            n.can_endorse = (not void) and n.status != NoteReceivable.Status.ENDORSED and n.unused > 0
         return ctx
 
 

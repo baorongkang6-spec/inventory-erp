@@ -38,9 +38,9 @@
           <td class="text-end fw-semibold">{{ n.unused }}</td>
           <td>{{ n.get_status_display }}</td>
           <td class="text-nowrap">
-            {% if n.unused > 0 and n.status == 'on_hand' and perms.finance.add_notesettlement %}
-            <a href="{% url 'note_receivable_settle' n.pk %}" class="btn btn-sm btn-outline-success">冲应收</a>
-            <a href="{% url 'note_receivable_endorse' n.pk %}" class="btn btn-sm btn-outline-primary">背书抵应付</a>
+            {% if perms.finance.add_notesettlement %}
+            {% if n.can_settle_ar %}<a href="{% url 'note_receivable_settle' n.pk %}" class="btn btn-sm btn-outline-success">冲应收</a>{% endif %}
+            {% if n.can_endorse %}<a href="{% url 'note_receivable_endorse' n.pk %}" class="btn btn-sm btn-outline-primary">背书抵应付</a>{% endif %}
             {% endif %}
             {% if n.status != 'void' and perms.finance.add_notereceivable %}
             <a href="{% url 'note_receivable_edit' n.pk %}" class="btn btn-sm btn-outline-secondary">修改</a>
