@@ -25,7 +25,8 @@ class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     export_filename = "采购入库"
     export_columns = [("单据编号","doc_no"),("日期","doc_date"),("供应商","supplier__name"),
                       ("方式","get_purchase_type_display"),("总数量","total_quantity"),
-                      ("入库成本","total_amount"),("含税合计","total_taxed"),("状态","get_status_display")]
+                      ("入库成本","total_amount"),("不含税合计","total_untaxed"),
+                      ("含税合计","total_taxed"),("状态","get_status_display")]
     model = PurchaseInbound
     template_name = "purchasing/inbound_list.html"
     context_object_name = "docs"
@@ -41,6 +42,12 @@ class InboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
         mgr = _inbound_is_manager(self.request.user)
         for d in ctx["docs"]:
             d.can_delete = inbound_delete_block_reason(d, self.request.user, today, mgr) is None
+        from decimal import Decimal
+        z = Decimal("0.00")
+        # 金额列求合计；总数量异构(不同商品)不跨单相加
+        ctx["totals"] = {"amount": sum((d.total_amount for d in ctx["docs"]), z),
+                         "untaxed": sum((d.total_untaxed for d in ctx["docs"]), z),
+                         "taxed": sum((d.total_taxed for d in ctx["docs"]), z)}
         return ctx
 
 

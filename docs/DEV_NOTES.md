@@ -175,6 +175,7 @@
 9. **采购入库「受限硬删除」**：`delete_purchase_inbound` + `inbound_delete_block_reason`。因移动加权成本链式，**仅当该入库后相关商品再无任何出入库变动**（即"刚录错马上撤")、且非镜像/未开票/当月/本人或管理员时才允许；用 `reverse_move` 精确反冲再删两条流水不留痕。其余情况用「作废」。
 10. **修改收付时可切换为票据**：付款「修改」改用完整 `PaymentForm`、收款「修改」改用完整 `ReceiptForm`；若把方式改成应收票据(背书)/应收票据，保存时**原子地删旧银行单+日记账、改记为票据**（误记更正）；校验失败整体回滚。删掉了 `PaymentEditForm/ReceiptEditForm` 与 `cash_doc_edit.html`。
 11. **发票详情「核销明细」**：列出已核销来自哪些付款/票据（`_invoice_settlements` 合并 PaymentAllocation/ReceiptAllocation + NoteSettlement，标明"应收票据背书抵付"等）。解决用户疑惑"已核销但付款里没有"。
+20. **采购入库列表加不含税合计列 + 合计（2026-06-17）**：对称销售出库——`InboundListView` 加「不含税合计」(`total_untaxed`，在入库成本与含税合计之间)；`totals.amount/untaxed/taxed` tfoot 合计。
 19. **销售出库列表加不含税售额列 + 合计（2026-06-17）**：`OutboundListView` 表头/导出加「不含税售额」(`total_untaxed`，在含税左侧)；`get_context_data` 算 `totals.untaxed/taxed/cost`（金额列求和，总数量异构不加）；tfoot 合计的结转成本列同样受 `perms.inventory.view_amount` 门控。
 18. **应收票据列表「票面」拆期初/本期（2026-06-17）**：按 `is_opening` 把票面拆「期初金额 / 本期收入」两列（含 tfoot 合计 `totals.opening/period` 与导出 `export_columns` 用 callable `lambda n: n.amount if n.is_opening else ""`）。与总览/票据余额表的期初口径一致。
 17. **列表合计行（2026-06-17）**：应收票据列表（票面/已用/未用）、收/付统一一览（金额/已核销/未核销）加底部 tfoot 合计。note 列表在 `NoteReceivableListView.get_context_data` 算 `totals`；收付列表用 `_cash_totals(rows)`（对**过滤后**的 rows 求和，故随筛选/日期变化）。模板 `{% if rows %}`/`{% if notes %}` 才显示。

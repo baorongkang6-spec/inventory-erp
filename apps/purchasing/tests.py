@@ -256,3 +256,35 @@ class InboundDeleteTests(TestCase):
                              SERVER_NAME="localhost", follow=True)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(PurchaseInbound.objects.filter(pk=doc.pk).count(), 0)
+
+
+class InboundListTotalsTests(TestCase):
+    """采购入库列表：不含税合计列 + 底部合计行。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from apps.purchasing.services import create_and_post_inbound
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        for _ in range(2):
+            create_and_post_inbound(company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+                lines=[{"product": cls.p, "quantity": Decimal("10"),
+                        "tax_inclusive_price": Decimal("113"), "tax_rate": Decimal("0.13")}])
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="buy", password="x", can_view_all_companies=True)
+        cls.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="purchasing",
+                                   codename="view_purchaseinbound"))
+
+    def test_list_shows_untaxed_and_totals(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/purchasing/inbound/", SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "不含税合计")
+        t = resp.context["totals"]
+        self.assertEqual(t["amount"], Decimal("2000.00"))    # 入库成本 2 × 1000
+        self.assertEqual(t["untaxed"], Decimal("2000.00"))   # 2 × 1000
+        self.assertEqual(t["taxed"], Decimal("2260.00"))     # 2 × 1130
+        self.assertContains(resp, "合计")
