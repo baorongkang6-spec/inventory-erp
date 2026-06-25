@@ -17,6 +17,7 @@ from apps.core.money import round_money, round_qty
 from apps.finance.models import (
     BankAccount,
     BankJournal,
+    NoteDisposal,
     NotePayable,
     NoteReceivable,
     NoteSettlement,
@@ -101,8 +102,9 @@ def company_overview(company, dfrom, dto):
     nr = nr_all.filter(is_opening=False)
     nr_use = NoteSettlement.objects.filter(company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
                                            is_endorsement=True)
+    nr_disp = NoteDisposal.objects.filter(company=company)   # 兑付/贴现也是票出去
     note_recv = _merge_period(nr, "draw_date", "amount",
-                              [(nr_use, "created_at__date")], dfrom, dto)
+                              [(nr_use, "created_at__date"), (nr_disp, "date")], dfrom, dto)
     _add_opening(note_recv, _s(nr_all.filter(is_opening=True), "amount"))
 
     return {"bank": bank, "stock": stock, "payable": payable,
@@ -849,11 +851,13 @@ def receivable_notes_balance(company, dfrom, dto):
     notes = NoteReceivable.objects.filter(company=company).exclude(
         status=NoteReceivable.Status.VOID).order_by("doc_no")
     sett = {}
-    # 仅「背书/托收」减票据持有；核销应收不消耗票面，不计入减项
+    # 票「出去」才减持有：背书 + 兑付 + 贴现；核销应收不消耗票面，不计入减项
     for s in NoteSettlement.objects.filter(company=company,
                                            note_kind=NoteSettlement.NoteKind.RECEIVABLE,
                                            is_endorsement=True):
-        sett.setdefault(s.note_id, []).append(s)
+        sett.setdefault(s.note_id, []).append({"date": s.created_at.date(), "amount": s.amount})
+    for d in NoteDisposal.objects.filter(company=company):
+        sett.setdefault(d.note_id, []).append({"date": d.date, "amount": d.amount})
     rows = []
     for n in notes:
         opening = income = outgo = Z
@@ -862,11 +866,10 @@ def receivable_notes_balance(company, dfrom, dto):
         elif n.draw_date <= dto:
             income += n.amount
         for s in sett.get(n.pk, []):
-            sd = s.created_at.date()
-            if sd < dfrom:
-                opening -= s.amount
-            elif sd <= dto:
-                outgo += s.amount
+            if s["date"] < dfrom:
+                opening -= s["amount"]
+            elif s["date"] <= dto:
+                outgo += s["amount"]
         ending = opening + income - outgo
         if opening or income or outgo or ending:
             rows.append({"note": n, "opening": opening, "income": income,
@@ -891,6 +894,10 @@ def note_ledger(company, note, dfrom, dto):
                        "doc_no": s.invoice_no, "inc": Z, "dec": s.amount,
                        "ref_url": invoice_url(s.invoice_kind, s.invoice_id),
                        "settlement_id": s.pk})
+    for d in NoteDisposal.objects.filter(note=note).select_related("bank_account"):
+        events.append({"date": d.date, "kind": d.get_kind_display(),
+                       "doc_no": str(d.bank_account), "inc": Z, "dec": d.amount,
+                       "ref_url": "", "disposal_id": d.pk})
     opening = Z
     period = []
     for e in events:

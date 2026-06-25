@@ -1966,3 +1966,95 @@ class ListTotalsTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context["totals"]["amount"], Decimal("700.00"))
         self.assertContains(resp, "合计")
+
+
+class NoteCashTests(TestCase):
+    """应收票据到期兑付 / 贴现：票据→银行存款（贴现多记财务费用）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from apps.finance.models import BankAccount
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        for code in ("add_notesettlement", "view_notereceivable"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _note(self, amount):
+        from apps.finance.services import create_note_receivable
+        return create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal(amount), customer=self.cust)
+
+    def test_collect_creates_bank_journal_consumes_note(self):
+        from apps.finance.models import BankJournal, NoteReceivable
+        from apps.finance.services import collect_note_receivable
+        note = self._note("1000")
+        collect_note_receivable(note=note, user=self.user, date=date(2026, 9, 11),
+                                bank_account=self.acc, amount=Decimal("1000"))
+        note.refresh_from_db()
+        self.assertEqual(note.unused, Decimal("0.00"))           # 票变现金、消耗
+        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)
+        j = BankJournal.objects.get(company=self.c1, source_type="NoteDisposal")
+        self.assertEqual(j.direction, BankJournal.Direction.IN)
+        self.assertEqual(j.amount, Decimal("1000.00"))           # 票面进银行
+        self.assertEqual(j.entry_type, BankJournal.EntryType.NOTE_CASH)
+
+    def test_discount_nets_cash_and_records_finance_expense(self):
+        from apps.finance.models import BankJournal, ExpenseRecord
+        from apps.finance.services import discount_note_receivable
+        note = self._note("1000")
+        discount_note_receivable(note=note, user=self.user, date=date(2026, 7, 1),
+                                 bank_account=self.acc, net_amount=Decimal("992"),
+                                 amount=Decimal("1000"))
+        note.refresh_from_db()
+        self.assertEqual(note.unused, Decimal("0.00"))
+        j = BankJournal.objects.get(company=self.c1, source_type="NoteDisposal")
+        self.assertEqual(j.amount, Decimal("992.00"))            # 实收净额进银行
+        exp = ExpenseRecord.objects.get(company=self.c1, category=ExpenseRecord.Category.FINANCE)
+        self.assertEqual(exp.amount, Decimal("8.00"))            # 贴现息=1000-992
+
+    def test_reverse_disposal_restores_note_and_deletes_journal(self):
+        from apps.finance.models import BankJournal, ExpenseRecord, NoteDisposal, NoteReceivable
+        from apps.finance.services import discount_note_receivable, reverse_note_disposal
+        note = self._note("1000")
+        d = discount_note_receivable(note=note, user=self.user, date=date(2026, 7, 1),
+                                     bank_account=self.acc, net_amount=Decimal("992"),
+                                     amount=Decimal("1000"))
+        reverse_note_disposal(disposal=d, user=self.user)
+        note.refresh_from_db()
+        self.assertEqual(note.unused, Decimal("1000.00"))        # 恢复持有
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertFalse(NoteDisposal.objects.filter(pk=d.pk).exists())
+        self.assertEqual(BankJournal.objects.filter(company=self.c1, source_type="NoteDisposal").count(), 0)
+        self.assertEqual(ExpenseRecord.objects.filter(company=self.c1).count(), 0)
+
+    def test_note_balance_counts_disposal_as_outgo(self):
+        """票据余额表：兑付/贴现也算「本期发出」（票出去）。"""
+        from apps.opening.reports import receivable_notes_balance
+        from apps.finance.services import collect_note_receivable
+        note = self._note("1000")
+        collect_note_receivable(note=note, user=self.user, date=date(2026, 6, 20),
+                                bank_account=self.acc, amount=Decimal("1000"))
+        rows = receivable_notes_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        r = rows[0]
+        self.assertEqual(r["income"], Decimal("1000.00"))        # 出票
+        self.assertEqual(r["outgo"], Decimal("1000.00"))         # 兑付(票出去)
+        self.assertEqual(r["ending"], Decimal("0.00"))
+
+    def test_collect_view_button_and_post(self):
+        from apps.finance.models import NoteDisposal
+        note = self._note("500")
+        self.client.force_login(self.user)
+        lst = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertContains(lst, f"/finance/notes-receivable/{note.pk}/collect/")
+        self.assertContains(lst, f"/finance/notes-receivable/{note.pk}/discount/")
+        resp = self.client.post(f"/finance/notes-receivable/{note.pk}/collect/", {
+            "bank_account": self.acc.pk, "date": "2026-09-11", "amount": "500",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(NoteDisposal.objects.filter(note=note).count(), 1)

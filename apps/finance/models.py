@@ -134,6 +134,7 @@ class BankJournal(CompanyScopedModel):
         TAX = "tax", "税费"
         PAYROLL = "payroll", "工资"
         TRANSFER = "transfer", "内部划转"
+        NOTE_CASH = "note_cash", "票据兑现"
         OTHER = "other", "其他"
 
     bank_account = models.ForeignKey(
@@ -509,6 +510,42 @@ class NoteSettlement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.note_no} → {self.invoice_no} {self.amount}"
+
+
+class NoteDisposal(CompanyScopedModel):
+    """应收票据处置：到期兑付 / 贴现（票据 → 银行存款）。
+
+    区别于背书(票→抵应付)、核销应收(票进来抵应收)：这是把持有的票变现金。
+    - 到期兑付：票面进银行存款（net=票面、贴现息=0）。
+    - 贴现：实收净额进银行存款，贴现息=票面−净额，记一笔财务费用。
+    两者都「消耗」票据未用额。可撤销（恢复票据 + 删银行日记账/财务费用）。
+    """
+
+    class Kind(models.TextChoices):
+        COLLECT = "collect", "到期兑付"
+        DISCOUNT = "discount", "贴现"
+
+    note = models.ForeignKey(NoteReceivable, on_delete=models.PROTECT,
+                             related_name="disposals", verbose_name="应收票据")
+    kind = models.CharField("处置方式", max_length=10, choices=Kind.choices)
+    date = models.DateField("处置日期")
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="收款银行账户")
+    amount = models.DecimalField("票面金额", max_digits=18, decimal_places=2)        # 消耗票面
+    discount_fee = models.DecimalField("贴现息", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    net_amount = models.DecimalField("实收净额", max_digits=18, decimal_places=2)     # 进银行
+    bank_journal = models.ForeignKey(BankJournal, on_delete=models.SET_NULL, null=True, blank=True,
+                                     verbose_name="银行日记账")
+    expense = models.ForeignKey("ExpenseRecord", on_delete=models.SET_NULL, null=True, blank=True,
+                                verbose_name="贴现息费用记录")
+    remark = models.CharField("备注", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "票据处置"
+        verbose_name_plural = "票据处置"
+        ordering = ["-date", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} {self.note.doc_no} {self.amount}"
 
 
 class ExpenseEntry(CompanyScopedModel):

@@ -2023,8 +2023,9 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
             void = n.status == NoteReceivable.Status.VOID
             # 冲应收：票收进来抵应收账款，按「票面−已抵应收额」判可用，与未用额(背书侧)无关
             n.can_settle_ar = (not void) and (n.amount - _note_applied_ar(n)) > 0
-            # 背书抵应付：票出去，消耗未用额
+            # 背书抵应付 / 兑付 / 贴现：票出去，消耗未用额
             n.can_endorse = (not void) and n.status != NoteReceivable.Status.ENDORSED and n.unused > 0
+            n.can_cash = (not void) and n.unused > 0
         z = Decimal("0.00")
         ctx["totals"] = {
             "opening": sum((n.amount for n in notes if n.is_opening), z),
@@ -2221,6 +2222,75 @@ def note_receivable_endorse(request, pk):
                         title=f"应收票据背书抵应付 · {note.doc_no}",
                         hint="把该票据背书转让给供应商，抵付下列采购发票（应付账款）。",
                         redirect_to="note_receivable_list")
+
+
+def _note_cash(request, pk, *, mode):
+    """应收票据 兑付 / 贴现 通用视图：票据 → 银行存款。"""
+    from .services import collect_note_receivable, discount_note_receivable
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    note = get_object_or_404(NoteReceivable, pk=pk, company=company)
+    accounts = BankAccount.objects.filter(company=company)
+    title = (f"应收票据贴现 · {note.doc_no}" if mode == "discount"
+             else f"应收票据到期兑付 · {note.doc_no}")
+    if request.method == "POST":
+        try:
+            acc = accounts.get(pk=request.POST.get("bank_account"))
+            d = _parse_date(request.POST.get("date")) or timezone.localdate()
+            amount = Decimal((request.POST.get("amount") or "").strip())
+            remark = request.POST.get("remark", "")
+            if mode == "discount":
+                net = Decimal((request.POST.get("net_amount") or "").strip())
+                discount_note_receivable(note=note, user=request.user, date=d,
+                                         bank_account=acc, net_amount=net, amount=amount, remark=remark)
+                msg = "票据已贴现，已生成银行存款日记账与贴现息费用"
+            else:
+                collect_note_receivable(note=note, user=request.user, date=d,
+                                        bank_account=acc, amount=amount, remark=remark)
+                msg = "票据已兑付，已生成银行存款日记账"
+        except BankAccount.DoesNotExist:
+            messages.error(request, "请选择有效的银行账户")
+        except (SettlementError, ValueError, InvalidOperation) as e:
+            messages.error(request, f"操作失败：{e}")
+        else:
+            messages.success(request, msg)
+            return redirect("note_receivable_list")
+    return render(request, "finance/note_cash.html",
+                  {"note": note, "accounts": accounts, "mode": mode, "title": title,
+                   "today": timezone.localdate()})
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+def note_receivable_collect(request, pk):
+    """应收票据 → 到期兑付（票面进银行存款）。"""
+    return _note_cash(request, pk, mode="collect")
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+def note_receivable_discount(request, pk):
+    """应收票据 → 贴现（实收净额进银行存款，贴现息记财务费用）。"""
+    return _note_cash(request, pk, mode="discount")
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+@require_POST
+def note_disposal_reverse(request, pk):
+    """撤销票据兑付/贴现：恢复票据未用额 + 删银行日记账（贴现再删财务费用）。"""
+    from .models import NoteDisposal
+    from .services import reverse_note_disposal
+    d = get_object_or_404(NoteDisposal, pk=pk, company__in=get_visible_companies(request.user))
+    try:
+        reverse_note_disposal(disposal=d, user=request.user)
+    except SettlementError as e:
+        messages.error(request, str(e))
+    else:
+        messages.success(request, "已撤销该票据兑付/贴现，票据未用额已恢复")
+    nxt = request.POST.get("next")
+    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        return redirect(nxt)
+    return redirect("note_receivable_list")
 
 
 @login_required

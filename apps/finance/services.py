@@ -10,6 +10,8 @@ from apps.core.money import ZERO_MONEY, ZERO_QTY, round_money
 from .models import (
     BankJournal,
     BankReconcileBatch,
+    ExpenseRecord,
+    NoteDisposal,
     NotePayable,
     NoteReceivable,
     NoteSettlement,
@@ -651,11 +653,14 @@ def _note_applied_ar(note):
 
 
 def note_has_usage(note) -> bool:
-    """该票据是否有任何使用记录（核销应收 / 背书 / 抵应付）——用于禁改票面、禁删。"""
+    """该票据是否有任何使用记录（核销应收 / 背书 / 抵应付 / 兑付 / 贴现）——用于禁改票面、禁删。"""
     kind = (NoteSettlement.NoteKind.RECEIVABLE if isinstance(note, NoteReceivable)
             else NoteSettlement.NoteKind.PAYABLE)
-    return NoteSettlement.objects.filter(
-        company=note.company, note_kind=kind, note_id=note.pk).exists()
+    if NoteSettlement.objects.filter(
+            company=note.company, note_kind=kind, note_id=note.pk).exists():
+        return True
+    return (isinstance(note, NoteReceivable)
+            and NoteDisposal.objects.filter(note=note).exists())
 
 
 def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
@@ -810,6 +815,102 @@ def reverse_note_settlement(*, settlement, user):
         summary=(f"撤销票据{'背书抵付' if s.is_endorsement else '核销应收'} "
                  f"{note.doc_no} 退回 {s.amount}（发票 {s.invoice_no}）"))
     s.delete()
+    return note
+
+
+# ============================= 应收票据 兑付 / 贴现（M16）======================
+def _consume_note_to_cash(*, note, user, kind, date, bank_account, amount, net_amount,
+                          discount_fee, remark, expense):
+    """票据→银行存款 通用核心：建银行日记账(收入) + NoteDisposal，消耗票据未用额。"""
+    journal = BankJournal.objects.create(
+        company=note.company, created_by=user, bank_account=bank_account, date=date,
+        direction=BankJournal.Direction.IN, amount=net_amount,
+        entry_type=BankJournal.EntryType.NOTE_CASH,
+        counterparty=str(note.customer) if note.customer_id else "",
+        summary=f"票据{'兑付' if kind == NoteDisposal.Kind.COLLECT else '贴现'} {note.doc_no}",
+        source_type="NoteDisposal", source_no=note.doc_no,
+    )
+    disposal = NoteDisposal.objects.create(
+        company=note.company, created_by=user, note=note, kind=kind, date=date,
+        bank_account=bank_account, amount=amount, discount_fee=discount_fee,
+        net_amount=net_amount, bank_journal=journal, expense=expense, remark=remark)
+    journal.source_id = str(disposal.pk)
+    journal.save(update_fields=["source_id"])
+    note.settled_amount += amount
+    if note.unused == 0:
+        note.status = NoteReceivable.Status.SETTLED   # 票已变现金，终态
+    note.save(update_fields=["settled_amount", "status"])
+    return disposal
+
+
+@transaction.atomic
+def collect_note_receivable(*, note, user, date, bank_account, amount=None, remark=""):
+    """到期兑付：票面进银行存款（借银行存款/贷应收票据），消耗票据。"""
+    note = NoteReceivable.objects.select_for_update().get(pk=note.pk)
+    if note.status == NoteReceivable.Status.VOID:
+        raise SettlementError("票据已作废，不可兑付")
+    amount = round_money(amount) if amount is not None else note.unused
+    if amount <= 0 or amount > note.unused:
+        raise SettlementError(f"兑付金额须在未用额 {note.unused} 之内")
+    disposal = _consume_note_to_cash(
+        note=note, user=user, kind=NoteDisposal.Kind.COLLECT, date=date,
+        bank_account=bank_account, amount=amount, net_amount=amount,
+        discount_fee=ZERO_MONEY, remark=remark, expense=None)
+    AuditLog.record(actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
+                    summary=f"票据到期兑付 {note.doc_no} {amount}（{bank_account}）")
+    return disposal
+
+
+@transaction.atomic
+def discount_note_receivable(*, note, user, date, bank_account, net_amount, amount=None, remark=""):
+    """贴现：票面 amount 贴现，实收 net_amount 进银行，贴现息=amount−net_amount 记财务费用。"""
+    note = NoteReceivable.objects.select_for_update().get(pk=note.pk)
+    if note.status == NoteReceivable.Status.VOID:
+        raise SettlementError("票据已作废，不可贴现")
+    amount = round_money(amount) if amount is not None else note.unused
+    net_amount = round_money(net_amount)
+    if amount <= 0 or amount > note.unused:
+        raise SettlementError(f"贴现票面金额须在未用额 {note.unused} 之内")
+    if net_amount <= 0:
+        raise SettlementError("实收净额必须大于 0")
+    fee = amount - net_amount
+    if fee < 0:
+        raise SettlementError("实收净额不能大于票面金额")
+    expense = None
+    if fee > 0:
+        expense = ExpenseRecord.objects.create(
+            company=note.company, created_by=user, category=ExpenseRecord.Category.FINANCE,
+            date=date, amount=fee, remark=f"票据贴现息 {note.doc_no}")
+    disposal = _consume_note_to_cash(
+        note=note, user=user, kind=NoteDisposal.Kind.DISCOUNT, date=date,
+        bank_account=bank_account, amount=amount, net_amount=net_amount,
+        discount_fee=fee, remark=remark, expense=expense)
+    AuditLog.record(actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
+                    summary=f"票据贴现 {note.doc_no} 票面 {amount} 实收 {net_amount} 息 {fee}（{bank_account}）")
+    return disposal
+
+
+@transaction.atomic
+def reverse_note_disposal(*, disposal, user):
+    """撤销票据兑付/贴现：恢复票据未用额 + 删银行日记账（贴现再删财务费用）。"""
+    d = NoteDisposal.objects.select_for_update().get(pk=disposal.pk)
+    note = NoteReceivable.objects.select_for_update().get(pk=d.note_id)
+    if note.status == NoteReceivable.Status.VOID:
+        raise SettlementError("票据已作废，不能撤销其处置")
+    note.settled_amount -= d.amount
+    note.status = NoteReceivable.Status.ON_HAND
+    note.save(update_fields=["settled_amount", "status"])
+    journal, expense = d.bank_journal, d.expense
+    AuditLog.record(actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
+                    summary=f"撤销票据{d.get_kind_display()} {note.doc_no} 退回 {d.amount}")
+    d.bank_journal = None
+    d.expense = None
+    d.save(update_fields=["bank_journal", "expense"])
+    d.delete()
+    if journal is not None:
+        journal.delete()
+    if expense is not None:
+        expense.delete()
     return note
 
 

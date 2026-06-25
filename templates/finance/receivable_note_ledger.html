@@ -48,6 +48,13 @@
               <input type="hidden" name="next" value="{{ request.get_full_path }}">
               <button type="submit" class="btn btn-sm btn-outline-danger py-0">撤销</button>
             </form>
+            {% elif e.disposal_id and perms.finance.add_notesettlement %}
+            <form method="post" action="{% url 'note_disposal_reverse' e.disposal_id %}" class="d-inline"
+                  onsubmit="return confirm('确认撤销该{{ e.kind }}（{{ e.dec }}）？将恢复票据未用额、删除对应银行日记账（贴现并删财务费用）。');">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger py-0">撤销</button>
+            </form>
             {% endif %}
           </td>
         </tr>
