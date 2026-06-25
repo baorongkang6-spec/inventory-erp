@@ -29,7 +29,12 @@
           <td>{{ n.due_date|default:"—" }}</td>
           <td>{{ n.customer|default:"—" }}</td>
           <td class="text-end">{{ n.amount }}</td>
-          <td class="text-end">{{ n.settled_amount }}</td>
+          <td class="text-end">
+            {% if n.settled_amount > 0 %}
+            <a href="{% url 'receivable_note_ledger' %}?company={{ n.company_id }}&note={{ n.pk }}&all=1"
+               title="查看该票据全部使用记录（冲应收/背书抵应付）">{{ n.settled_amount }}</a>
+            {% else %}{{ n.settled_amount }}{% endif %}
+          </td>
           <td class="text-end fw-semibold">{{ n.unused }}</td>
           <td>{{ n.get_status_display }}</td>
           <td class="text-nowrap">

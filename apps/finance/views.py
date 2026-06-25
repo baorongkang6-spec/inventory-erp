@@ -1541,8 +1541,12 @@ def receivable_note_ledger(request):
     from .models import NoteReceivable
     company = resolve_company(request)
     today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    if request.GET.get("all"):
+        from datetime import date as _date
+        dfrom, dto = _date(1900, 1, 1), today   # 看全部使用记录（不受区间限制）
+    else:
+        dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
+        dto = _parse_date(request.GET.get("to")) or today
     note = get_object_or_404(NoteReceivable, pk=request.GET.get("note"), company=company)
     data = note_ledger(company, note, dfrom, dto)
     if request.GET.get("export") == "xlsx":

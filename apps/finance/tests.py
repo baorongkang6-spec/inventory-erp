@@ -889,6 +889,31 @@ class NoteReceivableEditTests(TestCase):
         self.assertEqual(note.note_no, "BJ777")
         self.assertEqual(note.customer, self.cust)
 
+    def test_used_amount_links_to_usage_detail(self):
+        """已用金额可点 → 票据使用明细(all=1 看全部)，显示冲应收及被冲发票号。"""
+        from apps.finance.services import (
+            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+        )
+        inv = create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
+            customer=self.cust, lines=[{"product": self.p, "description": "",
+            "amount_untaxed": Decimal("1000"), "tax_rate": Decimal("0")}])
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("1000"), customer=self.cust)
+        settle_receivable_against_sales(note=note,
+            allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        self.client.force_login(self.user)
+        # 列表「已用」是指向使用明细的链接
+        lst = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertContains(lst, "receivable-note-ledger")
+        self.assertContains(lst, f"note={note.pk}")
+        # 使用明细 all=1 显示冲应收事件 + 被冲发票号
+        led = self.client.get(
+            f"/finance/reports/receivable-note-ledger/?company={self.c1.pk}&note={note.pk}&all=1",
+            SERVER_NAME="localhost")
+        self.assertEqual(led.status_code, 200)
+        self.assertContains(led, inv.doc_no)
+        self.assertContains(led, "冲应收")
+
 
 class NoteReceivableDeleteTests(TestCase):
     """应收票据删除（录错可彻底移除）：未使用、非期初才可删。"""
