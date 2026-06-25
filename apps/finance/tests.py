@@ -1933,13 +1933,24 @@ class ListTotalsTests(TestCase):
                        supplier=cls.sup, amount=Decimal("700"))
 
     def test_note_list_totals(self):
+        from apps.finance.services import create_note_receivable
         self.client.force_login(self.user)
         resp = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
         self.assertEqual(resp.status_code, 200)
         t = resp.context["totals"]
-        self.assertEqual(t["amount"], Decimal("1500.00"))   # 1000 + 500 票面
+        # 两张均本期出票（非期初）→ 期初金额 0、本期收入 1500
+        self.assertEqual(t["opening"], Decimal("0.00"))
+        self.assertEqual(t["period"], Decimal("1500.00"))
         self.assertEqual(t["unused"], Decimal("1500.00"))   # 均在手
+        self.assertContains(resp, "期初金额")
+        self.assertContains(resp, "本期收入")
         self.assertContains(resp, "合计")
+        # 加一张期初票据 → 落入「期初金额」列合计
+        create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 1),
+                               amount=Decimal("800"), customer=self.cust, is_opening=True)
+        t2 = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost").context["totals"]
+        self.assertEqual(t2["opening"], Decimal("800.00"))
+        self.assertEqual(t2["period"], Decimal("1500.00"))
 
     def test_receipt_list_totals(self):
         self.client.force_login(self.user)

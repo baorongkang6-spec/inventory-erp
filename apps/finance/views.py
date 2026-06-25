@@ -2002,7 +2002,10 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
     q_placeholder = "单号/票号/客户"
     export_filename = "应收票据"
     export_columns = [("单据编号","doc_no"),("票据号","note_no"),("出票日","draw_date"),("到期日","due_date"),
-                      ("来源客户","customer__name"),("票面","amount"),("已用","settled_amount"),
+                      ("来源客户","customer__name"),
+                      ("期初金额", lambda n: n.amount if n.is_opening else ""),
+                      ("本期收入", lambda n: "" if n.is_opening else n.amount),
+                      ("已用","settled_amount"),
                       ("未用","unused"),("状态","get_status_display")]
     model = NoteReceivable
     template_name = "finance/note_receivable_list.html"
@@ -2023,9 +2026,11 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
             # 背书抵应付：票出去，消耗未用额
             n.can_endorse = (not void) and n.status != NoteReceivable.Status.ENDORSED and n.unused > 0
         z = Decimal("0.00")
-        ctx["totals"] = {"amount": sum((n.amount for n in notes), z),
-                         "settled": sum((n.settled_amount for n in notes), z),
-                         "unused": sum((n.unused for n in notes), z)}
+        ctx["totals"] = {
+            "opening": sum((n.amount for n in notes if n.is_opening), z),
+            "period": sum((n.amount for n in notes if not n.is_opening), z),
+            "settled": sum((n.settled_amount for n in notes), z),
+            "unused": sum((n.unused for n in notes), z)}
         return ctx
 
 

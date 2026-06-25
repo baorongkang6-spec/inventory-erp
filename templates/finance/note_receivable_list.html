@@ -17,7 +17,8 @@
     <table class="table table-hover table-striped mb-0 align-middle">
       <thead class="table-light">
         <tr><th>单据编号</th><th>票据号</th><th>出票日</th><th>到期日</th><th>来源客户</th>
-            <th class="text-end">票面</th><th class="text-end">已用</th><th class="text-end">未用</th>
+            <th class="text-end">期初金额</th><th class="text-end">本期收入</th>
+            <th class="text-end">已用</th><th class="text-end">未用</th>
             <th>状态</th><th></th></tr>
       </thead>
       <tbody>
@@ -28,7 +29,8 @@
           <td>{{ n.draw_date }}</td>
           <td>{{ n.due_date|default:"—" }}</td>
           <td>{{ n.customer|default:"—" }}</td>
-          <td class="text-end">{{ n.amount }}</td>
+          <td class="text-end">{% if n.is_opening %}{{ n.amount }}{% endif %}</td>
+          <td class="text-end">{% if not n.is_opening %}{{ n.amount }}{% endif %}</td>
           <td class="text-end">
             {% if n.settled_amount > 0 %}
             <a href="{% url 'receivable_note_ledger' %}?company={{ n.company_id }}&note={{ n.pk }}&all=1"
@@ -54,14 +56,15 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="10" class="text-center text-muted py-4">当前账套暂无应收票据</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-4">当前账套暂无应收票据</td></tr>
         {% endfor %}
       </tbody>
       {% if notes %}
       <tfoot class="table-light fw-semibold">
         <tr>
           <td colspan="5">合计</td>
-          <td class="text-end">{{ totals.amount }}</td>
+          <td class="text-end">{{ totals.opening }}</td>
+          <td class="text-end">{{ totals.period }}</td>
           <td class="text-end">{{ totals.settled }}</td>
           <td class="text-end">{{ totals.unused }}</td>
           <td colspan="2"></td>
