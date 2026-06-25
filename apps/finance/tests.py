@@ -1898,3 +1898,60 @@ class NoteSettlementReverseTests(TestCase):
         self.assertFalse(NoteSettlement.objects.filter(pk=s.pk).exists())
         inv.refresh_from_db()
         self.assertEqual(inv.settled_amount, Decimal("0.00"))
+
+
+class ListTotalsTests(TestCase):
+    """应收票据 / 收款登记 / 付款登记 列表底部「合计」行。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from apps.finance.models import BankAccount
+        from apps.finance.services import (
+            create_note_receivable, create_payment, create_receipt,
+        )
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户")
+        cls.user = U.objects.create_user(username="fin", password="x", can_view_all_companies=True)
+        for code in ("view_notereceivable", "view_receipt", "view_payment"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+        d = date(2026, 6, 11)
+        create_note_receivable(company=cls.c1, user=None, draw_date=d,
+                               amount=Decimal("1000"), customer=cls.cust)
+        create_note_receivable(company=cls.c1, user=None, draw_date=d,
+                               amount=Decimal("500"), customer=cls.cust)
+        create_receipt(company=cls.c1, user=None, doc_date=d, bank_account=cls.acc,
+                       customer=cls.cust, amount=Decimal("300"))
+        create_receipt(company=cls.c1, user=None, doc_date=d, bank_account=cls.acc,
+                       customer=cls.cust, amount=Decimal("200"))
+        create_payment(company=cls.c1, user=None, doc_date=d, bank_account=cls.acc,
+                       supplier=cls.sup, amount=Decimal("700"))
+
+    def test_note_list_totals(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        t = resp.context["totals"]
+        self.assertEqual(t["amount"], Decimal("1500.00"))   # 1000 + 500 票面
+        self.assertEqual(t["unused"], Decimal("1500.00"))   # 均在手
+        self.assertContains(resp, "合计")
+
+    def test_receipt_list_totals(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/finance/receipts/", SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        # 统一一览：银行收款 300+200 + 收到应收票据 1000+500 = 2000
+        self.assertEqual(resp.context["totals"]["amount"], Decimal("2000.00"))
+        self.assertContains(resp, "合计")
+
+    def test_payment_list_totals(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/finance/payments/", SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["totals"]["amount"], Decimal("700.00"))
+        self.assertContains(resp, "合计")

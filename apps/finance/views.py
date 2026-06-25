@@ -333,6 +333,14 @@ def _cash_list_filter(request, rows, q_placeholder):
     return rows, fctx
 
 
+def _cash_totals(rows):
+    """收/付一览合计：金额 / 已核销 / 未核销。"""
+    z = Decimal("0.00")
+    return {"amount": sum((r["amount"] for r in rows), z),
+            "settled": sum((r["settled"] for r in rows), z),
+            "unsettled": sum((r["unsettled"] for r in rows), z)}
+
+
 def _export_cash_rows(name, rows, company, party_label):
     from apps.core.exports import xlsx_response
     headers = ["单据编号", "日期", "方式", party_label, "金额", "已核销", "未核销", "状态"]
@@ -432,7 +440,8 @@ def payment_list(request):
     if company and request.GET.get("export") == "xlsx":
         return _export_cash_rows("付款登记", rows, company, "供应商")
     return render(request, "finance/payment_list.html",
-                  {"rows": rows, "filter": fctx, "party_label": "供应商"})
+                  {"rows": rows, "filter": fctx, "party_label": "供应商",
+                   "totals": _cash_totals(rows)})
 
 
 class PaymentDetailView(CompanyScopedMixin, DetailView):
@@ -948,7 +957,8 @@ def receipt_list(request):
     if company and request.GET.get("export") == "xlsx":
         return _export_cash_rows("收款登记", rows, company, "客户")
     return render(request, "finance/receipt_list.html",
-                  {"rows": rows, "filter": fctx, "party_label": "客户"})
+                  {"rows": rows, "filter": fctx, "party_label": "客户",
+                   "totals": _cash_totals(rows)})
 
 
 class ReceiptDetailView(CompanyScopedMixin, DetailView):
@@ -2002,16 +2012,20 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
         return super().get_queryset().select_related("customer")
 
     def get_context_data(self, **kwargs):
-        from .models import NoteSettlement
         from .services import _note_applied_ar, note_receivable_delete_block_reason
         ctx = super().get_context_data(**kwargs)
-        for n in ctx[self.context_object_name]:
+        notes = list(ctx[self.context_object_name])
+        for n in notes:
             n.can_delete = note_receivable_delete_block_reason(n) is None
             void = n.status == NoteReceivable.Status.VOID
             # 冲应收：票收进来抵应收账款，按「票面−已抵应收额」判可用，与未用额(背书侧)无关
             n.can_settle_ar = (not void) and (n.amount - _note_applied_ar(n)) > 0
             # 背书抵应付：票出去，消耗未用额
             n.can_endorse = (not void) and n.status != NoteReceivable.Status.ENDORSED and n.unused > 0
+        z = Decimal("0.00")
+        ctx["totals"] = {"amount": sum((n.amount for n in notes), z),
+                         "settled": sum((n.settled_amount for n in notes), z),
+                         "unused": sum((n.unused for n in notes), z)}
         return ctx
 
 

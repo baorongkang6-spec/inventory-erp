@@ -51,6 +51,17 @@
         <tr><td colspan="9" class="text-center text-muted py-4">当前账套暂无收款记录</td></tr>
         {% endfor %}
       </tbody>
+      {% if rows %}
+      <tfoot class="table-light fw-semibold">
+        <tr>
+          <td colspan="4">合计</td>
+          <td class="text-end">{{ totals.amount }}</td>
+          <td class="text-end">{{ totals.settled }}</td>
+          <td class="text-end">{{ totals.unsettled }}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
 </div>
