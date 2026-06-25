@@ -1783,3 +1783,95 @@ class UnifiedCashListTests(TestCase):
         self.assertIn("应收票据背书", h)              # 背书付款行
         self.assertIn("YSP-C1-20260611-009", h)
         self.assertIn("供应商甲", h)                  # 背书行的供应商
+
+
+class NoteSettlementReverseTests(TestCase):
+    """撤销票据冲销：恢复发票未核销额 + 票据未用额/状态，救误用数据。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        U = get_user_model()
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        cls.user = U.objects.create_user(username="b", password="x", can_view_all_companies=True)
+        for code in ("add_notesettlement", "view_salesinvoice", "view_purchaseinvoice",
+                     "view_notereceivable"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="finance", codename=code))
+
+    def _settle_ar(self, note_amount, settle_amount):
+        from apps.finance.services import create_note_receivable, create_sales_invoice, settle_receivable_against_sales
+        inv = create_sales_invoice(company=self.c1, user=None, doc_date=date(2026, 6, 11),
+            customer=self.cust, lines=[{"product": self.p, "description": "",
+            "amount_untaxed": note_amount, "tax_rate": Decimal("0")}])
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=note_amount, customer=self.cust)
+        settle_receivable_against_sales(note=note,
+            allocations=[{"invoice": inv, "amount": settle_amount}])
+        inv.refresh_from_db(); note.refresh_from_db()
+        return inv, note
+
+    def test_reverse_restores_invoice_and_note(self):
+        from apps.finance.models import NoteReceivable, NoteSettlement
+        from apps.finance.services import reverse_note_settlement
+        inv, note = self._settle_ar(Decimal("1000"), Decimal("1000"))
+        # 全额用完 → 票已结算、未用 0、发票已核销 1000
+        self.assertEqual(note.status, NoteReceivable.Status.SETTLED)
+        self.assertEqual(note.unused, Decimal("0.00"))
+        self.assertEqual(inv.settled_amount, Decimal("1000.00"))
+        s = NoteSettlement.objects.get(note_id=note.pk)
+        reverse_note_settlement(settlement=s, user=self.user)
+        inv.refresh_from_db(); note.refresh_from_db()
+        # 撤销后：票回在手、未用恢复、发票未核销额退回、冲销记录删除
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertEqual(note.settled_amount, Decimal("0.00"))
+        self.assertEqual(note.unused, Decimal("1000.00"))
+        self.assertEqual(inv.settled_amount, Decimal("0.00"))
+        self.assertFalse(NoteSettlement.objects.filter(pk=s.pk).exists())
+
+    def test_reverse_endorsement_restores_payable(self):
+        from django.utils import timezone
+        from apps.finance.models import NoteReceivable, NoteSettlement
+        from apps.finance.services import (
+            create_note_receivable, create_purchase_invoice,
+            endorse_receivable_against_purchase, reverse_note_settlement,
+        )
+        pinv = create_purchase_invoice(company=self.c1, user=None, doc_date=timezone.localdate(),
+            supplier=self.sup, lines=[{"product": None, "description": "x",
+            "amount_untaxed": Decimal("800"), "tax_rate": Decimal("0")}])
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 11),
+                                      amount=Decimal("800"), customer=self.cust)
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": pinv, "amount": Decimal("800")}], user=self.user)
+        pinv.refresh_from_db(); note.refresh_from_db()
+        self.assertEqual(note.status, NoteReceivable.Status.ENDORSED)
+        s = NoteSettlement.objects.get(note_id=note.pk, is_endorsement=True)
+        reverse_note_settlement(settlement=s, user=self.user)
+        pinv.refresh_from_db(); note.refresh_from_db()
+        self.assertEqual(note.status, NoteReceivable.Status.ON_HAND)
+        self.assertEqual(note.unused, Decimal("800.00"))
+        self.assertEqual(pinv.settled_amount, Decimal("0.00"))
+
+    def test_reverse_view_from_sales_invoice_detail(self):
+        from apps.finance.models import NoteSettlement
+        inv, note = self._settle_ar(Decimal("1000"), Decimal("1000"))
+        s = NoteSettlement.objects.get(note_id=note.pk)
+        self.client.force_login(self.user)
+        detail = self.client.get(f"/finance/sales-invoices/{inv.pk}/", SERVER_NAME="localhost")
+        self.assertEqual(detail.status_code, 200)
+        self.assertContains(detail, f"/finance/note-settlements/{s.pk}/reverse/")
+        # GET 不撤销（require_POST）
+        self.assertEqual(self.client.get(
+            f"/finance/note-settlements/{s.pk}/reverse/", SERVER_NAME="localhost").status_code, 405)
+        # POST 撤销
+        resp = self.client.post(f"/finance/note-settlements/{s.pk}/reverse/",
+                                {"next": f"/finance/sales-invoices/{inv.pk}/"},
+                                SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(NoteSettlement.objects.filter(pk=s.pk).exists())
+        inv.refresh_from_db()
+        self.assertEqual(inv.settled_amount, Decimal("0.00"))

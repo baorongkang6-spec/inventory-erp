@@ -73,12 +73,23 @@
   <div class="card-header py-1">核销明细<small class="text-muted ms-2">已核销 {{ inv.settled_amount }} 的来源（收款 / 票据抵冲）</small></div>
   <div class="table-responsive">
     <table class="table table-sm table-striped mb-0 align-middle">
-      <thead class="table-light"><tr><th>核销方式</th><th>来源单号</th><th class="text-end">核销金额</th></tr></thead>
+      <thead class="table-light"><tr><th>核销方式</th><th>来源单号</th><th class="text-end">核销金额</th><th></th></tr></thead>
       <tbody>
         {% for s in settlements %}
-        <tr><td>{{ s.kind }}</td><td>{{ s.doc_no }}</td><td class="text-end">{{ s.amount }}</td></tr>
+        <tr><td>{{ s.kind }}</td><td>{{ s.doc_no }}</td><td class="text-end">{{ s.amount }}</td>
+          <td class="text-end">
+            {% if s.settlement_id and perms.finance.add_notesettlement %}
+            <form method="post" action="{% url 'note_settlement_reverse' s.settlement_id %}" class="d-inline"
+                  onsubmit="return confirm('确认撤销该票据冲销（{{ s.doc_no }} {{ s.amount }}）？将退回本发票未核销额、恢复票据未用额，票据回到在手。');">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger py-0">撤销</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
         {% empty %}
-        <tr><td colspan="3" class="text-muted text-center py-2">已核销但未找到明细记录</td></tr>
+        <tr><td colspan="4" class="text-muted text-center py-2">已核销但未找到明细记录</td></tr>
         {% endfor %}
       </tbody>
     </table>

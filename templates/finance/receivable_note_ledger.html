@@ -27,11 +27,11 @@
     <table class="table table-striped table-sm mb-0 align-middle text-end">
       <thead class="table-light">
         <tr><th class="text-start">日期</th><th class="text-start">类型</th><th class="text-start">对应发票</th>
-            <th>增加</th><th>减少</th><th>未用余额</th></tr>
+            <th>增加</th><th>减少</th><th>未用余额</th><th></th></tr>
       </thead>
       <tbody>
         <tr class="table-secondary"><td class="text-start" colspan="5">期初未用</td>
-          <td class="fw-semibold">{{ data.opening }}</td></tr>
+          <td class="fw-semibold">{{ data.opening }}</td><td></td></tr>
         {% for e in data.rows %}
         <tr>
           <td class="text-start">{{ e.date|date:"Y-m-d" }}</td>
@@ -40,14 +40,24 @@
           <td>{% if e.inc %}{{ e.inc }}{% endif %}</td>
           <td>{% if e.dec %}{{ e.dec }}{% endif %}</td>
           <td>{{ e.balance }}</td>
+          <td class="text-end">
+            {% if e.settlement_id and perms.finance.add_notesettlement %}
+            <form method="post" action="{% url 'note_settlement_reverse' e.settlement_id %}" class="d-inline"
+                  onsubmit="return confirm('确认撤销该使用（{{ e.kind }} {{ e.doc_no }} {{ e.dec }}）？将退回发票未核销额、恢复票据未用额。');">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger py-0">撤销</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-3">该期间无出票/使用</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-3">该期间无出票/使用</td></tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-light">
         <tr><th class="text-start" colspan="3">本期合计 / 期末未用</th>
-            <th>{{ data.income }}</th><th>{{ data.outgo }}</th><th>{{ data.ending }}</th></tr>
+            <th>{{ data.income }}</th><th>{{ data.outgo }}</th><th>{{ data.ending }}</th><th></th></tr>
       </tfoot>
     </table>
   </div>

@@ -731,6 +731,55 @@ def settle_payable_against_purchase(*, note, allocations, user=None):
     )
 
 
+def _note_of(settlement):
+    """按 note_kind 取票据对象（应收/应付），取不到返回 None。"""
+    Model = (NoteReceivable if settlement.note_kind == NoteSettlement.NoteKind.RECEIVABLE
+             else NotePayable)
+    return Model.objects.filter(pk=settlement.note_id).first()
+
+
+def note_settlement_reverse_block_reason(settlement) -> str | None:
+    """票据冲销可否撤销（恢复发票未核销额 + 票据未用额）。可撤返回 None。"""
+    note = _note_of(settlement)
+    if note is None:
+        return "票据已不存在，无法撤销"
+    if note.status == type(note).Status.VOID:
+        return "票据已作废，不能撤销其冲销记录"
+    return None
+
+
+@transaction.atomic
+def reverse_note_settlement(*, settlement, user):
+    """撤销一笔票据冲销：发票未核销额退回、票据未用额与状态恢复，删除该冲销记录。
+
+    用于更正「误用票据核销/背书」——撤销后票据回「在手/已开出」可重新处理。
+    """
+    s = NoteSettlement.objects.select_for_update().get(pk=settlement.pk)
+    reason = note_settlement_reverse_block_reason(s)
+    if reason:
+        raise SettlementError(reason)
+    NoteModel = (NoteReceivable if s.note_kind == NoteSettlement.NoteKind.RECEIVABLE
+                 else NotePayable)
+    note = NoteModel.objects.select_for_update().get(pk=s.note_id)
+    invoice_model = (SalesInvoice if s.invoice_kind == NoteSettlement.InvoiceKind.SALES
+                     else PurchaseInvoice)
+    inv = invoice_model.objects.select_for_update().filter(pk=s.invoice_id).first()
+    if inv is not None:
+        inv.settled_amount -= s.amount
+        inv.save(update_fields=["settled_amount"])
+    note.settled_amount -= s.amount
+    # 撤销后必有未用额 → 回到非终态（应收=在手，应付=已开出）
+    note.status = (NoteReceivable.Status.ON_HAND if isinstance(note, NoteReceivable)
+                   else NotePayable.Status.ISSUED)
+    note.save(update_fields=["settled_amount", "status"])
+    AuditLog.record(
+        actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
+        summary=(f"撤销票据冲销 {note.doc_no} 退回 {s.amount}"
+                 f"（{'背书抵付' if s.is_endorsement else '冲销'} {s.invoice_no}）"))
+    s.delete()
+    return note
+
+
 # ============================= 期初往来（M5）==================================
 @transaction.atomic
 def create_opening_payable(*, company, user, supplier, amount, doc_date) -> PurchaseInvoice:

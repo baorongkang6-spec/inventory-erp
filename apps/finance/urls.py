@@ -75,6 +75,7 @@ urlpatterns = [
     path("notes-receivable/export/", views.note_receivable_export, name="note_receivable_export"),
     path("notes-receivable/import/", views.note_receivable_import, name="note_receivable_import"),
     path("notes-receivable/lookup/", views.note_receivable_lookup, name="note_receivable_lookup"),
+    path("note-settlements/<int:pk>/reverse/", views.note_settlement_reverse, name="note_settlement_reverse"),
     path("notes-payable/", views.NotePayableListView.as_view(), name="note_payable_list"),
     path("notes-payable/new/", views.note_payable_create, name="note_payable_create"),
     path("notes-payable/<int:pk>/settle/", views.note_payable_settle, name="note_payable_settle"),

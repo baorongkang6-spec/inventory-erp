@@ -880,7 +880,8 @@ def note_ledger(company, note, dfrom, dto):
         events.append({"date": s.created_at.date(),
                        "kind": "背书抵应付" if s.is_endorsement else "冲应收",
                        "doc_no": s.invoice_no, "inc": Z, "dec": s.amount,
-                       "ref_url": invoice_url(s.invoice_kind, s.invoice_id)})
+                       "ref_url": invoice_url(s.invoice_kind, s.invoice_id),
+                       "settlement_id": s.pk})
     opening = Z
     period = []
     for e in events:

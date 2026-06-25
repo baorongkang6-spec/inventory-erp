@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView
 
@@ -120,17 +121,21 @@ def _invoice_settlements(inv, invoice_kind):
     rows = []
     if invoice_kind == NoteSettlement.InvoiceKind.PURCHASE:
         for a in inv.allocations.select_related("payment").all():
-            rows.append({"kind": "付款核销", "doc_no": a.payment.doc_no, "amount": a.amount})
+            rows.append({"kind": "付款核销", "doc_no": a.payment.doc_no,
+                         "amount": a.amount, "settlement_id": None})
     else:
         for a in inv.allocations.select_related("receipt").all():
-            rows.append({"kind": "收款核销", "doc_no": a.receipt.doc_no, "amount": a.amount})
+            rows.append({"kind": "收款核销", "doc_no": a.receipt.doc_no,
+                         "amount": a.amount, "settlement_id": None})
     for s in NoteSettlement.objects.filter(
             company=inv.company, invoice_kind=invoice_kind, invoice_id=inv.pk):
         if s.note_kind == NoteSettlement.NoteKind.RECEIVABLE:
             kind = "应收票据背书抵付" if s.is_endorsement else "应收票据冲销"
         else:
             kind = "应付票据抵付"
-        rows.append({"kind": kind, "doc_no": s.note_no, "amount": s.amount})
+        # 票据冲销可「撤销」（退回发票未核销额 + 票据未用额）
+        rows.append({"kind": kind, "doc_no": s.note_no, "amount": s.amount,
+                     "settlement_id": s.pk})
     return rows
 
 
@@ -2089,6 +2094,27 @@ def note_receivable_delete(request, pk):
         messages.error(request, str(e))
     else:
         messages.success(request, "应收票据已删除")
+    return redirect("note_receivable_list")
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
+@require_POST
+def note_settlement_reverse(request, pk):
+    """撤销一笔票据冲销：发票未核销额退回 + 票据未用额/状态恢复。"""
+    from .models import NoteSettlement
+    from .services import reverse_note_settlement
+    s = get_object_or_404(NoteSettlement, pk=pk,
+                          company__in=get_visible_companies(request.user))
+    try:
+        reverse_note_settlement(settlement=s, user=request.user)
+    except SettlementError as e:
+        messages.error(request, str(e))
+    else:
+        messages.success(request, "已撤销该票据冲销，发票未核销额与票据未用额已恢复")
+    nxt = request.POST.get("next")
+    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        return redirect(nxt)
     return redirect("note_receivable_list")
 
 
