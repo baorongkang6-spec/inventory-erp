@@ -69,3 +69,38 @@ class OutboundPostingTests(TestCase):
         self.assertEqual(
             StockBalance.objects.get(company=self.c1, product=p2).quantity, Decimal("-98.000")
         )
+
+
+class OutboundListTotalsTests(TestCase):
+    """销售出库列表：不含税售额列 + 底部合计行。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="环氧树脂")
+        post_inbound(cls.c1, cls.p, Decimal("100"), Decimal("10"))
+        # 两张出库单，各带不含税售额（13% 税）
+        for _ in range(2):
+            create_and_post_outbound(
+                company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+                lines=[{"product": cls.p, "quantity": Decimal("10"),
+                        "amount_untaxed": Decimal("2000"), "tax_rate": Decimal("0.13")}])
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="sales", password="x", can_view_all_companies=True)
+        for code in ("view_salesoutbound", "view_amount"):
+            app = "inventory" if code == "view_amount" else "sales"
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label=app, codename=code))
+
+    def test_list_shows_untaxed_and_totals(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/sales/outbound/", SERVER_NAME="localhost")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "不含税售额")
+        t = resp.context["totals"]
+        self.assertEqual(t["untaxed"], Decimal("4000.00"))            # 2 × 2000
+        self.assertEqual(t["taxed"], Decimal("4520.00"))             # 2 × 2260
+        self.assertEqual(t["cost"], Decimal("200.00"))              # 2 × (10件@10)
+        self.assertContains(resp, "合计")

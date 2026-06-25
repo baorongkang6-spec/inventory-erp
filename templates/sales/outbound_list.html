@@ -15,7 +15,7 @@
     <table class="table table-hover table-striped mb-0 align-middle">
       <thead class="table-light">
         <tr><th>单据编号</th><th>日期</th><th>客户</th><th>方式</th>
-            <th class="text-end">总数量</th><th class="text-end">含税售额</th>
+            <th class="text-end">总数量</th><th class="text-end">不含税售额</th><th class="text-end">含税售额</th>
             {% if perms.inventory.view_amount %}<th class="text-end">结转成本</th>{% endif %}
             <th>状态</th><th class="text-end">操作</th></tr>
       </thead>
@@ -27,6 +27,7 @@
           <td>{{ doc.customer|default:"—" }}</td>
           <td>{{ doc.get_sales_type_display }}</td>
           <td class="text-end">{{ doc.total_quantity }}</td>
+          <td class="text-end">{{ doc.total_untaxed }}</td>
           <td class="text-end">{{ doc.total_taxed }}</td>
           {% if perms.inventory.view_amount %}<td class="text-end">{{ doc.total_cost }}</td>{% endif %}
           <td>{{ doc.get_status_display }}</td>
@@ -44,9 +45,20 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="9" class="text-center text-muted py-4">当前账套暂无出库单</td></tr>
+        <tr><td colspan="10" class="text-center text-muted py-4">当前账套暂无出库单</td></tr>
         {% endfor %}
       </tbody>
+      {% if docs %}
+      <tfoot class="table-light fw-semibold">
+        <tr>
+          <td colspan="5">合计</td>
+          <td class="text-end">{{ totals.untaxed }}</td>
+          <td class="text-end">{{ totals.taxed }}</td>
+          {% if perms.inventory.view_amount %}<td class="text-end">{{ totals.cost }}</td>{% endif %}
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
 </div>

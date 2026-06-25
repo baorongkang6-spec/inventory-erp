@@ -25,7 +25,8 @@ class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
     export_filename = "销售出库"
     export_columns = [("单据编号","doc_no"),("日期","doc_date"),("客户","customer__name"),
                       ("方式","get_sales_type_display"),("总数量","total_quantity"),
-                      ("含税售额","total_taxed"),("结转成本","total_cost"),("状态","get_status_display")]
+                      ("不含税售额","total_untaxed"),("含税售额","total_taxed"),
+                      ("结转成本","total_cost"),("状态","get_status_display")]
     model = SalesOutbound
     template_name = "sales/outbound_list.html"
     context_object_name = "docs"
@@ -34,8 +35,15 @@ class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
         return super().get_queryset().select_related("customer")
 
     def get_context_data(self, **kwargs):
+        from decimal import Decimal
         ctx = super().get_context_data(**kwargs)
-        ctx["fully_invoiced_ids"] = _fully_invoiced_outbound_ids(ctx["docs"])
+        docs = ctx["docs"]
+        ctx["fully_invoiced_ids"] = _fully_invoiced_outbound_ids(docs)
+        z = Decimal("0.00")
+        # 金额列求合计；总数量异构(不同商品)不跨单相加
+        ctx["totals"] = {"untaxed": sum((d.total_untaxed for d in docs), z),
+                         "taxed": sum((d.total_taxed for d in docs), z),
+                         "cost": sum((d.total_cost for d in docs), z)}
         return ctx
 
 
