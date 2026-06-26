@@ -51,6 +51,24 @@ class IntercoMirrorTests(TestCase):
         self.assertEqual(
             StockBalance.objects.get(company=self.c2, product=p_c2).amount, Decimal("300.00"))
 
+    def test_mirror_inbound_uses_sale_untaxed_when_priced(self):
+        """有售价的销售镜像：B 入库成本=不含税售额（非 A 结转成本），含税/税额一并镜像。"""
+        # C1 备货成本 10/桶；售价不含税 300/桶（30 桶=不含税 9000，13% → 含税 10170）
+        out = create_and_post_outbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 5), customer=self.cust_c2,
+            lines=[{"product": self.p1, "quantity": Decimal("30"),
+                    "amount_untaxed": Decimal("9000"), "tax_rate": Decimal("0.13")}])
+        inbound = out.mirror_inbound
+        p_c2 = Product.objects.get(company=self.c2, code="P001")
+        line = inbound.lines.get()
+        # 入库成本=不含税售额 9000（不是 C1 成本 300），含税镜像 10170
+        self.assertEqual(line.amount_untaxed, Decimal("9000.00"))
+        self.assertEqual(inbound.total_amount, Decimal("9000.00"))   # 入库成本=不含税售额
+        self.assertEqual(inbound.total_taxed, Decimal("10170.00"))
+        # C2 库存按 9000 入账（移动加权 300/桶）
+        self.assertEqual(
+            StockBalance.objects.get(company=self.c2, product=p_c2).amount, Decimal("9000.00"))
+
     def test_non_related_customer_no_mirror(self):
         plain = Customer.objects.create(company=self.c1, code="EXT", name="外部客户")
         out = create_and_post_outbound(

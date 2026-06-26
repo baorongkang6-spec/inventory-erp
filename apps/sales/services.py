@@ -203,17 +203,23 @@ def _mirror_to_related_company(outbound, user):
     if company_b is None or not company_b.is_active:
         return
 
-    lines = [
-        {
-            "product": _ensure_product_in(company_b, ln.product),
-            "quantity": ln.quantity,
-            "unit_price": ln.unit_cost,   # B 以 A 的结转成本入库（关联调拨按成本平移）
-        }
-        for ln in outbound.lines.select_related("product")
-    ]
     # 销售→对方外购入库；借出/归还→对方借调入库（SPEC §5）
     borrow_kind = outbound.sales_type in (
         SalesOutbound.SalesType.LEND, SalesOutbound.SalesType.RETURN)
+    # 计价口径（SPEC §5.1，2026-06-26）：
+    #  · 销售：B 按 A 的「不含税售额」入库（B 按售价买进；含税/税额一并镜像），无售价则回退成本；
+    #  · 借调：按 A 的移动加权结转成本平移（不涉税、无加价）。
+    lines = []
+    for ln in outbound.lines.select_related("product"):
+        prod = _ensure_product_in(company_b, ln.product)
+        if not borrow_kind and ln.amount_untaxed and ln.amount_untaxed > 0:
+            lines.append({
+                "product": prod, "quantity": ln.quantity, "tax_rate": ln.tax_rate,
+                "amount_untaxed": ln.amount_untaxed, "tax_amount": ln.tax_amount,
+                "amount_taxed": ln.amount_taxed,
+            })
+        else:
+            lines.append({"product": prod, "quantity": ln.quantity, "unit_price": ln.unit_cost})
     # 外购镜像带上"代表源公司"的供应商；借调类走 borrow_counterparty，不设供应商
     supplier = None if borrow_kind else _ensure_supplier_for_company(company_b, outbound.company)
     from apps.purchasing.models import PurchaseInbound
