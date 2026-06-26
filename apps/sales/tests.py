@@ -104,3 +104,34 @@ class OutboundListTotalsTests(TestCase):
         self.assertEqual(t["taxed"], Decimal("4520.00"))             # 2 × 2260
         self.assertEqual(t["cost"], Decimal("200.00"))              # 2 × (10件@10)
         self.assertContains(resp, "合计")
+
+
+class OutboundListVoidButtonTests(TestCase):
+    """销售出库列表「作废」快捷按钮。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        post_inbound(cls.c1, cls.p, Decimal("100"), Decimal("10"))
+        cls.doc = create_and_post_outbound(
+            company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[{"product": cls.p, "quantity": Decimal("10")}])
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="s", password="x", can_view_all_companies=True)
+        for code in ("view_salesoutbound", "void_salesoutbound"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="sales", codename=code))
+
+    def test_list_shows_void_button_and_voids(self):
+        from apps.sales.models import SalesOutbound
+        self.client.force_login(self.user)
+        lst = self.client.get("/sales/outbound/", SERVER_NAME="localhost")
+        self.assertContains(lst, f"/sales/outbound/{self.doc.pk}/void/")
+        resp = self.client.post(f"/sales/outbound/{self.doc.pk}/void/",
+                                SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, SalesOutbound.Status.VOID)
