@@ -288,3 +288,33 @@ class InboundListTotalsTests(TestCase):
         self.assertEqual(t["untaxed"], Decimal("2000.00"))   # 2 × 1000
         self.assertEqual(t["taxed"], Decimal("2260.00"))     # 2 × 1130
         self.assertContains(resp, "合计")
+
+
+class InboundListVoidButtonTests(TestCase):
+    """采购入库列表「作废」快捷按钮（镜像单不显示）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from apps.purchasing.services import create_and_post_inbound
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.doc = create_and_post_inbound(company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[{"product": cls.p, "quantity": Decimal("10"), "unit_price": Decimal("10")}])
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="b", password="x", can_view_all_companies=True)
+        for code in ("view_purchaseinbound", "void_purchaseinbound"):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label="purchasing", codename=code))
+
+    def test_list_shows_void_button_and_voids(self):
+        from apps.purchasing.models import PurchaseInbound
+        self.client.force_login(self.user)
+        lst = self.client.get("/purchasing/inbound/", SERVER_NAME="localhost")
+        self.assertContains(lst, f"/purchasing/inbound/{self.doc.pk}/void/")
+        resp = self.client.post(f"/purchasing/inbound/{self.doc.pk}/void/",
+                                SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, PurchaseInbound.Status.VOID)

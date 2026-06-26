@@ -48,6 +48,12 @@
               <a href="{% url 'purchase_invoice_create' %}?inbound={{ doc.pk }}" class="btn btn-sm btn-outline-success py-0">收到发票</a>
               {% endif %}
             {% endif %}
+            {% if doc.status != 'void' and not doc.source_outbound_id and perms.purchasing.void_purchaseinbound %}
+            <form method="post" action="{% url 'inbound_void' doc.pk %}" class="d-inline"
+                  onsubmit="return confirm('确认作废入库单 {{ doc.doc_no }}？将反向冲减库存，且不可恢复。');">
+              {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">作废</button>
+            </form>
+            {% endif %}
           </td>
         </tr>
         {% empty %}
