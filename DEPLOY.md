@@ -13,7 +13,7 @@
 - **自启动**：用 **NSSM** 把 ERP 注册成 Windows 服务（开机自启、崩溃自重启）。
 
 ```
-外网手机/电脑  →  花生壳域名(HTTPS)  →  穿透  →  公司内网 Windows 主机 (Waitress→Django) → PostgreSQL
+外网手机/电脑  →  花生壳域名(HTTPS)  →  穿透  →  公司内网 Windows 主机 (Waitress→Django) → SQLite
 ```
 
 ---
@@ -48,11 +48,11 @@
 
 ## 4. 上线步骤（待系统就绪后执行，届时逐步带做）
 
-1. Windows 装 Python 3.13、PostgreSQL、uv。
+1. Windows 装 Python 3.13、uv。（PostgreSQL 仅未来迁库时安装。）
 2. 拉取代码，`uv sync` 装依赖。
 3. 复制 `.env.example` 为 `.env` 并改值（关键：`DJANGO_PRODUCTION=1`、`DJANGO_DEBUG=0`、
    `DJANGO_SECRET_KEY=`<50+位随机串>、`DJANGO_ALLOWED_HOSTS=`花生壳域名,内网IP、
-   `DJANGO_CSRF_TRUSTED_ORIGINS=https://`花生壳域名、`DB_ENGINE=postgres` 及 DB_* 账号）。
+   `DJANGO_CSRF_TRUSTED_ORIGINS=https://`花生壳域名、`DB_ENGINE=sqlite`）。
    - 缺密钥/域名或 DEBUG 没关时程序会**启动即报错**（fail-fast），按提示补。
 4. 初始化：
    ```
@@ -68,20 +68,20 @@
    ```
    用 **NSSM** 把上面这条注册为 Windows 服务（开机自启、崩溃重启），并在服务里注入 .env 环境变量。
 6. 花生壳映射内网 IP:8000 → 绑域名 + 开 HTTPS（HTTPS 由花生壳终止，X-Forwarded-Proto 已在 settings 处理）。
-7. **每日自动备份**：`pg_dump` 定时任务 + 异地拷贝（见 §5）。
+7. **每日自动备份**：运行 `backup.bat` 生成 SQLite 备份 + 异地拷贝（见 §5）。
 8. 自检：`uv run python manage.py check --deploy` 应无高危告警；内外网各测一遍（含手机）；
    把演示/弱密码账号全部改强密码或删除 → 交付。
 
 ---
 
 ## 5. 备份（财务系统命脉）
-- 数据库**每天自动备份**（pg_dump），保留近 N 天。
+- 数据库**每天自动备份**（SQLite 用 `backup.bat`），保留近 N 天。
 - 备份**至少再拷一份到另一介质**（移动硬盘/网盘）。
 - 定期做一次"恢复演练"，确认备份真能还原。
 
 ## 6. 日常更新（`update.bat`）
-1. **先备份**：跑 `backup.bat`（或手动复制 `db.sqlite3`），尤其是带**数据迁移**的更新。
-2. 跑 `update.bat`：拉取 Gitee `master` → `uv run python manage.py migrate` → `collectstatic` → 重启 `InventoryERP` 服务。
+1. **先备份**：跑 `backup.bat`，尤其是带**数据迁移**的更新。
+2. 跑 `update.bat`：先自动备份 → 拉取 Gitee `master` → `uv run python manage.py migrate` → `collectstatic` → 重启 `InventoryERP` 服务。
 3. **带数据迁移的更新务必先备份**：迁移会改库里既有数据，且不一定可逆。升级后抽查一两个关键页面/余额确认无误。
 
 ### 6.1 升级提示（按时间倒序，影响既有数据的重点记这里）
