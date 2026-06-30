@@ -25,3 +25,6 @@ env/
 nssm.exe
 nssm-2.24.zip
 /nssm/
+
+# 手册生成中间产物（交付物是 docx/pdf）
+docs/*.html
