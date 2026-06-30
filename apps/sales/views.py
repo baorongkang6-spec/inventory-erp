@@ -15,7 +15,8 @@ from apps.masterdata.forms import ExpenseFormSet
 
 from .forms import OutboundHeaderForm, OutboundLineFormSet
 from .models import SalesOutbound
-from .services import create_and_post_outbound, void_sales_outbound
+from .services import (create_and_post_outbound, delete_sales_outbound,
+                       outbound_delete_block_reason, void_sales_outbound)
 
 
 class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
@@ -39,6 +40,10 @@ class OutboundListView(FilteredListMixin, CompanyScopedMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         docs = ctx["docs"]
         ctx["fully_invoiced_ids"] = _fully_invoiced_outbound_ids(docs)
+        today = timezone.localdate()
+        mgr = _outbound_is_manager(self.request.user)
+        for d in docs:
+            d.can_delete = outbound_delete_block_reason(d, self.request.user, today, mgr) is None
         z = Decimal("0.00")
         # 金额列求合计；总数量异构(不同商品)不跨单相加
         ctx["totals"] = {"untaxed": sum((d.total_untaxed for d in docs), z),
@@ -89,6 +94,13 @@ class OutboundDetailView(CompanyScopedMixin, DetailView):
 
     def get_queryset(self):
         return super().get_queryset().select_related("customer", "mirror_inbound")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["can_delete"] = outbound_delete_block_reason(
+            self.object, self.request.user, timezone.localdate(),
+            _outbound_is_manager(self.request.user)) is None
+        return ctx
 
 
 @require_POST
@@ -215,3 +227,21 @@ def outbound_edit(request, pk):
     return render(request, "sales/outbound_form.html",
                   {"header": header, "formset": formset, "expenses_fs": expenses_fs,
                    "title": f"修改销售出库 {doc.doc_no}", "editing": True})
+
+
+@require_POST
+@login_required
+@permission_required("sales.add_salesoutbound", raise_exception=True)
+def outbound_delete(request, pk):
+    """硬删除销售出库单（安全条件下）：彻底移除单据并反冲库存。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    doc = get_object_or_404(SalesOutbound, pk=pk, company=company)
+    doc_no = doc.doc_no
+    try:
+        delete_sales_outbound(doc, user=request.user, today=timezone.localdate(),
+                              is_manager=_outbound_is_manager(request.user))
+    except InventoryError as e:
+        messages.error(request, f"删除失败：{e}")
+        return redirect("outbound_detail", pk=pk)
+    messages.success(request, f"销售出库已删除：{doc_no}")
+    return redirect("outbound_list")

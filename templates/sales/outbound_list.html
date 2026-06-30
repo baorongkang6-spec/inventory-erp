@@ -42,6 +42,12 @@
               <a href="{% url 'sales_invoice_create' %}?outbound={{ doc.pk }}" class="btn btn-sm btn-outline-success py-0">开具发票</a>
               {% endif %}
             {% endif %}
+            {% if doc.can_delete and perms.sales.add_salesoutbound %}
+            <form method="post" action="{% url 'outbound_delete' doc.pk %}" class="d-inline"
+                  onsubmit="return confirm('确认删除销售出库 {{ doc.doc_no }}？将反冲库存并彻底移除该单，且不可恢复。');">
+              {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger py-0">删除</button>
+            </form>
+            {% endif %}
             {% if doc.status != 'void' and perms.sales.void_salesoutbound %}
             <form method="post" action="{% url 'outbound_void' doc.pk %}" class="d-inline"
                   onsubmit="return confirm('确认作废出库单 {{ doc.doc_no }}？将反向冲减库存{% if doc.mirror_inbound_id %}，并联动作废对方镜像入库{% endif %}，且不可恢复。');">

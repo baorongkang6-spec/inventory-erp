@@ -17,6 +17,11 @@
       {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>
     </form>
     {% endif %}
+    {% if can_delete and perms.sales.add_salesoutbound %}
+    <form method="post" action="{% url 'outbound_delete' doc.pk %}" class="d-inline" onsubmit="return confirm('确认删除本出库单？将反冲库存并彻底移除，且不可恢复。');">
+      {% csrf_token %}<button type="submit" class="btn btn-danger btn-sm">删除</button>
+    </form>
+    {% endif %}
     <a href="{% url 'outbound_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
   </div>
 </div>
