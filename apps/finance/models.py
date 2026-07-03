@@ -243,6 +243,8 @@ class PaymentAllocation(models.Model):
         PurchaseInvoice, on_delete=models.PROTECT, related_name="allocations", verbose_name="采购发票"
     )
     amount = models.DecimalField("核销金额", max_digits=18, decimal_places=2)
+    # 业务日期（会计口径）：默认取付款单 doc_date；报表按此归期，避免用 created_at（操作时钟）跨月错记。
+    date = models.DateField("核销日期", null=True, blank=True)
     created_at = models.DateTimeField("核销时间", auto_now_add=True)
 
     class Meta:
@@ -383,6 +385,8 @@ class ReceiptAllocation(models.Model):
         SalesInvoice, on_delete=models.PROTECT, related_name="allocations", verbose_name="销售发票"
     )
     amount = models.DecimalField("核销金额", max_digits=18, decimal_places=2)
+    # 业务日期（会计口径）：默认取收款单 doc_date；报表按此归期。
+    date = models.DateField("核销日期", null=True, blank=True)
     created_at = models.DateTimeField("核销时间", auto_now_add=True)
 
     class Meta:
@@ -501,6 +505,8 @@ class NoteSettlement(models.Model):
     invoice_no = models.CharField("发票单号", max_length=32, blank=True)
     amount = models.DecimalField("冲销金额", max_digits=18, decimal_places=2)
     is_endorsement = models.BooleanField("背书抵付", default=False)
+    # 业务日期（会计口径）：默认取票据 draw_date；报表按此归期。
+    date = models.DateField("冲销日期", null=True, blank=True)
     created_at = models.DateTimeField("冲销时间", auto_now_add=True)
 
     class Meta:

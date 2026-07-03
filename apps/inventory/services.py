@@ -9,31 +9,16 @@
 所有写操作须在数据库事务内调用（项目已开 ATOMIC_REQUESTS）。
 """
 
-from decimal import Decimal
-
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core.money import ZERO_MONEY, round_money, round_qty
-from apps.masterdata.models import Product
 
 from .models import StockBalance, StockMove
 
 
 class InventoryError(Exception):
     """库存业务错误基类。"""
-
-
-class InsufficientStockError(InventoryError):
-    """库存不足（违反不允许负库存）。"""
-
-    def __init__(self, product: Product, available: Decimal, requested: Decimal, message: str = ""):
-        self.product = product
-        self.available = available
-        self.requested = requested
-        super().__init__(
-            message or f"库存不足：{product} 现有 {available}，需出库 {requested}"
-        )
 
 
 def _get_balance_for_update(company, product) -> StockBalance:
@@ -84,8 +69,7 @@ def post_inbound(company, product, quantity, unit_price, *, amount=None, date=No
 def reverse_move(move: StockMove, *, date=None, source_type="", source_id="", source_no="") -> StockMove:
     """精确反冲一笔历史流水（用于单据作废）。
 
-    - 反冲入库：从结存中扣回原数量与原金额；若现存数量/金额不足（货已被后续消耗）→
-      抛 InsufficientStockError，拒绝作废。
+    - 反冲入库：从结存中扣回原数量与原金额（允许负库存，即使货已被后续消耗也照冲）。
     - 反冲出库：把原数量与原成本加回结存。
     生成一笔方向相反的补偿流水，金额照原值，保证数量金额式账可追溯。
     """

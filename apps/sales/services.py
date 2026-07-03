@@ -1,7 +1,7 @@
 """销售出库的创建与过账（一个事务内完成）。
 
-库存不足时 post_outbound 抛 InsufficientStockError，事务整体回滚，
-单据与已处理行均不落库。
+允许负库存：库存不足不再拦截（SPEC 后期放开）；过账中任一步 InventoryError
+则事务整体回滚，单据与已处理行均不落库。
 """
 
 from django.db import transaction

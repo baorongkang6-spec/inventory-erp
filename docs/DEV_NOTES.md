@@ -57,7 +57,7 @@
 
 ## 五、M7 增强（多期间报表 / 下钻 / 筛选）
 
-- **`StockMove` 加业务日期**：补 `date`（默认 `localdate`，从单据 `doc_date` 带入），并迁移回填历史（`date=created_at.date()`）；自此总览/报表全按业务日期口径（银行 `date`、库存 `move.date`、发票 `doc_date`、票据 `draw_date`；核销无落库日期，用 `created_at.date()` 近似——已知限制）。
+- **`StockMove` 加业务日期**：补 `date`（默认 `localdate`，从单据 `doc_date` 带入），并迁移回填历史（`date=created_at.date()`）；自此总览/报表全按业务日期口径（银行 `date`、库存 `move.date`、发票 `doc_date`、票据 `draw_date`；核销业务日期见迁移 `0021`——已补 `date` 字段，取付款/收款 doc_date 或票据 draw_date，不再用 `created_at` 近似）。
 - **报表下钻不改账套**：`scope.resolve_company(request)` 读 `?company=`（须在可见集合内）否则退回当前账套，让总览行可直接点进「某公司」明细，而不必先切账套。
 - **账户余额表（明细账户级）**：`opening/reports.py:account_balance_table()`——银行按账户、库存按品种、应付按供应商、应收按客户的 期初/本期收入/本期发出/期末。AP/AP 减项需归属到往来对象：付款核销走 `allocation.invoice.supplier/customer`，票据冲销按 `invoice_id` 反查对手；数据量小直接 Python 归并（非 SQL group by）。四列恒等 `期初+收入−发出=期末` 用断言守。
 - **通用列表筛选（`FilteredListMixin`）**：声明 `search_fields`（支持跨表 `supplier__name`，`Q` 或连）+ `date_filter_field`（`?from/?to` 区间）即得筛选条，模板 `{% include "_filter_bar.html" %}` 统一渲染（按 `has_q/has_date` 自适应）。`ScopedListView` 已内置，自定义 ListView 加 mixin 即可。重置即 `request.path`。
@@ -196,7 +196,8 @@
     - 已删除 `PaymentListView/ReceiptListView` 类，URL 指向函数视图。
 
 ### 三、已知问题 / 临时凑合（下次回头看）
-- **死代码**：`InsufficientStockError` 类自负库存放开后已无处抛出；`apps/sales/views.py` 的对应 `except` 成无害死代码（可清理）。
+- ~~**死代码**：`InsufficientStockError` 类自负库存放开后已无处抛出；`apps/sales/views.py` 的对应 `except` 成无害死代码（可清理）。~~ **已清理（2026-07-03）**：删除 `InsufficientStockError` 类 + `sales/views.py` 两处 `except` + 各处 import/docstring 引用。
+- ~~**核销无落库日期，用 `created_at.date()` 近似（已知限制）**~~ **已修（2026-07-03，迁移 `0021`）**：`PaymentAllocation/ReceiptAllocation/NoteSettlement` 各加 `date` 业务日期（核销取付款/收款 doc_date、票据冲销取 draw_date），报表改按 `date` 归期，跨月核销不再错记到操作月。此前依赖系统日期的 7 个测试随之转绿。
 - **付款一览「应收票据背书」归并口径偏简化**：按票据 `note_no` 归并求和；若一张票分多次背书给不同供应商，会显示"N 个供应商"，日期取**票据出票日**（非背书日）。够看不够精细，必要时可改为按背书批次/日期拆行。
 - ~~**销售出库还没有「删除」按钮**（只有作废）；采购入库已加受限硬删除。对称性待补~~ **已补（2026-06-30）**：`delete_sales_outbound` + `outbound_delete_block_reason` 完全对称采购入库受限硬删除——仅「该出库后该商品再无任何出入库变动 + 未生成关联镜像 + 未开票 + 当月 + 本人/管理员」才允许，`reverse_move` 精确反冲恢复库存再删两条流水不留痕（顺带清 ExpenseEntry/BorrowTransaction）；其余用「作废」。列表/详情按 `can_delete` 显隐，URL `outbound_delete`。新增 5 个测试（`OutboundDeleteTests`）。
 - **DB 状态偏差（本轮已修文档）**：CLAUDE.md/DEPLOY.md 原写生产用 PostgreSQL，**实际生产跑的是 SQLite**（代码两者都支持，靠 `DB_ENGINE` 切换）。已在本轮把文档改为"实际 SQLite"。

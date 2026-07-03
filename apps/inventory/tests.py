@@ -7,7 +7,6 @@ from django.test import TestCase
 from apps.core.models import Company
 from apps.inventory.models import StockBalance, StockMove
 from apps.inventory.services import (
-    InsufficientStockError,
     post_inbound,
     post_outbound,
 )

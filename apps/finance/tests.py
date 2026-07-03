@@ -1,6 +1,6 @@
 """资金往来测试：采购发票含税换算与应付产生。"""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.test import TestCase
@@ -457,10 +457,14 @@ class OtherCashflowTests(TestCase):
                 amount=Decimal("100"), entry_type=BankJournal.EntryType.SETTLEMENT)
 
     def test_create_view_and_delete(self):
+        from django.utils import timezone
+
         from apps.finance.models import BankJournal
+        # 删除受「仅当月」规则约束，用当月日期以免随系统时钟跨月而被拦
+        today = timezone.localdate().strftime("%Y-%m-%d")
         self.client.force_login(self.user)
         r = self.client.post("/finance/other-cashflow/new/", {
-            "doc_date": "2026-06-05", "bank_account": self.acc.pk, "direction": "out",
+            "doc_date": today, "bank_account": self.acc.pk, "direction": "out",
             "entry_type": "tax", "amount": "200", "counterparty": "税务局",
             "summary": "增值税", "txn_no": "",
         }, SERVER_NAME="localhost", follow=True)
@@ -1249,17 +1253,21 @@ class ReceiptPaymentByNoteTests(TestCase):
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
 
     def test_edit_bank_receipt_convert_to_note(self):
+        from django.utils import timezone
         # 误记成银行收款 → 修改时切换为「应收票据」：删旧收款+日记账，改记为收到票据并冲应收
+        # 修改受「仅当月」规则约束，用当月日期以免随系统时钟跨月而被拦
+        today = timezone.localdate()
         acc = BankAccount.objects.create(company=self.c1, name="基本户")
-        rec = create_receipt(company=self.c1, user=self.user, doc_date=date(2026, 6, 10),
+        rec = create_receipt(company=self.c1, user=self.user, doc_date=today,
                              bank_account=acc, customer=self.cust, amount=Decimal("1000"),
                              summary="承兑")
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 1)
         si = self._sales_invoice(Decimal("1000"))
         self.client.force_login(self.user)
         r = self.client.post(f"/finance/receipts/{rec.pk}/edit/", {
-            "doc_date": "2026-06-10", "method": "note", "customer": self.cust.pk,
-            "note_no": "BJ-CV1", "draw_date": "2026-06-10", "due_date": "2026-09-10",
+            "doc_date": today.strftime("%Y-%m-%d"), "method": "note", "customer": self.cust.pk,
+            "note_no": "BJ-CV1", "draw_date": today.strftime("%Y-%m-%d"),
+            "due_date": (today + timedelta(days=90)).strftime("%Y-%m-%d"),
             "amount": "1000", f"alloc-{si.pk}": "1000",
         }, SERVER_NAME="localhost", follow=True)
         self.assertEqual(r.status_code, 200)

@@ -151,7 +151,8 @@ def allocate_payment(*, payment, allocations, user=None):
         raise SettlementError(f"核销合计 {total} 超过付款未核销 {payment.unallocated}")
 
     for invoice, amount in cleaned:
-        PaymentAllocation.objects.create(payment=payment, invoice=invoice, amount=amount)
+        PaymentAllocation.objects.create(
+            payment=payment, invoice=invoice, amount=amount, date=payment.doc_date)
         invoice.settled_amount += amount
         invoice.save(update_fields=["settled_amount"])
 
@@ -414,7 +415,8 @@ def allocate_receipt(*, receipt, allocations, user=None):
         raise SettlementError(f"核销合计 {total} 超过收款未核销 {receipt.unallocated}")
 
     for invoice, amount in cleaned:
-        ReceiptAllocation.objects.create(receipt=receipt, invoice=invoice, amount=amount)
+        ReceiptAllocation.objects.create(
+            receipt=receipt, invoice=invoice, amount=amount, date=receipt.doc_date)
         invoice.settled_amount += amount
         invoice.save(update_fields=["settled_amount"])
 
@@ -705,11 +707,13 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         if total > room:
             raise SettlementError(f"核销应收合计 {total} 超过票据可抵应收额 {room}")
 
+    # 业务日期：无独立冲销日期录入，取票据出票日作会计口径归期（稳定、不随操作时钟漂移）。
+    settle_date = getattr(note, "draw_date", None)
     for inv, amount in cleaned:
         NoteSettlement.objects.create(
             company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
             invoice_kind=invoice_kind, invoice_id=inv.pk, invoice_no=inv.doc_no,
-            amount=amount, is_endorsement=is_endorsement,
+            amount=amount, is_endorsement=is_endorsement, date=settle_date,
         )
         inv.settled_amount += amount
         inv.save(update_fields=["settled_amount"])

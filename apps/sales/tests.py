@@ -7,7 +7,7 @@ from django.test import TestCase
 
 from apps.core.models import Company
 from apps.inventory.models import StockBalance
-from apps.inventory.services import InsufficientStockError, post_inbound
+from apps.inventory.services import post_inbound
 from apps.masterdata.models import Product
 from apps.sales.models import SalesOutbound
 from apps.sales.services import create_and_post_outbound

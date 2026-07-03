@@ -9,7 +9,7 @@ from django.views.generic import DetailView, ListView
 
 from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
-from apps.inventory.services import InsufficientStockError, InventoryError
+from apps.inventory.services import InventoryError
 
 from apps.masterdata.forms import ExpenseFormSet
 
@@ -147,8 +147,6 @@ def outbound_create(request):
                     lines=lines, expenses=expenses,
                     sales_type=header.cleaned_data["sales_type"],
                 )
-            except InsufficientStockError as e:
-                messages.error(request, f"库存不足，整单未保存：{e}")
             except InventoryError as e:
                 messages.error(request, f"过账失败，整单未保存：{e}")
             else:
@@ -198,8 +196,6 @@ def outbound_edit(request, pk):
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
                     sales_type=header.cleaned_data["sales_type"])
-            except InsufficientStockError as e:
-                messages.error(request, f"库存不足，未修改：{e}")
             except InventoryError as e:
                 messages.error(request, f"修改失败：{e}")
             else:

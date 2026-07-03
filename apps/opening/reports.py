@@ -306,7 +306,7 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
     for a in allocations:
         partner = alloc_partner(a)
         d = data.setdefault(partner, _pset())
-        ad = a.created_at.date()
+        ad = a.date or a.created_at.date()
         if ad < dfrom:
             d["opening"] -= a.amount
         elif ad <= dto:
@@ -317,7 +317,7 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
         if partner is None:
             continue
         d = data.setdefault(partner, _pset())
-        nd = ns.created_at.date()
+        nd = ns.date or ns.created_at.date()
         if nd < dfrom:
             d["opening"] -= ns.amount
         elif nd <= dto:
@@ -501,10 +501,12 @@ def partner_ledger(company, partner, kind, dfrom, dto):
                        "inc": inv.amount_taxed, "dec": Z, "ref_url": inv_url(inv),
                        "is_opening": inv.is_opening})
     for a in allocs:
-        events.append({"date": a.created_at.date(), "kind": alloc_label, "doc_no": alloc_doc(a),
+        events.append({"date": a.date or a.created_at.date(), "kind": alloc_label,
+                       "doc_no": alloc_doc(a),
                        "inc": Z, "dec": a.amount, "ref_url": alloc_url(a)})
     for ns in notes.filter(invoice_id__in=inv_ids):
-        events.append({"date": ns.created_at.date(), "kind": "票据抵付", "doc_no": ns.note_no,
+        events.append({"date": ns.date or ns.created_at.date(), "kind": "票据抵付",
+                       "doc_no": ns.note_no,
                        "inc": Z, "dec": ns.amount,
                        "ref_url": invoice_url(ns.invoice_kind, ns.invoice_id)})
 
@@ -855,7 +857,8 @@ def receivable_notes_balance(company, dfrom, dto):
     for s in NoteSettlement.objects.filter(company=company,
                                            note_kind=NoteSettlement.NoteKind.RECEIVABLE,
                                            is_endorsement=True):
-        sett.setdefault(s.note_id, []).append({"date": s.created_at.date(), "amount": s.amount})
+        sett.setdefault(s.note_id, []).append(
+            {"date": s.date or s.created_at.date(), "amount": s.amount})
     for d in NoteDisposal.objects.filter(company=company):
         sett.setdefault(d.note_id, []).append({"date": d.date, "amount": d.amount})
     rows = []
@@ -889,7 +892,7 @@ def note_ledger(company, note, dfrom, dto):
     for s in NoteSettlement.objects.filter(company=company, note_id=note.pk,
                                            note_kind=NoteSettlement.NoteKind.RECEIVABLE,
                                            is_endorsement=True):
-        events.append({"date": s.created_at.date(),
+        events.append({"date": s.date or s.created_at.date(),
                        "kind": "背书抵应付",
                        "doc_no": s.invoice_no, "inc": Z, "dec": s.amount,
                        "ref_url": invoice_url(s.invoice_kind, s.invoice_id),
