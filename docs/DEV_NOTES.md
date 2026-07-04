@@ -161,7 +161,9 @@
 ### 一、项目当前状态
 - **已上线生产，进入"按需迭代"阶段**，早已远超 SPEC §11 的 M0–M6 里程碑（M0–M10 均完成，见 TaskList）。
 - 生产部署：公司 Windows Server 2022（内网 `192.168.10.245`），**SQLite** + Waitress + NSSM 服务（`InventoryERP`，开机自启），花生壳 HTTPS `https://10vtcu2238888.vicp.fun`，Gitee 私有仓库（SSH 免密）远程更新（`update.bat`）。
-- **全量测试 155 个全绿**（`uv run python manage.py test`）。`manage.py check` 无警告。`git` 工作区干净、全部已推送 Gitee `master`。
+- **全量测试 190 个全绿**（`uv run python manage.py test`）。`manage.py check` 无警告。`git` 工作区干净、全部已推送 Gitee `master`。
+- **2026-07-03　生产已更新到 `56e7db4` 并核对通过**：本次带数据迁移 `0021`（核销业务日期回填）。生产机原停在 `ba3753a`（落后 6 个提交），本次一并补齐；先手动备份（服务停→拷 db 到 `C:\erp_backup`）再迁移。升级后核对 C3 客户往来明细账：票据抵付各行日期显示为票据出票日 `2026-06-22`（非操作当日），口径修复生效。
+  - 运维踩坑：生产机若落后于 `dc01786`（"update 前自动备份 + sqlite backup API"），其在盘 `update.bat`/`backup.bat` 仍是旧版；直接跑旧 `update.bat` 会在 `git pull` 中途替换自身导致 cmd 边读边跑错乱。**落后多个提交时改手动分步**：`.\nssm stop` → 手动备份 → `git pull` → `uv sync` → `migrate` → `collectstatic` → `.\nssm start`。PowerShell 里 `nssm` 需写 `.\nssm`。
 
 ### 二、本轮（近几个 session）做完的增量（均已测试+提交+部署）
 1. **应收票据收付集成**：收款方式/付款方式下拉加「应收票据」——收款=银行账户+收到应收票据；付款=银行账户+应收票据背书抵应付。复用既有 `create_note_receivable / settle_receivable_against_sales / endorse_receivable_against_purchase`，不重写账务内核。
