@@ -4,8 +4,9 @@
 <div class="d-flex justify-content-between align-items-center mb-1">
   <h4 class="mb-0">已入库未收到发票明细表</h4>
 </div>
-<p class="text-muted">列出采购入库行中「入库数量 − 已收票数量 ≠ 0」的明细，作为库存商品暂估的依据；
-  金额为未收票部分(按入库单价换算)。支持多公司联合查询；日期区间可选，留空=全部。</p>
+<p class="text-muted mb-1">入库数量 − 已收票数量 ≠ 0 的明细。<b>应付账款-暂估入账用「未收票不含税」</b>，
+  按供应商汇总；含税列仅供参考。截止日有值时，只计收票日 ≤ 截止日的发票。
+  核对 6 月末暂估：起始日期留空，截止日期填 2026-06-30。仅外部采购；借调不纳入；关联交易不抵销。</p>
 
 <form method="get" class="row g-2 mb-3 align-items-end">
   <div class="col-12">
@@ -34,7 +35,7 @@
       <thead class="table-light">
         <tr><th>公司</th><th>供应商</th><th>入库单号</th><th>入库日期</th><th>商品</th>
             <th class="text-end">入库数量</th><th class="text-end">已收票数量</th><th class="text-end">未收票数量</th>
-            <th class="text-end">未收票不含税</th><th class="text-end">未收票含税</th></tr>
+            <th class="text-end">未收票不含税(暂估)</th><th class="text-end">未收票含税</th></tr>
       </thead>
       <tbody>
         {% for r in rows %}
@@ -47,7 +48,7 @@
           <td class="text-end">{{ r.in_qty }}</td>
           <td class="text-end">{{ r.billed_qty }}</td>
           <td class="text-end fw-semibold">{{ r.remain_qty }}</td>
-          <td class="text-end">{{ r.untaxed }}</td>
+          <td class="text-end fw-semibold">{{ r.untaxed }}</td>
           <td class="text-end">{{ r.taxed }}</td>
         </tr>
         {% empty %}

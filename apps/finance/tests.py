@@ -585,6 +585,61 @@ class InvoiceVoidTests(TestCase):
             void_purchase_invoice_doc(inv, None)
 
 
+class UninvoicedCutoffTests(TestCase):
+    """未开票/未收票：截止日口径 + 发出商品用成本。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.inventory.services import post_inbound
+        from apps.purchasing.services import create_and_post_inbound
+        from apps.sales.services import create_and_post_outbound
+        from apps.finance.services import create_purchase_invoice, create_sales_invoice
+        from apps.masterdata.models import Customer, Supplier
+
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        # 5/20 入库 100@10；6/10 出库 40（成本400）；7/5 才开票出库部分
+        create_and_post_inbound(
+            company=cls.c1, user=None, doc_date=date(2026, 5, 20), supplier=cls.sup,
+            lines=[{"product": cls.p, "quantity": Decimal("100"), "unit_price": Decimal("10"),
+                    "tax_rate": Decimal("0")}])
+        cls.ob = create_and_post_outbound(
+            company=cls.c1, user=None, doc_date=date(2026, 6, 10), customer=cls.cust,
+            lines=[{"product": cls.p, "quantity": Decimal("40"), "sale_unit_price": Decimal("15"),
+                    "tax_rate": Decimal("0")}])
+        create_sales_invoice(
+            company=cls.c1, user=None, doc_date=date(2026, 7, 5), customer=cls.cust,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("600"),
+                    "tax_rate": Decimal("0"), "quantity": Decimal("40"),
+                    "source_outbound_line": cls.ob.lines.first()}])
+        # 5/20 入库未收票；7/1 才收票
+        ib = cls.c1.purchaseinbound_set.order_by("id").first()
+        create_purchase_invoice(
+            company=cls.c1, user=None, doc_date=date(2026, 7, 1), supplier=cls.sup,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0"), "quantity": Decimal("100"),
+                    "source_inbound_line": ib.lines.first()}])
+
+    def test_shipped_asof_june_uses_cost_ignores_july_invoice(self):
+        from apps.opening.reports import shipped_uninvoiced
+        rows = shipped_uninvoiced([self.c1], None, date(2026, 6, 30))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["remain_qty"], Decimal("40.000"))
+        self.assertEqual(rows[0]["cost"], Decimal("400.00"))  # 40×10，非售价600
+        # 不截断开票日时，7月票已核完
+        rows_now = shipped_uninvoiced([self.c1], None, None)
+        self.assertEqual(rows_now, [])
+
+    def test_received_asof_june_untaxed_ignores_july_invoice(self):
+        from apps.opening.reports import received_uninvoiced
+        rows = received_uninvoiced([self.c1], None, date(2026, 6, 30))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["remain_qty"], Decimal("100.000"))
+        self.assertEqual(rows[0]["untaxed"], Decimal("1000.00"))
+
+
 class SalesRevenueCostTests(TestCase):
     """销售收入成本计算表（按开票口径、按商品）。"""
 

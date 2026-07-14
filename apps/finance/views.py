@@ -1609,16 +1609,19 @@ def shipped_uninvoiced_report(request):
     else:
         chosen = list(visible)   # 未选则默认全部可见公司
     rows = shipped_uninvoiced(chosen, dfrom, dto)
-    totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("untaxed", "taxed")}
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("untaxed", "taxed", "cost")}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
         headers = ["公司", "客户", "出库单号", "出库日期", "商品", "出库数量", "已开票数量",
-                   "未开票数量", "未开票不含税", "未开票含税"]
+                   "未开票数量", "未开票成本(发出商品)", "未开票售价不含税", "未开票售价含税"]
         out = [[r["company"].short_name or str(r["company"]), str(r["customer"] or ""),
                 r["outbound"].doc_no, r["outbound"].doc_date, str(r["product"] or ""),
-                r["out_qty"], r["billed_qty"], r["remain_qty"], r["untaxed"], r["taxed"]]
+                r["out_qty"], r["billed_qty"], r["remain_qty"],
+                r["cost"], r["untaxed"], r["taxed"]]
                for r in rows]
-        out.append(["合计", "", "", "", "", "", "", "", totals["untaxed"], totals["taxed"]])
+        out.append(["合计", "", "", "", "", "", "", "",
+                    totals["cost"], totals["untaxed"], totals["taxed"]])
         company_arg = chosen[0] if len(chosen) == 1 else None
         return xlsx_response("已出库未开具发票明细表", headers, out,
                              company=company_arg, period=(dfrom, dto) if (dfrom or dto) else None)
@@ -1648,7 +1651,7 @@ def received_uninvoiced_report(request):
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
         headers = ["公司", "供应商", "入库单号", "入库日期", "商品", "入库数量", "已收票数量",
-                   "未收票数量", "未收票不含税", "未收票含税"]
+                   "未收票数量", "未收票不含税(暂估)", "未收票含税"]
         out = [[r["company"].short_name or str(r["company"]), str(r["supplier"] or ""),
                 r["inbound"].doc_no, r["inbound"].doc_date, str(r["product"] or ""),
                 r["in_qty"], r["billed_qty"], r["remain_qty"], r["untaxed"], r["taxed"]]

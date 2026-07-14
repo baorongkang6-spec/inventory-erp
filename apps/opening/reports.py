@@ -695,8 +695,11 @@ def customer_sales_analysis(companies, dfrom, dto, by_product, show_commission):
 def shipped_uninvoiced(companies, dfrom=None, dto=None):
     """已出库未开具发票明细：销售出库行中「出库数量 − 已开票数量 ≠ 0」的行。
 
-    companies 为公司列表（支持多公司联合查询）。已开票数量 = 关联该出库行的销售发票行数量之和
-    (不含作废)。金额取未开票部分(按出库行单价×未开票数量换算不含税/含税)。可按出库日期区间过滤。
+    companies 为公司列表（支持多公司联合查询）。
+    已开票数量 = 关联该出库行的销售发票行数量之和(不含作废)；
+    若给定 dto，仅统计开票日 ≤ dto 的发票（便于「截止某日」余额，如 6 月末发出商品）。
+    金额：未开票售价(不含税/含税)供参考；cost=未开票数量对应出库结转成本（发出商品入账用）。
+    可按出库日期区间过滤；核对月末发出商品余额时建议 from 留空、to=月末。
     """
     from django.db.models import Sum
 
@@ -716,10 +719,12 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
     if dto:
         qs = qs.filter(outbound__doc_date__lte=dto)
 
+    inv_qs = (SalesInvoiceLine.objects.filter(source_outbound_line__in=qs)
+              .exclude(invoice__status=SalesInvoice.Status.VOID))
+    if dto:
+        inv_qs = inv_qs.filter(invoice__doc_date__lte=dto)
     invoiced = {r["source_outbound_line"]: round_qty(r["q"] or ZQ) for r in
-                SalesInvoiceLine.objects.filter(source_outbound_line__in=qs)
-                .exclude(invoice__status=SalesInvoice.Status.VOID)
-                .values("source_outbound_line").annotate(q=Sum("quantity"))}
+                inv_qs.values("source_outbound_line").annotate(q=Sum("quantity"))}
 
     rows = []
     for ln in qs.order_by("outbound__company__code", "outbound__customer__code",
@@ -729,6 +734,7 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
         if remain == 0:
             continue
         unit_u = (ln.amount_untaxed / ln.quantity) if ln.quantity else Z
+        unit_c = (ln.amount / ln.quantity) if ln.quantity else Z
         ru = round_money(remain * unit_u)
         rt = round_money(ru * (one + ln.tax_rate))
         rows.append({
@@ -736,6 +742,7 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
             "outbound": ln.outbound, "product": ln.product,
             "out_qty": ln.quantity, "billed_qty": billed, "remain_qty": remain,
             "untaxed": ru, "taxed": rt,
+            "cost": round_money(remain * unit_c),
         })
     return rows
 
@@ -743,9 +750,10 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
 def received_uninvoiced(companies, dfrom=None, dto=None):
     """已入库未收到发票明细：采购入库行中「入库数量 − 已收票数量 ≠ 0」的行。
 
-    作为库存商品「暂估」的依据。companies 为公司列表（支持多公司联合查询）。
-    已收票数量 = 关联该入库行的采购发票行数量之和(不含作废)。金额取未收票部分
-    (按入库行单价×未收票数量换算不含税/含税)。可按入库日期区间过滤。
+    作为「应付账款-暂估」(不含税) 的依据。仅外部采购入库；借调不纳入。
+    已收票数量 = 关联该入库行的采购发票行数量之和(不含作废)；
+    若给定 dto，仅统计收票日 ≤ dto 的发票（便于「截止某日」暂估余额）。
+    金额取未收票部分(按入库行不含税单价×未收票数量)。核对月末暂估时建议 from 留空、to=月末。
     """
     from django.db.models import Sum
 
@@ -766,10 +774,12 @@ def received_uninvoiced(companies, dfrom=None, dto=None):
     if dto:
         qs = qs.filter(inbound__doc_date__lte=dto)
 
+    inv_qs = (PurchaseInvoiceLine.objects.filter(source_inbound_line__in=qs)
+              .exclude(invoice__status=PurchaseInvoice.Status.VOID))
+    if dto:
+        inv_qs = inv_qs.filter(invoice__doc_date__lte=dto)
     invoiced = {r["source_inbound_line"]: round_qty(r["q"] or ZQ) for r in
-                PurchaseInvoiceLine.objects.filter(source_inbound_line__in=qs)
-                .exclude(invoice__status=PurchaseInvoice.Status.VOID)
-                .values("source_inbound_line").annotate(q=Sum("quantity"))}
+                inv_qs.values("source_inbound_line").annotate(q=Sum("quantity"))}
 
     rows = []
     for ln in qs.order_by("inbound__company__code", "inbound__supplier__code",
