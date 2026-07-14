@@ -7,7 +7,7 @@
      href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
 <p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末；金额单位元。
-  含发出商品（成本）、应付账款-暂估（不含税）。支持多公司联合查询（不选=全部）。默认月初~今天。</p>
+  含发出商品（成本）、应付账款-暂估（不含税）。点「账户/科目」进入对应明细账。支持多公司联合查询（不选=全部）。</p>
 
 <form method="get" class="mb-3">
   {% include "_company_filter.html" %}
@@ -33,7 +33,7 @@
         {% for r in b.rows %}
         <tr>
           <td class="text-start">{{ r.company }}</td>
-          <td class="text-start">{{ r.name }}</td>
+          <td class="text-start">{% if r.detail_url %}<a href="{{ r.detail_url }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}</td>
           <td>{{ r.opening }}</td>
           <td>{{ r.income }}</td>
           <td>{{ r.outgo }}</td>

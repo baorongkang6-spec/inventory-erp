@@ -264,6 +264,10 @@ class AccountBalanceTableTests(TestCase):
             t = b["total"]
             self.assertEqual(t["opening"] + t["income"] - t["outgo"], t["ending"])
         self.assertContains(resp, "合计")
+        # 明细科目可下钻
+        self.assertTrue(any(r.get("detail_url") for r in blocks["bank"]["rows"]))
+        self.assertIn("/finance/reports/bank-journal/", blocks["bank"]["rows"][0]["detail_url"])
+        self.assertIn("account=", blocks["bank"]["rows"][0]["detail_url"])
 
     def test_account_balance_export_has_total_rows(self):
         """导出 Excel 在每个有数据的分组后附「合计」行。"""

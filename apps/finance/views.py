@@ -1609,6 +1609,9 @@ def shipped_uninvoiced_report(request):
     else:
         chosen = list(visible)   # 未选则默认全部可见公司
     rows = shipped_uninvoiced(chosen, dfrom, dto)
+    product_id = request.GET.get("product")
+    if product_id:
+        rows = [r for r in rows if r.get("product") and str(r["product"].pk) == product_id]
     totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
               for k in ("untaxed", "taxed", "cost")}
     if request.GET.get("export") == "xlsx":
@@ -1627,7 +1630,8 @@ def shipped_uninvoiced_report(request):
                              company=company_arg, period=(dfrom, dto) if (dfrom or dto) else None)
     return render(request, "finance/shipped_uninvoiced.html", {
         "rows": rows, "totals": totals, "visible_companies": visible,
-        "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto})
+        "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto,
+        "product_id": product_id or ""})
 
 
 @login_required
@@ -1647,6 +1651,9 @@ def received_uninvoiced_report(request):
     else:
         chosen = list(visible)   # 未选则默认全部可见公司
     rows = received_uninvoiced(chosen, dfrom, dto)
+    supplier_id = request.GET.get("supplier")
+    if supplier_id:
+        rows = [r for r in rows if r.get("supplier") and str(r["supplier"].pk) == supplier_id]
     totals = {k: sum((r[k] for r in rows), Decimal("0.00")) for k in ("untaxed", "taxed")}
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
@@ -1662,7 +1669,8 @@ def received_uninvoiced_report(request):
                              company=company_arg, period=(dfrom, dto) if (dfrom or dto) else None)
     return render(request, "finance/received_uninvoiced.html", {
         "rows": rows, "totals": totals, "visible_companies": visible,
-        "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto})
+        "chosen_ids": {c.pk for c in chosen}, "date_from": dfrom, "date_to": dto,
+        "supplier_id": supplier_id or ""})
 
 
 @login_required

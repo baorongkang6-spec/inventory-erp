@@ -390,35 +390,67 @@ def ap_accrual_period(company, dfrom, dto):
     return _row(opening, income, outgo, opening + income - outgo)
 
 
+def _ledger_url(name, **params):
+    """拼明细账链接（跳过空参数）。"""
+    from urllib.parse import urlencode
+
+    from django.urls import reverse
+    q = {}
+    for k, v in params.items():
+        if v is None or v == "":
+            continue
+        q[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
+    return f"{reverse(name)}?{urlencode(q)}" if q else reverse(name)
+
+
 def account_balance_table(companies, dfrom, dto):
     """明细账户余额：银行 / 库存 / 发出商品 / 应付 / 应付暂估 / 应收。
 
-    每行 期初(区间前净)/本期收入(增)/本期发出(减)/期末。低数据量，用 Python 归并。
+    每行 期初(区间前净)/本期收入(增)/本期发出(减)/期末；带 detail_url 供账户余额表下钻。
     """
     bank_rows, stock_rows, shipped_rows, ap_rows, accrual_rows, ar_rows = [], [], [], [], [], []
     for company in companies:
-        # 银行：每账户
+        # 银行：每账户 → 银行存款日记账
         for r in bank_accounts_balance(company, dfrom, dto):
-            bank_rows.append({"company": company, "name": str(r["account"]),
-                              "opening": r["opening"], "income": r["income"],
-                              "outgo": r["outgo"], "ending": r["ending"]})
+            acc = r["account"]
+            bank_rows.append({
+                "company": company, "name": str(acc),
+                "opening": r["opening"], "income": r["income"],
+                "outgo": r["outgo"], "ending": r["ending"],
+                "detail_url": _ledger_url(
+                    "bank_journal_report", company=company.pk, account=acc.pk,
+                    **{"from": dfrom, "to": dto}),
+            })
 
-        # 库存：每商品（金额）
+        # 库存：每商品 → 商品流水台账
         for r in stock_products_balance(company, dfrom, dto):
-            stock_rows.append({"company": company,
-                               "name": f"{r['product'].code} {r['product'].name}",
-                               "opening": r["opening"], "income": r["income"],
-                               "outgo": r["outgo"], "ending": r["ending"]})
+            prod = r["product"]
+            stock_rows.append({
+                "company": company,
+                "name": f"{prod.code} {prod.name}",
+                "opening": r["opening"], "income": r["income"],
+                "outgo": r["outgo"], "ending": r["ending"],
+                "detail_url": _ledger_url(
+                    "stock_ledger", company=company.pk, product=prod.pk,
+                    **{"from": dfrom, "to": dto}),
+            })
 
-        # 发出商品：每商品（成本）
+        # 发出商品：每商品 → 已出库未开票明细（按商品）
         for r in goods_shipped_products_balance(company, dfrom, dto):
             prod = r["product"]
             name = f"{prod.code} {prod.name}" if prod else "（未指定商品）"
-            shipped_rows.append({"company": company, "name": name,
-                                 "opening": r["opening"], "income": r["income"],
-                                 "outgo": r["outgo"], "ending": r["ending"]})
+            url = _ledger_url(
+                "shipped_uninvoiced_report", company=company.pk,
+                product=prod.pk if prod else None,
+                **{"from": dfrom, "to": dto}) if prod else ""
+            shipped_rows.append({
+                "company": company, "name": name,
+                "opening": r["opening"], "income": r["income"],
+                "outgo": r["outgo"], "ending": r["ending"],
+                "detail_url": url,
+            })
 
-        # 应付：每供应商
+        # 应付：每供应商 → 供应商往来明细账
         ap_rows += _partner_rows(
             company,
             PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED),
@@ -426,9 +458,10 @@ def account_balance_table(companies, dfrom, dto):
             PaymentAllocation.objects.filter(payment__company=company).select_related("invoice__supplier"),
             lambda a: a.invoice.supplier,
             NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE),
-            PurchaseInvoice, dfrom, dto)
+            PurchaseInvoice, dfrom, dto,
+            ledger_name="payable_partner_ledger")
 
-        # 应付账款-暂估：每供应商（不含税）
+        # 应付账款-暂估：每供应商 → 已入库未收票明细（按供应商）
         for r in ap_accrual_partners_balance(company, dfrom, dto):
             partner = r["partner"]
             accrual_rows.append({
@@ -436,9 +469,13 @@ def account_balance_table(companies, dfrom, dto):
                 "name": str(partner) if partner else "（未指定供应商）",
                 "opening": r["opening"], "income": r["income"],
                 "outgo": r["outgo"], "ending": r["ending"],
+                "detail_url": _ledger_url(
+                    "received_uninvoiced_report", company=company.pk,
+                    supplier=partner.pk if partner else None,
+                    **{"from": dfrom, "to": dto}) if partner else "",
             })
 
-        # 应收：每客户
+        # 应收：每客户 → 客户往来明细账
         ar_rows += _partner_rows(
             company,
             SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED),
@@ -447,7 +484,8 @@ def account_balance_table(companies, dfrom, dto):
             lambda a: a.invoice.customer,
             NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES,
                                           is_endorsement=False),
-            SalesInvoice, dfrom, dto)
+            SalesInvoice, dfrom, dto,
+            ledger_name="receivable_partner_ledger")
 
     return {"bank": bank_rows, "stock": stock_rows, "goods_shipped": shipped_rows,
             "payable": ap_rows, "ap_accrual": accrual_rows, "receivable": ar_rows}
@@ -493,12 +531,20 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
 
 
 def _partner_rows(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,
-                  invoice_model, dfrom, dto):
-    """account_balance_table 用：在 _partner_balance 基础上加 company/name 字段。"""
-    return [{"company": company, "name": str(r["partner"]), "opening": r["opening"],
-             "income": r["income"], "outgo": r["outgo"], "ending": r["ending"]}
-            for r in _partner_balance(company, invoices, partner_attr, allocations, alloc_partner,
-                                      note_settlements, invoice_model, dfrom, dto)]
+                  invoice_model, dfrom, dto, ledger_name=None):
+    """account_balance_table 用：在 _partner_balance 基础上加 company/name/detail_url。"""
+    out = []
+    for r in _partner_balance(company, invoices, partner_attr, allocations, alloc_partner,
+                              note_settlements, invoice_model, dfrom, dto):
+        row = {"company": company, "name": str(r["partner"]), "opening": r["opening"],
+               "income": r["income"], "outgo": r["outgo"], "ending": r["ending"],
+               "detail_url": ""}
+        if ledger_name and r["partner"]:
+            row["detail_url"] = _ledger_url(
+                ledger_name, company=company.pk, partner=r["partner"].pk,
+                **{"from": dfrom, "to": dto})
+        out.append(row)
+    return out
 
 
 def payable_partners_balance(company, dfrom, dto):
