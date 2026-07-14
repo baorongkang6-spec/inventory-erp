@@ -2015,9 +2015,17 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
         return super().get_queryset().select_related("customer")
 
     def get_context_data(self, **kwargs):
+        from urllib.parse import quote
+
+        from .models import NoteDisposal
         from .services import _note_applied_ar, note_receivable_delete_block_reason
         ctx = super().get_context_data(**kwargs)
         notes = list(ctx[self.context_object_name])
+        # 预取各票据的处置（兑付/贴现），供列表直达「改兑付/改贴现」入口（避免 N+1）
+        disp_map = {}
+        for d in NoteDisposal.objects.filter(note__in=notes):
+            disp_map.setdefault(d.note_id, []).append(d)
+        nxt = quote(self.request.get_full_path())
         for n in notes:
             n.can_delete = note_receivable_delete_block_reason(n) is None
             void = n.status == NoteReceivable.Status.VOID
@@ -2026,6 +2034,20 @@ class NoteReceivableListView(FilteredListMixin, CompanyScopedMixin, ListView):
             # 背书抵应付 / 兑付 / 贴现：票出去，消耗未用额
             n.can_endorse = (not void) and n.status != NoteReceivable.Status.ENDORSED and n.unused > 0
             n.can_cash = (not void) and n.unused > 0
+            # 兑付/贴现修改入口：单笔处置直达修改页；多笔则进使用明细自选（作废票不给入口）
+            ds = disp_map.get(n.pk, [])
+            n.disposal_edit_url = ""
+            n.disposal_edit_label = ""
+            if ds and not void:
+                if len(ds) == 1:
+                    d0 = ds[0]
+                    n.disposal_edit_url = f"{reverse('note_disposal_edit', args=[d0.pk])}?next={nxt}"
+                    n.disposal_edit_label = ("改兑付" if d0.kind == NoteDisposal.Kind.COLLECT
+                                             else "改贴现")
+                else:
+                    n.disposal_edit_url = (f"{reverse('receivable_note_ledger')}"
+                                           f"?company={n.company_id}&note={n.pk}&all=1")
+                    n.disposal_edit_label = "改处置"
         z = Decimal("0.00")
         ctx["totals"] = {
             "opening": sum((n.amount for n in notes if n.is_opening), z),

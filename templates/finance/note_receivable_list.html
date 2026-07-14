@@ -49,6 +49,10 @@
             {% if n.status != 'void' and perms.finance.add_notereceivable %}
             <a href="{% url 'note_receivable_edit' n.pk %}" class="btn btn-sm btn-outline-secondary">修改</a>
             {% endif %}
+            {% if n.disposal_edit_url and perms.finance.add_notesettlement %}
+            <a href="{{ n.disposal_edit_url }}" class="btn btn-sm btn-outline-info"
+               title="修改该票据兑付/贴现的日期、收款账户、备注">{{ n.disposal_edit_label }}</a>
+            {% endif %}
             {% if n.can_delete and perms.finance.add_notereceivable %}
             <form method="post" action="{% url 'note_receivable_delete' n.pk %}" class="d-inline"
                   onsubmit="return confirm('确认删除应收票据 {{ n.doc_no }}？将彻底移除该票据登记，且不可恢复。');">

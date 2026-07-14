@@ -2111,3 +2111,19 @@ class NoteCashTests(TestCase):
         }, SERVER_NAME="localhost", follow=True)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(NoteDisposal.objects.filter(note=note).count(), 1)
+
+    def test_note_list_shows_disposal_edit_entry(self):
+        """已兑付/贴现的票据，列表应出现直达「改兑付/改贴现」修改入口（修正兑付日期用）。"""
+        from apps.finance.models import NoteDisposal
+        from apps.finance.services import collect_note_receivable
+        note = self._note("800")
+        # 兑付前：列表无兑付修改入口
+        self.client.force_login(self.user)
+        before = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertNotContains(before, "改兑付")
+        # 兑付后：出现直达该处置的修改链接
+        d = collect_note_receivable(note=note, user=self.user, date=date(2026, 6, 20),
+                                    bank_account=self.acc, amount=Decimal("800"))
+        after = self.client.get("/finance/notes-receivable/", SERVER_NAME="localhost")
+        self.assertContains(after, "改兑付")
+        self.assertContains(after, f"/finance/note-disposals/{d.pk}/edit/")
