@@ -95,9 +95,16 @@ class StockProductsReportView(CompanyScopedMixin, TemplateView):
         company = resolve_company(self.request)
         dfrom, dto = get_report_dates(self.request, company)
         rows = stock_products_balance(company, dfrom, dto) if company else []
-        headers = ["商品编码", "商品名称", "期初金额", "本期收入", "本期发出", "期末金额", "期末数量"]
-        data = [[r["product"].code, r["product"].name, r["opening"], r["income"],
-                 r["outgo"], r["ending"], r["ending_qty"]] for r in rows]
+        headers = [
+            "商品编码", "商品名称",
+            "期初数量", "期初金额", "本期收入数量", "本期收入金额",
+            "本期发出数量", "本期发出金额", "期末数量", "期末金额",
+        ]
+        data = [[
+            r["product"].code, r["product"].name,
+            r["opening_qty"], r["opening"], r["income_qty"], r["income"],
+            r["outgo_qty"], r["outgo"], r["ending_qty"], r["ending"],
+        ] for r in rows]
         return xlsx_response("库存商品余额表", headers, data, company=company, period=(dfrom, dto))
 
     def get_context_data(self, **kwargs):
@@ -106,7 +113,9 @@ class StockProductsReportView(CompanyScopedMixin, TemplateView):
         company = resolve_company(self.request)
         dfrom, dto = get_report_dates(self.request, company)
         rows = stock_products_balance(company, dfrom, dto) if company else []
-        totals = {k: sum((r[k] for r in rows), ZERO) for k in ("opening", "income", "outgo", "ending")}
+        keys = ("opening", "income", "outgo", "ending",
+                "opening_qty", "income_qty", "outgo_qty", "ending_qty")
+        totals = {k: sum((r[k] for r in rows), ZERO) for k in keys}
         ctx.update({
             "active_company": company, "rows": rows, "totals": totals,
             "date_from": dfrom, "date_to": dto,

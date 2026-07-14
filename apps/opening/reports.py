@@ -244,6 +244,9 @@ def stock_products_balance(company, dfrom, dto):
             "product": product,
             "opening": d["opening"], "income": d["income"], "outgo": d["outgo"],
             "ending": d["opening"] + d["income"] - d["outgo"],
+            "opening_qty": d["open_qty"],
+            "income_qty": d["in_qty"],
+            "outgo_qty": d["out_qty"],
             "ending_qty": d["open_qty"] + d["in_qty"] - d["out_qty"],
         })
     return rows

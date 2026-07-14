@@ -6,7 +6,7 @@
   <a class="btn btn-outline-success btn-sm"
      href="?{% if company_id %}company={{ company_id }}&{% endif %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
-<p class="text-muted">点商品行可进入该商品流水台账（明细账）；当期无发生也显示期末结存。金额单位元。</p>
+<p class="text-muted">数量金额式：点商品行可进入该商品流水台账（明细账）；当期无发生也显示期末结存。金额单位元。</p>
 
 <form method="get" class="row g-2 mb-3 align-items-end">
   {% if company_id %}<input type="hidden" name="company" value="{{ company_id }}">{% endif %}
@@ -21,9 +21,19 @@
   <div class="table-responsive">
     <table class="table table-striped mb-0 align-middle text-end">
       <thead class="table-light">
-        <tr><th class="text-start">商品</th>
-            <th>期初金额</th><th>本期收入</th><th>本期发出</th>
-            <th>期末金额</th><th>期末数量</th></tr>
+        <tr>
+          <th class="text-start" rowspan="2">商品</th>
+          <th colspan="2" class="text-center">期初</th>
+          <th colspan="2" class="text-center">本期收入</th>
+          <th colspan="2" class="text-center">本期发出</th>
+          <th colspan="2" class="text-center">期末</th>
+        </tr>
+        <tr>
+          <th>数量</th><th>金额</th>
+          <th>数量</th><th>金额</th>
+          <th>数量</th><th>金额</th>
+          <th>数量</th><th>金额</th>
+        </tr>
       </thead>
       <tbody>
         {% for r in rows %}
@@ -31,19 +41,23 @@
           <td class="text-start">
             <a href="{% url 'stock_ledger' %}?{% if company_id %}company={{ company_id }}&{% endif %}product={{ r.product.pk }}&from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}">{{ r.product.code }} {{ r.product.name }}</a>
           </td>
-          <td>{{ r.opening }}</td>
-          <td>{{ r.income }}</td>
-          <td>{{ r.outgo }}</td>
-          <td class="fw-semibold">{{ r.ending }}</td>
-          <td>{{ r.ending_qty }}</td>
+          <td>{{ r.opening_qty }}</td><td>{{ r.opening }}</td>
+          <td>{{ r.income_qty }}</td><td>{{ r.income }}</td>
+          <td>{{ r.outgo_qty }}</td><td>{{ r.outgo }}</td>
+          <td class="fw-semibold">{{ r.ending_qty }}</td><td class="fw-semibold">{{ r.ending }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="6" class="text-center text-muted py-4">该公司暂无库存商品</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-4">该公司暂无库存商品</td></tr>
         {% endfor %}
       </tbody>
       <tfoot class="table-secondary">
-        <tr><th class="text-start">合计</th><th>{{ totals.opening }}</th><th>{{ totals.income }}</th>
-            <th>{{ totals.outgo }}</th><th>{{ totals.ending }}</th><th></th></tr>
+        <tr>
+          <th class="text-start">合计</th>
+          <th>{{ totals.opening_qty }}</th><th>{{ totals.opening }}</th>
+          <th>{{ totals.income_qty }}</th><th>{{ totals.income }}</th>
+          <th>{{ totals.outgo_qty }}</th><th>{{ totals.outgo }}</th>
+          <th>{{ totals.ending_qty }}</th><th>{{ totals.ending }}</th>
+        </tr>
       </tfoot>
     </table>
   </div>

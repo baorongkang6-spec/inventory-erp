@@ -184,6 +184,9 @@ class StockDrilldownTests(TestCase):
         self.assertEqual(r["income"], D("500.00"))     # 50@10
         self.assertEqual(r["outgo"], D("300.00"))      # 30@10
         self.assertEqual(r["ending"], D("1200.00"))
+        self.assertEqual(r["opening_qty"], D("100.000"))
+        self.assertEqual(r["income_qty"], D("50.000"))
+        self.assertEqual(r["outgo_qty"], D("30.000"))
         self.assertEqual(r["ending_qty"], D("120.000"))
 
     def test_ledger_opening_closing_and_empty_period(self):
