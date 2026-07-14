@@ -3,7 +3,7 @@
 {% block content %}
 <h4 class="mb-1">期初数据导入<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
 <p class="text-muted">启用日（期初基准日）：<strong>{{ opening_date }}</strong>。
-  下载一个模板（每类一个 sheet）→各 sheet 填好→上传一次全部导入；重复导入自动跳过。</p>
+  下载一个模板（每类一个 sheet）→各 sheet 填好→上传一次全部导入。</p>
 
 <div class="card mb-4" style="max-width: 720px;">
   <div class="card-body d-flex flex-wrap align-items-center gap-2">
@@ -19,7 +19,7 @@
       {% else %}<span class="text-muted small">期初已锁定，如需修改请联系管理员解锁。</span>{% endif %}
     {% else %}
       <form method="post" action="{% url 'opening_clear' %}" onsubmit="return confirm('将清空本账套全部期初数据（库存/应付/应收/票据/银行期初），用于重导修正，确定？');">
-        {% csrf_token %}<button class="btn btn-outline-danger btn-sm" {% if clear_blocked %}disabled title="{{ clear_blocked }}"{% endif %}>清空期初（重导前用）</button>
+        {% csrf_token %}<button class="btn btn-outline-danger btn-sm" {% if clear_blocked %}disabled title="{{ clear_blocked }}"{% endif %}>清空全部期初</button>
       </form>
       <form method="post" action="{% url 'opening_lock' %}" onsubmit="return confirm('启用后期初将锁定、不可再修改，确定？');">
         {% csrf_token %}<button class="btn btn-success btn-sm">启用期初（锁定）</button>
@@ -28,7 +28,28 @@
     {% endif %}
   </div>
 </div>
-<p class="text-muted small">修改期初流程：<b>未启用</b>时 → 「清空期初」→ 改好 Excel → 重新导入 → 核对无误 → 「启用期初」锁定。</p>
+
+{% if not opening_locked %}
+<p class="text-muted small mb-2">
+  <b>修改期初（未启用时）</b>：直接重新上传 Excel，系统会<b>覆盖更新</b>已有期初行（按商品/往来/票号匹配）。
+  已核销的期初应付/应收、已有使用的期初票据、已有后续出入库的期初库存不能覆盖，需先撤销相关业务。
+  也可按类别单独清空后重导：
+</p>
+<div class="d-flex flex-wrap gap-2 mb-3" style="max-width: 720px;">
+  {% for item in clear_kinds %}
+  <form method="post" action="{% url 'opening_clear_kind' item.kind %}"
+        onsubmit="return confirm('确认清空「{{ item.label }}」？清空后可重新导入该类期初。');">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-sm btn-outline-secondary"
+            {% if item.blocked %}disabled title="{{ item.blocked }}"{% endif %}>
+      清空{{ item.label }}
+    </button>
+  </form>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-muted small">期初已锁定。如需修改请先「解锁期初」（管理员）。</p>
+{% endif %}
 
 <div class="card mb-4" style="max-width: 720px;">
   <div class="card-body">
@@ -37,11 +58,19 @@
     <form method="post" enctype="multipart/form-data">
       {% csrf_token %}
       <div class="input-group">
-        <input type="file" name="file" accept=".xlsx" class="form-control" required>
-        <button type="submit" class="btn btn-primary">导入</button>
+        <input type="file" name="file" accept=".xlsx" class="form-control" required
+               {% if opening_locked %}disabled{% endif %}>
+        <button type="submit" class="btn btn-primary" {% if opening_locked %}disabled{% endif %}>导入</button>
       </div>
     </form>
-    <p class="text-muted small mt-2 mb-0">不需要的类别留空即可；库存为<b>数量金额式</b>（数量 + 金额，不录单价）。</p>
+    <p class="text-muted small mt-2 mb-0">
+      {% if opening_locked %}
+      期初已锁定，不可导入；请先解锁。
+      {% else %}
+      不需要的类别留空即可；库存为<b>数量金额式</b>（数量 + 金额，不录单价）。
+      <b>未启用时重复导入会覆盖更新</b>已有期初（非跳过）。
+      {% endif %}
+    </p>
   </div>
 </div>
 

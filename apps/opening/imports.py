@@ -1,7 +1,9 @@
 """期初数据 Excel 导入（M5-1，SPEC §8.1）。
 
 6 类期初合并在**一个工作簿、每类一个 sheet**：下载一个模板→各 sheet 填好→上传一次全部导入。
-导入到启用日 settings.OPENING_DATE；均做去重，重复导入跳过，便于纠错后重传。
+导入到启用日 settings.OPENING_DATE。
+- 期初未启用（opening_locked=False）：重复导入**覆盖更新**已有期初行（按商品/往来/票号匹配）。
+- 期初已锁定：不可导入。
 库存为「数量金额式」（数量 + 金额，不录单价，均价由系统按金额/数量得出）。
 """
 
@@ -111,9 +113,15 @@ def _date(v):
     return None
 
 
-def _apply_stock(company, user, rows):
-    """期初库存（数量金额式）：数量 + 金额，均价由系统按 金额/数量 得出。"""
-    created = skipped = 0
+def _apply_stock(company, user, rows, *, replace_existing=False):
+    """期初库存（数量金额式）：数量 + 金额，均价由系统按 金额/数量 得出。
+
+    replace_existing=True（期初未锁定时）：已有期初流水则尝试覆盖——仅当该商品
+    尚无后续非期初出入库时允许（否则移动加权链已引用，须逐笔调整）。
+    """
+    from apps.inventory.services import post_inbound, reverse_move
+
+    created = updated = skipped = 0
     errors = []
     for idx, vals in rows:
         code = str(vals[0] or "").strip()
@@ -124,17 +132,28 @@ def _apply_stock(company, user, rows):
             errors.append(f"第{idx}行：商品编码「{code}」不存在"); continue
         if qty is None or amount is None or qty == 0:
             errors.append(f"第{idx}行：数量/金额无效（数量不能为 0、金额必填）"); continue
-        if StockMove.objects.filter(company=company, product=product, source_type="Opening").exists():
-            skipped += 1; continue
-        # 数量金额式：金额直接入账，单价由 post_inbound 按 金额/数量 反算（期初允许负数）
+        existing = StockMove.objects.filter(
+            company=company, product=product, source_type="Opening")
+        if existing.exists():
+            if not replace_existing:
+                skipped += 1; continue
+            if StockMove.objects.filter(company=company, product=product).exclude(
+                    source_type="Opening").exists():
+                errors.append(
+                    f"第{idx}行：商品「{code}」已有后续出入库，不能通过导入改期初（请逐笔调整）")
+                continue
+            for m in list(existing):
+                reverse_move(m, date=OPENING, source_type="OpeningReplace", source_no="期初修正")
+            updated += 1
+        else:
+            created += 1
         post_inbound(company, product, qty, ZERO_MONEY, amount=amount, date=OPENING,
                      source_type="Opening", source_no="期初", allow_nonpositive=True)
-        created += 1
-    return created, skipped, errors
+    return created, updated, skipped, errors
 
 
-def _apply_payable(company, user, rows):
-    created = skipped = 0
+def _apply_payable(company, user, rows, *, replace_existing=False):
+    created = updated = skipped = 0
     errors = []
     for idx, vals in rows:
         code = str(vals[0] or "").strip()
@@ -146,15 +165,33 @@ def _apply_payable(company, user, rows):
             errors.append(f"第{idx}行：金额无效"); continue
         if amount == 0:
             skipped += 1; continue   # 0 视为空行跳过；负数允许（红字期初）
-        if PurchaseInvoice.objects.filter(company=company, supplier=sup, is_opening=True).exists():
-            skipped += 1; continue
-        create_opening_payable(company=company, user=user, supplier=sup, amount=amount, doc_date=OPENING)
-        created += 1
-    return created, skipped, errors
+        inv = PurchaseInvoice.objects.filter(
+            company=company, supplier=sup, is_opening=True).first()
+        if inv:
+            if not replace_existing:
+                skipped += 1; continue
+            if inv.settled_amount > 0:
+                errors.append(f"第{idx}行：供应商「{code}」期初应付已有核销，不能覆盖")
+                continue
+            inv.amount_untaxed = amount
+            inv.tax_amount = ZERO_MONEY
+            inv.amount_taxed = amount
+            inv.save(update_fields=["amount_untaxed", "tax_amount", "amount_taxed"])
+            ln = inv.lines.first()
+            if ln:
+                ln.amount_untaxed = amount
+                ln.tax_amount = ZERO_MONEY
+                ln.amount_taxed = amount
+                ln.save(update_fields=["amount_untaxed", "tax_amount", "amount_taxed"])
+            updated += 1
+        else:
+            create_opening_payable(company=company, user=user, supplier=sup, amount=amount, doc_date=OPENING)
+            created += 1
+    return created, updated, skipped, errors
 
 
-def _apply_receivable(company, user, rows):
-    created = skipped = 0
+def _apply_receivable(company, user, rows, *, replace_existing=False):
+    created = updated = skipped = 0
     errors = []
     for idx, vals in rows:
         code = str(vals[0] or "").strip()
@@ -166,14 +203,32 @@ def _apply_receivable(company, user, rows):
             errors.append(f"第{idx}行：金额无效"); continue
         if amount == 0:
             skipped += 1; continue   # 0 视为空行跳过；负数允许（红字期初）
-        if SalesInvoice.objects.filter(company=company, customer=cust, is_opening=True).exists():
-            skipped += 1; continue
-        create_opening_receivable(company=company, user=user, customer=cust, amount=amount, doc_date=OPENING)
-        created += 1
-    return created, skipped, errors
+        inv = SalesInvoice.objects.filter(
+            company=company, customer=cust, is_opening=True).first()
+        if inv:
+            if not replace_existing:
+                skipped += 1; continue
+            if inv.settled_amount > 0:
+                errors.append(f"第{idx}行：客户「{code}」期初应收已有核销，不能覆盖")
+                continue
+            inv.amount_untaxed = amount
+            inv.tax_amount = ZERO_MONEY
+            inv.amount_taxed = amount
+            inv.save(update_fields=["amount_untaxed", "tax_amount", "amount_taxed"])
+            ln = inv.lines.first()
+            if ln:
+                ln.amount_untaxed = amount
+                ln.tax_amount = ZERO_MONEY
+                ln.amount_taxed = amount
+                ln.save(update_fields=["amount_untaxed", "tax_amount", "amount_taxed"])
+            updated += 1
+        else:
+            create_opening_receivable(company=company, user=user, customer=cust, amount=amount, doc_date=OPENING)
+            created += 1
+    return created, updated, skipped, errors
 
 
-def _apply_bank(company, user, rows):
+def _apply_bank(company, user, rows, *, replace_existing=False):
     updated = skipped = 0
     errors = []
     for idx, vals in rows:
@@ -187,11 +242,11 @@ def _apply_bank(company, user, rows):
         acc.opening_balance = bal
         acc.save(update_fields=["opening_balance"])
         updated += 1
-    return updated, skipped, errors
+    return 0, updated, skipped, errors
 
 
-def _apply_note_receivable(company, user, rows):
-    created = skipped = 0
+def _apply_note_receivable(company, user, rows, *, replace_existing=False):
+    created = updated = skipped = 0
     errors = []
     for idx, vals in rows:
         note_no = str(vals[0] or "").strip()
@@ -202,16 +257,31 @@ def _apply_note_receivable(company, user, rows):
             errors.append(f"第{idx}行：金额无效"); continue
         if amount == 0:
             skipped += 1; continue   # 0 视为空行跳过；负数允许
-        if note_no and NoteReceivable.objects.filter(company=company, note_no=note_no).exists():
+        existing = (NoteReceivable.objects.filter(
+            company=company, note_no=note_no, is_opening=True).first()
+                    if note_no else None)
+        if existing:
+            if not replace_existing:
+                skipped += 1; continue
+            if existing.settled_amount > 0:
+                errors.append(f"第{idx}行：票据「{note_no}」已有使用，不能覆盖")
+                continue
+            existing.amount = amount
+            existing.customer = cust
+            existing.due_date = due
+            existing.save(update_fields=["amount", "customer", "due_date"])
+            updated += 1
+        elif note_no and NoteReceivable.objects.filter(company=company, note_no=note_no).exists():
             skipped += 1; continue
-        create_note_receivable(company=company, user=user, draw_date=OPENING, amount=amount,
-                               customer=cust, note_no=note_no, due_date=due, is_opening=True)
-        created += 1
-    return created, skipped, errors
+        else:
+            create_note_receivable(company=company, user=user, draw_date=OPENING, amount=amount,
+                                   customer=cust, note_no=note_no, due_date=due, is_opening=True)
+            created += 1
+    return created, updated, skipped, errors
 
 
-def _apply_note_payable(company, user, rows):
-    created = skipped = 0
+def _apply_note_payable(company, user, rows, *, replace_existing=False):
+    created = updated = skipped = 0
     errors = []
     for idx, vals in rows:
         note_no = str(vals[0] or "").strip()
@@ -224,12 +294,27 @@ def _apply_note_payable(company, user, rows):
             skipped += 1; continue   # 0 视为空行跳过；负数允许
         if not sup:
             errors.append(f"第{idx}行：收票供应商编码无效"); continue
-        if note_no and NotePayable.objects.filter(company=company, note_no=note_no).exists():
+        existing = (NotePayable.objects.filter(
+            company=company, note_no=note_no, is_opening=True).first()
+                    if note_no else None)
+        if existing:
+            if not replace_existing:
+                skipped += 1; continue
+            if existing.settled_amount > 0:
+                errors.append(f"第{idx}行：票据「{note_no}」已有使用，不能覆盖")
+                continue
+            existing.amount = amount
+            existing.supplier = sup
+            existing.due_date = due
+            existing.save(update_fields=["amount", "supplier", "due_date"])
+            updated += 1
+        elif note_no and NotePayable.objects.filter(company=company, note_no=note_no).exists():
             skipped += 1; continue
-        create_note_payable(company=company, user=user, draw_date=OPENING, amount=amount,
-                            supplier=sup, note_no=note_no, due_date=due, is_opening=True)
-        created += 1
-    return created, skipped, errors
+        else:
+            create_note_payable(company=company, user=user, draw_date=OPENING, amount=amount,
+                                supplier=sup, note_no=note_no, due_date=due, is_opening=True)
+            created += 1
+    return created, updated, skipped, errors
 
 
 _APPLY = {
@@ -242,8 +327,8 @@ _APPLY = {
 }
 
 
-def import_combined(company, user, file):
-    """读取合并工作簿，按 sheet 标题逐类导入；返回 [{kind,label,created,skipped,errors}]。"""
+def import_combined(company, user, file, *, replace_existing=False):
+    """读取合并工作簿，按 sheet 标题逐类导入；返回 [{kind,label,created,updated,skipped,errors}]。"""
     wb = load_workbook(file, read_only=True, data_only=True)
     titles = set(wb.sheetnames)
     results = []
@@ -252,35 +337,35 @@ def import_combined(company, user, file):
             continue
         label, fn = _APPLY[kind]
         rows = _rows_ws(wb[title])
-        created, skipped, errors = fn(company, user, rows)
-        results.append({"kind": kind, "label": label, "created": created,
+        created, updated, skipped, errors = fn(company, user, rows, replace_existing=replace_existing)
+        results.append({"kind": kind, "label": label, "created": created, "updated": updated,
                         "skipped": skipped, "errors": errors})
     return results
 
 
 # 单类导入（保留：旧链接/测试用）。file = 上传文件的活动 sheet。
-def import_stock(company, user, file):
-    return _apply_stock(company, user, _rows(file))
+def import_stock(company, user, file, *, replace_existing=False):
+    return _apply_stock(company, user, _rows(file), replace_existing=replace_existing)
 
 
-def import_payable(company, user, file):
-    return _apply_payable(company, user, _rows(file))
+def import_payable(company, user, file, *, replace_existing=False):
+    return _apply_payable(company, user, _rows(file), replace_existing=replace_existing)
 
 
-def import_receivable(company, user, file):
-    return _apply_receivable(company, user, _rows(file))
+def import_receivable(company, user, file, *, replace_existing=False):
+    return _apply_receivable(company, user, _rows(file), replace_existing=replace_existing)
 
 
-def import_bank(company, user, file):
-    return _apply_bank(company, user, _rows(file))
+def import_bank(company, user, file, *, replace_existing=False):
+    return _apply_bank(company, user, _rows(file), replace_existing=replace_existing)
 
 
-def import_note_receivable(company, user, file):
-    return _apply_note_receivable(company, user, _rows(file))
+def import_note_receivable(company, user, file, *, replace_existing=False):
+    return _apply_note_receivable(company, user, _rows(file), replace_existing=replace_existing)
 
 
-def import_note_payable(company, user, file):
-    return _apply_note_payable(company, user, _rows(file))
+def import_note_payable(company, user, file, *, replace_existing=False):
+    return _apply_note_payable(company, user, _rows(file), replace_existing=replace_existing)
 
 
 IMPORTERS = {

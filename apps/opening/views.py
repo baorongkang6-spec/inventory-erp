@@ -58,16 +58,24 @@ def opening_import(request):
             messages.error(request, "请上传期初数据文件")
         else:
             try:
-                results = import_combined(company, request.user, upload)
+                results = import_combined(
+                    company, request.user, upload,
+                    replace_existing=not company.opening_locked)
             except Exception as e:  # noqa: BLE001 解析失败等
                 messages.error(request, f"导入失败：{e}")
             else:
                 if not results:
                     messages.warning(request, "文件中未找到期初数据 sheet，请用「下载模板」的文件填写")
                 for r in results:
-                    messages.success(
-                        request, f"{r['label']}：成功 {r['created']}，跳过重复 {r['skipped']}"
-                        + (f"，{len(r['errors'])} 行有问题" if r["errors"] else ""))
+                    parts = [f"新增 {r['created']}"]
+                    if r.get("updated"):
+                        parts.append(f"更新 {r['updated']}")
+                    if r["skipped"]:
+                        parts.append(f"跳过 {r['skipped']}")
+                    msg = f"{r['label']}：{ '，'.join(parts) }"
+                    if r["errors"]:
+                        msg += f"，{len(r['errors'])} 行有问题"
+                    messages.success(request, msg)
                     for e in r["errors"][:8]:
                         messages.warning(request, f"{r['label']} {e}")
         return redirect("opening_import")
@@ -79,7 +87,59 @@ def opening_import(request):
     return render(request, "opening/opening_import.html",
                   {"headers": headers, "opening_date": settings.OPENING_DATE,
                    "company": company, "opening_locked": company.opening_locked,
-                   "clear_blocked": _opening_clear_block_reason(company)})
+                   "clear_blocked": _opening_clear_block_reason(company),
+                   "clear_kinds": _opening_clear_kind_status(company)})
+
+
+OPENING_CLEAR_KINDS = (
+    ("stock", "期初库存"),
+    ("payable", "期初应付"),
+    ("receivable", "期初应收"),
+    ("bank", "期初银行存款"),
+    ("note_receivable", "期初应收票据"),
+    ("note_payable", "期初应付票据"),
+)
+
+
+def _opening_clear_kind_block_reason(company, kind):
+    """单类期初可否清空（未锁定时）。可清返回 None。"""
+    from apps.finance.models import (NotePayable, NoteReceivable,
+                                     PurchaseInvoice, SalesInvoice)
+    from apps.inventory.models import StockMove
+    if kind == "stock":
+        if StockMove.objects.filter(company=company).exclude(source_type="Opening").exists():
+            return "已有期初之后的库存业务"
+        return None
+    if kind == "payable":
+        for inv in PurchaseInvoice.objects.filter(company=company, is_opening=True):
+            if inv.settled_amount > 0:
+                return f"期初应付 {inv.supplier} 已有核销"
+        return None
+    if kind == "receivable":
+        for inv in SalesInvoice.objects.filter(company=company, is_opening=True):
+            if inv.settled_amount > 0:
+                return f"期初应收 {inv.customer} 已有核销"
+        return None
+    if kind == "bank":
+        return None
+    if kind == "note_receivable":
+        for n in NoteReceivable.objects.filter(company=company, is_opening=True):
+            if n.settled_amount > 0:
+                return f"期初应收票据 {n.doc_no} 已有使用"
+        return None
+    if kind == "note_payable":
+        for n in NotePayable.objects.filter(company=company, is_opening=True):
+            if n.settled_amount > 0:
+                return f"期初应付票据 {n.doc_no} 已有使用"
+        return None
+    return "未知类别"
+
+
+def _opening_clear_kind_status(company):
+    """供模板渲染：各类期初可否分类清空。"""
+    return [{"kind": k, "label": label,
+             "blocked": _opening_clear_kind_block_reason(company, k)}
+            for k, label in OPENING_CLEAR_KINDS]
 
 
 def _opening_clear_block_reason(company):
@@ -128,6 +188,51 @@ def opening_clear(request):
         StockBalance.objects.filter(company=company).delete()
         BankAccount.objects.filter(company=company).update(opening_balance=0)
     messages.success(request, "已清空本账套期初数据，可重新「下载模板」修正后导入。")
+    return redirect("opening_import")
+
+
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def opening_clear_kind(request, kind):
+    """清空单类期初（未锁定时）。已有日常业务时仍可清空未受影响的类别（如应付/应收/银行）。"""
+    from django.db import transaction
+
+    from apps.finance.models import (BankAccount, NotePayable, NoteReceivable,
+                                     PurchaseInvoice, SalesInvoice)
+    from apps.inventory.models import StockBalance, StockMove
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method != "POST":
+        return redirect("opening_import")
+    if company.opening_locked:
+        messages.error(request, "期初已锁定，请先解锁再清空。")
+        return redirect("opening_import")
+    labels = dict(OPENING_CLEAR_KINDS)
+    if kind not in labels:
+        messages.error(request, "未知期初类别")
+        return redirect("opening_import")
+    reason = _opening_clear_kind_block_reason(company, kind)
+    if reason:
+        messages.error(request, f"不可清空{labels[kind]}：{reason}")
+        return redirect("opening_import")
+    with transaction.atomic():
+        if kind == "stock":
+            StockMove.objects.filter(company=company, source_type="Opening").delete()
+            StockBalance.objects.filter(company=company).delete()
+        elif kind == "payable":
+            for inv in list(PurchaseInvoice.objects.filter(company=company, is_opening=True)):
+                inv.lines.all().delete()
+                inv.delete()
+        elif kind == "receivable":
+            for inv in list(SalesInvoice.objects.filter(company=company, is_opening=True)):
+                inv.lines.all().delete()
+                inv.delete()
+        elif kind == "bank":
+            BankAccount.objects.filter(company=company).update(opening_balance=0)
+        elif kind == "note_receivable":
+            NoteReceivable.objects.filter(company=company, is_opening=True).delete()
+        elif kind == "note_payable":
+            NotePayable.objects.filter(company=company, is_opening=True).delete()
+    messages.success(request, f"已清空{labels[kind]}，可重新导入修正。")
     return redirect("opening_import")
 
 

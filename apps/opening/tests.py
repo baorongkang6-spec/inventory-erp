@@ -32,16 +32,19 @@ class OpeningImportTests(TestCase):
     def test_import_stock(self):
         # 数量金额式：数量 + 金额（不录单价）
         f = _xlsx([["商品编码", "数量", "金额"], ["P001", 100, 1000]])
-        created, skipped, errors = imports.import_stock(self.c1, None, f)
-        self.assertEqual((created, errors), (1, []))
+        created, updated, skipped, errors = imports.import_stock(self.c1, None, f)
+        self.assertEqual((created, updated, errors), (1, 0, []))
         bal = StockBalance.objects.get(company=self.c1, product=self.p)
         self.assertEqual(bal.quantity, Decimal("100.000"))
         self.assertEqual(bal.amount, Decimal("1000.00"))
         self.assertEqual(bal.avg_price, Decimal("10.00"))   # 由 金额/数量 得出
-        # 再次导入跳过（去重）
-        f2 = _xlsx([["商品编码", "数量", "金额"], ["P001", 100, 1000]])
-        c2, s2, _ = imports.import_stock(self.c1, None, f2)
-        self.assertEqual((c2, s2), (0, 1))
+        # 未启用时再次导入覆盖更新（非跳过）
+        f2 = _xlsx([["商品编码", "数量", "金额"], ["P001", 80, 800]])
+        c2, u2, s2, _ = imports.import_stock(self.c1, None, f2, replace_existing=True)
+        self.assertEqual((c2, u2, s2), (0, 1, 0))
+        bal.refresh_from_db()
+        self.assertEqual(bal.quantity, Decimal("80.000"))
+        self.assertEqual(bal.amount, Decimal("800.00"))
 
     def test_import_combined_workbook(self):
         from openpyxl import Workbook
@@ -53,28 +56,34 @@ class OpeningImportTests(TestCase):
         results = imports.import_combined(self.c1, None, buf)
         by = {r["kind"]: r for r in results}
         self.assertEqual(by["stock"]["created"], 1)
-        self.assertEqual(by["bank"]["created"], 1)
+        self.assertEqual(by["bank"]["updated"], 1)
         self.assertEqual(StockBalance.objects.get(company=self.c1, product=self.p).amount, Decimal("750.00"))
         self.acc.refresh_from_db()
         self.assertEqual(self.acc.opening_balance, Decimal("8888.00"))
 
     def test_import_payable_creates_opening_invoice(self):
         f = _xlsx([["供应商编码", "期初应付金额"], ["S1", "5000"]])
-        created, skipped, errors = imports.import_payable(self.c1, None, f)
-        self.assertEqual((created, errors), (1, []))
+        created, updated, skipped, errors = imports.import_payable(self.c1, None, f)
+        self.assertEqual((created, updated, errors), (1, 0, []))
         inv = PurchaseInvoice.objects.get(company=self.c1, supplier=self.sup, is_opening=True)
         self.assertEqual(inv.outstanding, Decimal("5000.00"))
+        # 覆盖更新
+        f2 = _xlsx([["供应商编码", "期初应付金额"], ["S1", "4800"]])
+        c2, u2, s2, _ = imports.import_payable(self.c1, None, f2, replace_existing=True)
+        self.assertEqual((c2, u2, s2), (0, 1, 0))
+        inv.refresh_from_db()
+        self.assertEqual(inv.outstanding, Decimal("4800.00"))
 
     def test_import_bank_sets_opening_balance(self):
         f = _xlsx([["银行账户名称", "期初余额"], ["基本户", "12345.67"]])
-        updated, skipped, errors = imports.import_bank(self.c1, None, f)
+        created, updated, skipped, errors = imports.import_bank(self.c1, None, f)
         self.assertEqual((updated, errors), (1, []))
         self.acc.refresh_from_db()
         self.assertEqual(self.acc.opening_balance, Decimal("12345.67"))
 
     def test_unknown_code_reports_error(self):
         f = _xlsx([["商品编码", "数量", "单价"], ["NOPE", 1, 1]])
-        created, skipped, errors = imports.import_stock(self.c1, None, f)
+        created, updated, skipped, errors = imports.import_stock(self.c1, None, f)
         self.assertEqual(created, 0)
         self.assertEqual(len(errors), 1)
 
@@ -342,3 +351,20 @@ class OpeningImportViewTests(TestCase):
         self.assertIn("期初库存", wb.sheetnames)
         self.assertIn("期初应付", wb.sheetnames)
         self.assertEqual([c.value for c in wb["期初库存"][1]], ["商品编码", "数量", "金额"])
+
+    def test_clear_kind_payable_when_stock_has_biz(self):
+        """已有日常库存业务时，整体清空被拦，但可分类清空期初应付。"""
+        from apps.finance.services import create_opening_payable
+        from apps.purchasing.services import create_and_post_inbound
+        from apps.masterdata.models import Supplier
+        from datetime import date
+        sup = Supplier.objects.create(company=self.c1, code="S9", name="供应商九")
+        create_opening_payable(company=self.c1, user=None, supplier=sup,
+                               amount=Decimal("1000"), doc_date=date(2026, 6, 1))
+        create_and_post_inbound(
+            company=self.c1, user=None, doc_date=date(2026, 6, 15),
+            lines=[{"product": self.p, "quantity": Decimal("1"), "unit_price": Decimal("10")}])
+        self.client.force_login(self.user)
+        resp = self.client.post("/opening/clear/payable/", SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(PurchaseInvoice.objects.filter(company=self.c1, is_opening=True).exists())

@@ -13,6 +13,7 @@ urlpatterns = [
     path("reconciliation/<int:pk>/", views.reconciliation_detail, name="reconciliation_detail"),
     path("opening/", views.opening_import, name="opening_import"),
     path("opening/clear/", views.opening_clear, name="opening_clear"),
+    path("opening/clear/<str:kind>/", views.opening_clear_kind, name="opening_clear_kind"),
     path("opening/lock/", views.opening_lock, name="opening_lock"),
     path("opening/unlock/", views.opening_unlock, name="opening_unlock"),
     path("opening/template/<str:kind>/", views.opening_template, name="opening_template"),
