@@ -16,7 +16,38 @@
             {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
           </div>
           {% endfor %}
-          <div class="d-flex gap-2">
+
+          {% if disposal %}
+          <hr class="my-4">
+          <h6 class="mb-3">{{ disposal.get_kind_display }}信息</h6>
+          {% if disposal_block %}
+          <div class="alert alert-warning py-2 small mb-3">{{ disposal_block }}（兑付/贴现日期不可在此修改）</div>
+          {% elif can_edit_disposal %}
+          <p class="text-muted small">可修改<strong>兑付/贴现日期、收款银行账户、处置备注</strong>；金额不变，保存后同步银行日记账{% if disposal.kind == 'discount' %}与贴现息费用{% endif %}日期。</p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">收款银行账户</label>
+              <select name="disposal_bank_account" class="form-select" required>
+                {% for a in accounts %}
+                <option value="{{ a.pk }}" {% if a.pk == disposal.bank_account_id %}selected{% endif %}>{{ a.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">{% if disposal.kind == disposal_kind_collect %}兑付{% else %}贴现{% endif %}日期</label>
+              <input type="date" name="disposal_date" value="{{ disposal.date|date:'Y-m-d' }}" class="form-control" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">处置备注</label>
+              <input type="text" name="disposal_remark" value="{{ disposal.remark }}" class="form-control" maxlength="255">
+            </div>
+          </div>
+          {% else %}
+          <p class="text-muted small mb-0">票面 {{ disposal.amount }}，{% if disposal.kind == disposal_kind_collect %}兑付{% else %}贴现{% endif %}日 {{ disposal.date|date:"Y-m-d" }}（只读；无修改权限）</p>
+          {% endif %}
+          {% endif %}
+
+          <div class="d-flex gap-2 mt-3">
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="javascript:history.back()" class="btn btn-outline-secondary">取消</a>
           </div>

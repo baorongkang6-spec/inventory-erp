@@ -2099,14 +2099,27 @@ def note_receivable_create(request):
 @login_required
 @permission_required("finance.add_notereceivable", raise_exception=True)
 def note_receivable_edit(request, pk):
-    """修改/补录应收票据（票号、出票日、到期日、来源客户、票面、备注）。"""
-    from .services import note_receivable_edit_block_reason, update_note_receivable
+    """修改/补录应收票据；若已兑付/贴现且仅一笔处置，同页可改兑付/贴现日期与收款账户。"""
+    from .models import NoteDisposal
+    from .services import (
+        note_disposal_edit_block_reason, note_receivable_edit_block_reason,
+        update_note_disposal, update_note_receivable,
+    )
     note = get_object_or_404(
         NoteReceivable, pk=pk, company__in=get_visible_companies(request.user))
     block = note_receivable_edit_block_reason(note)
     if block:
         messages.error(request, block)
         return redirect("note_receivable_list")
+    disposals = list(note.disposals.select_related("bank_account").order_by("-date", "-id"))
+    disposal = disposals[0] if len(disposals) == 1 else None
+    disposal_block = note_disposal_edit_block_reason(disposal) if disposal else None
+    accounts = BankAccount.objects.filter(company=note.company)
+    can_edit_disposal = (
+        disposal is not None
+        and disposal_block is None
+        and request.user.has_perm("finance.add_notesettlement")
+    )
     if request.method == "POST":
         form = NoteReceivableForm(request.POST, instance=note, company=note.company)
         if form.is_valid():
@@ -2117,15 +2130,34 @@ def note_receivable_edit(request, pk):
                     amount=cd["amount"], customer=cd.get("customer"),
                     note_no=cd.get("note_no", ""), due_date=cd.get("due_date"),
                     remark=cd.get("remark", ""))
+                if can_edit_disposal and request.POST.get("disposal_date"):
+                    acc = accounts.get(pk=request.POST.get("disposal_bank_account"))
+                    dt = _parse_date(request.POST.get("disposal_date")) or disposal.date
+                    disp_remark = request.POST.get("disposal_remark", "")
+                    update_note_disposal(
+                        disposal=disposal, user=request.user, date=dt,
+                        bank_account=acc, remark=disp_remark)
+            except BankAccount.DoesNotExist:
+                messages.error(request, "请选择有效的收款银行账户")
             except (SettlementError, ValueError) as e:
                 messages.error(request, str(e))
             else:
-                messages.success(request, "应收票据已修改")
+                if can_edit_disposal and request.POST.get("disposal_date"):
+                    messages.success(request, "应收票据与兑付/贴现信息已修改")
+                else:
+                    messages.success(request, "应收票据已修改")
                 return redirect("note_receivable_list")
     else:
         form = NoteReceivableForm(instance=note, company=note.company)
-    return render(request, "finance/note_form.html",
-                  {"form": form, "title": f"修改应收票据 {note.doc_no}"})
+    return render(request, "finance/note_form.html", {
+        "form": form,
+        "title": f"修改应收票据 {note.doc_no}",
+        "disposal": disposal,
+        "disposal_block": disposal_block,
+        "can_edit_disposal": can_edit_disposal,
+        "accounts": accounts,
+        "disposal_kind_collect": NoteDisposal.Kind.COLLECT,
+    })
 
 
 @login_required

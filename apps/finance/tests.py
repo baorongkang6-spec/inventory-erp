@@ -860,6 +860,36 @@ class NoteReceivableEditTests(TestCase):
         note.refresh_from_db()
         self.assertEqual(note.due_date, date(2026, 12, 11))
 
+    def test_edit_page_includes_disposal_date_after_collect(self):
+        """已到期兑付的票据，「修改」页同屏可改兑付日期（不必单独点「改兑付」）。"""
+        from apps.finance.models import BankAccount, BankJournal
+        from apps.finance.services import collect_note_receivable, create_note_receivable
+        from django.contrib.auth.models import Permission
+        self.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="finance", codename="add_notesettlement"))
+        acc = BankAccount.objects.create(company=self.c1, name="基本户")
+        note = create_note_receivable(company=self.c1, user=None, draw_date=date(2026, 6, 1),
+                                      amount=Decimal("20000"), note_no="BJ005")
+        collect_note_receivable(note=note, user=self.user, date=date(2026, 6, 20),
+                                bank_account=acc, amount=Decimal("20000"))
+        self.client.force_login(self.user)
+        get_resp = self.client.get(f"/finance/notes-receivable/{note.pk}/edit/",
+                                   SERVER_NAME="localhost")
+        self.assertContains(get_resp, "兑付日期")
+        self.assertContains(get_resp, 'name="disposal_date"')
+        post_resp = self.client.post(f"/finance/notes-receivable/{note.pk}/edit/", {
+            "note_no": "BJ005", "draw_date": "2026-06-01", "due_date": "",
+            "customer": "", "amount": "20000.00", "remark": "",
+            "disposal_bank_account": acc.pk, "disposal_date": "2026-06-25",
+            "disposal_remark": "更正兑付日",
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(post_resp.status_code, 200)
+        d = note.disposals.get()
+        self.assertEqual(d.date, date(2026, 6, 25))
+        self.assertEqual(d.remark, "更正兑付日")
+        j = BankJournal.objects.get(company=self.c1, source_type="NoteDisposal")
+        self.assertEqual(j.date, date(2026, 6, 25))
+
     def test_void_note_not_editable(self):
         from apps.finance.models import NoteReceivable
         from apps.finance.services import (
