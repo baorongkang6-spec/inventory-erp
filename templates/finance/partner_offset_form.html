@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}新建往来对冲 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-3">新建往来对冲<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-auto"><label class="form-label">客户</label>
+    <select name="customer" class="form-select" onchange="this.form.submit()">
+      <option value="">请选择</option>
+      {% for c in customers %}<option value="{{ c.pk }}" {% if customer and c.pk == customer.pk %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select></div>
+  <div class="col-auto"><label class="form-label">供应商</label>
+    <select name="supplier" class="form-select" onchange="this.form.submit()">
+      <option value="">请选择</option>
+      {% for s in suppliers %}<option value="{{ s.pk }}" {% if supplier and s.pk == supplier.pk %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></div>
+</form>
+
+{% if customer and supplier %}
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="customer" value="{{ customer.pk }}">
+  <input type="hidden" name="supplier" value="{{ supplier.pk }}">
+  <div class="row g-2 mb-3">
+    <div class="col-auto"><label class="form-label">对冲日期</label>
+      <input type="date" name="doc_date" value="{{ doc_date }}" class="form-control" required></div>
+    <div class="col-md-4"><label class="form-label">备注</label>
+      <input type="text" name="remark" value="{{ remark }}" class="form-control"></div>
+  </div>
+  <div class="row">
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">应收（销售发票）— {{ customer }}</div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>单号</th><th>日期</th><th class="text-end">未核销</th><th class="text-end">对冲额</th></tr></thead>
+            <tbody>
+              {% for inv in ar_invs %}
+              <tr>
+                <td>{{ inv.doc_no }}</td><td>{{ inv.doc_date }}</td>
+                <td class="text-end">{{ inv.outstanding }}</td>
+                <td class="text-end"><input type="number" step="0.01" min="0" max="{{ inv.outstanding }}"
+                     name="ar-{{ inv.pk }}" class="form-control form-control-sm text-end" placeholder="0"></td>
+              </tr>
+              {% empty %}<tr><td colspan="4" class="text-muted">无未核销销售发票</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">应付（采购发票）— {{ supplier }}</div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>单号</th><th>日期</th><th class="text-end">未核销</th><th class="text-end">对冲额</th></tr></thead>
+            <tbody>
+              {% for inv in ap_invs %}
+              <tr>
+                <td>{{ inv.doc_no }}</td><td>{{ inv.doc_date }}</td>
+                <td class="text-end">{{ inv.outstanding }}</td>
+                <td class="text-end"><input type="number" step="0.01" min="0" max="{{ inv.outstanding }}"
+                     name="ap-{{ inv.pk }}" class="form-control form-control-sm text-end" placeholder="0"></td>
+              </tr>
+              {% empty %}<tr><td colspan="4" class="text-muted">无未核销采购发票</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="text-muted small">两侧「对冲额」合计必须相等。保存后不产生银行日记账。</p>
+  <button type="submit" class="btn btn-primary">确认对冲</button>
+  <a href="{% url 'partner_offset_list' %}" class="btn btn-outline-secondary">取消</a>
+</form>
+{% else %}
+<p class="text-muted">请先选择客户与供应商。</p>
+{% endif %}
+{% endblock %}

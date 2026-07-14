@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}票据拆借 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">票据拆借<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  {% if can_add %}<a href="{% url 'note_loan_create' %}" class="btn btn-primary btn-sm">拆出应收票据</a>{% endif %}
+</div>
+<p class="text-muted">关联公司间拆借应收票据：出借方记其他应收·关联方，借入方记其他应付·关联方。不同于背书抵货款。</p>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>单号</th><th>日期</th><th>角色</th><th>对手公司</th><th>票据</th>
+            <th class="text-end">金额</th><th class="text-end">已归还</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><a href="{% url 'note_loan_detail' r.pk %}">{{ r.doc_no }}</a></td>
+          <td>{{ r.doc_date }}</td>
+          <td>{{ r.get_role_display }}</td>
+          <td>{{ r.counterparty_company }}</td>
+          <td>{% if r.note_receivable %}{{ r.note_receivable.note_no|default:r.note_receivable.doc_no }}{% else %}—{% endif %}</td>
+          <td class="text-end">{{ r.amount }}</td>
+          <td class="text-end">{{ r.returned_amount }}</td>
+          <td>{{ r.get_status_display }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-4">暂无拆借记录</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

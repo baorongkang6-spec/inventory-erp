@@ -137,6 +137,17 @@ def _invoice_settlements(inv, invoice_kind):
         # 票据冲销可「撤销」（退回发票未核销额 + 票据未用额）
         rows.append({"kind": kind, "doc_no": s.note_no, "amount": s.amount,
                      "settlement_id": s.pk})
+    # 往来对冲
+    if invoice_kind == NoteSettlement.InvoiceKind.PURCHASE:
+        for ln in inv.offset_ap_lines.select_related("offset"):
+            if ln.offset.status == "registered":
+                rows.append({"kind": "往来对冲", "doc_no": ln.offset.doc_no,
+                             "amount": ln.amount, "settlement_id": None})
+    else:
+        for ln in inv.offset_ar_lines.select_related("offset"):
+            if ln.offset.status == "registered":
+                rows.append({"kind": "往来对冲", "doc_no": ln.offset.doc_no,
+                             "amount": ln.amount, "settlement_id": None})
     return rows
 
 

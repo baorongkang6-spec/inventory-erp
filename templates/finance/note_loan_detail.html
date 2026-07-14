@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}票据拆借 {{ doc.doc_no }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">票据拆借 {{ doc.doc_no }}
+    <span class="badge text-bg-secondary">{{ doc.get_status_display }}</span>
+  </h4>
+  <a href="{% url 'note_loan_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+</div>
+<ul class="list-unstyled">
+  <li>日期：{{ doc.doc_date }}</li>
+  <li>角色：{{ doc.get_role_display }} · 对手：{{ doc.counterparty_company }}</li>
+  <li>票据：{% if doc.note_receivable %}{{ doc.note_receivable.doc_no }} / {{ doc.note_receivable.note_no }}{% endif %}</li>
+  <li>金额：{{ doc.amount }} · 已归还：{{ doc.returned_amount }} · 在借：{{ doc.outstanding }}</li>
+  {% if doc.mirror %}<li>镜像单：{{ doc.mirror.doc_no }}（{{ doc.mirror.company }}）</li>{% endif %}
+  {% if doc.remark %}<li class="text-muted">{{ doc.remark }}</li>{% endif %}
+</ul>
+{% if can_return %}
+<form method="post" action="{% url 'note_loan_return' doc.pk %}" class="row g-2 align-items-end" style="max-width:480px"
+      onsubmit="return confirm('确认归还？将同步对手账套。');">
+  {% csrf_token %}
+  <div class="col-auto"><label class="form-label">归还日期</label>
+    <input type="date" name="return_date" class="form-control" required></div>
+  <div class="col-auto"><label class="form-label">归还金额</label>
+    <input type="number" step="0.01" min="0.01" max="{{ doc.outstanding }}" name="amount"
+           value="{{ doc.outstanding }}" class="form-control" required></div>
+  <div class="col-auto"><button type="submit" class="btn btn-primary">归还</button></div>
+</form>
+{% endif %}
+{% endblock %}

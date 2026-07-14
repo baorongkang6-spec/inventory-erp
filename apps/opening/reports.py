@@ -80,26 +80,33 @@ def company_overview(company, dfrom, dto):
     # 发出商品（成本）：增=本期销售出库结转成本；减=本期开票对应出库成本
     goods_shipped = goods_shipped_period(company, dfrom, dto)
 
-    # 供应商往来（应付）：期初发票(is_opening)恒计期初；增=本期采购发票；减=付款核销+票据抵付
+    # 供应商往来（应付）：期初发票(is_opening)恒计期初；增=本期采购发票；减=付款核销+票据抵付+往来对冲
+    from apps.finance.models import PartnerOffset, PartnerOffsetAPLine, PartnerOffsetARLine
     ap_all = PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
     ap_inv = ap_all.filter(is_opening=False)
     ap_pay = PaymentAllocation.objects.filter(payment__company=company)
     ap_note = NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
+    ap_off = PartnerOffsetAPLine.objects.filter(
+        offset__company=company, offset__status=PartnerOffset.Status.REGISTERED)
     payable = _merge_period(ap_inv, "doc_date", "amount_taxed",
-                            [(ap_pay, "created_at__date"), (ap_note, "created_at__date")], dfrom, dto)
+                            [(ap_pay, "date"), (ap_note, "date"), (ap_off, "offset__doc_date")],
+                            dfrom, dto)
     _add_opening(payable, _s(ap_all.filter(is_opening=True), "amount_taxed"))
 
     # 应付账款-暂估（不含税）：增=本期外部采购入库；减=本期收票对应入库不含税
     ap_accrual = ap_accrual_period(company, dfrom, dto)
 
-    # 客户往来（应收）：期初发票恒计期初；增=本期销售发票；减=收款核销+应收票据冲应收
+    # 客户往来（应收）：期初发票恒计期初；增=本期销售发票；减=收款核销+应收票据冲应收+往来对冲
     ar_all = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
     ar_inv = ar_all.filter(is_opening=False)
     ar_rec = ReceiptAllocation.objects.filter(receipt__company=company)
     ar_note = NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.SALES,
                                             is_endorsement=False)
+    ar_off = PartnerOffsetARLine.objects.filter(
+        offset__company=company, offset__status=PartnerOffset.Status.REGISTERED)
     receivable = _merge_period(ar_inv, "doc_date", "amount_taxed",
-                               [(ar_rec, "created_at__date"), (ar_note, "created_at__date")], dfrom, dto)
+                               [(ar_rec, "date"), (ar_note, "date"), (ar_off, "offset__doc_date")],
+                               dfrom, dto)
     _add_opening(receivable, _s(ar_all.filter(is_opening=True), "amount_taxed"))
 
     # 应收票据：期初票据(is_opening)恒计期初；增=本期出票；减=票据「出去」(背书/托收)。
@@ -493,7 +500,9 @@ def account_balance_table(companies, dfrom, dto):
 
 def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,
                      invoice_model, dfrom, dto):
-    """按往来对象归并 期初/增/减，保留 partner 对象。增=发票(doc_date)，减=核销+票据(created_at)。"""
+    """按往来对象归并 期初/增/减，保留 partner 对象。增=发票(doc_date)，减=核销+票据+往来对冲。"""
+    from apps.finance.models import PartnerOffset, PartnerOffsetAPLine, PartnerOffsetARLine
+
     data = {}
     for inv in invoices.select_related(partner_attr):
         partner = getattr(inv, partner_attr)
@@ -521,6 +530,31 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
             d["opening"] -= ns.amount
         elif nd <= dto:
             d["outgo"] += ns.amount
+    # 往来对冲
+    if partner_attr == "supplier":
+        off_lines = (PartnerOffsetAPLine.objects
+                     .filter(offset__company=company, offset__status=PartnerOffset.Status.REGISTERED)
+                     .select_related("offset", "invoice__supplier"))
+        for ln in off_lines:
+            partner = ln.invoice.supplier
+            d = data.setdefault(partner, _pset())
+            od = ln.offset.doc_date
+            if od < dfrom:
+                d["opening"] -= ln.amount
+            elif od <= dto:
+                d["outgo"] += ln.amount
+    else:
+        off_lines = (PartnerOffsetARLine.objects
+                     .filter(offset__company=company, offset__status=PartnerOffset.Status.REGISTERED)
+                     .select_related("offset", "invoice__customer"))
+        for ln in off_lines:
+            partner = ln.invoice.customer
+            d = data.setdefault(partner, _pset())
+            od = ln.offset.doc_date
+            if od < dfrom:
+                d["opening"] -= ln.amount
+            elif od <= dto:
+                d["outgo"] += ln.amount
     rows = []
     for partner, d in sorted(data.items(), key=lambda kv: kv[0].code):
         ending = d["opening"] + d["income"] - d["outgo"]
@@ -716,6 +750,28 @@ def partner_ledger(company, partner, kind, dfrom, dto):
                        "doc_no": ns.note_no,
                        "inc": Z, "dec": ns.amount,
                        "ref_url": invoice_url(ns.invoice_kind, ns.invoice_id)})
+    from apps.finance.models import PartnerOffset, PartnerOffsetAPLine, PartnerOffsetARLine
+    from django.urls import reverse
+    if kind == "payable":
+        for ln in (PartnerOffsetAPLine.objects
+                   .filter(offset__company=company, offset__status=PartnerOffset.Status.REGISTERED,
+                           invoice__supplier=partner)
+                   .select_related("offset")):
+            events.append({
+                "date": ln.offset.doc_date, "kind": "往来对冲",
+                "doc_no": ln.offset.doc_no, "inc": Z, "dec": ln.amount,
+                "ref_url": reverse("partner_offset_detail", args=[ln.offset_id]),
+            })
+    else:
+        for ln in (PartnerOffsetARLine.objects
+                   .filter(offset__company=company, offset__status=PartnerOffset.Status.REGISTERED,
+                           invoice__customer=partner)
+                   .select_related("offset")):
+            events.append({
+                "date": ln.offset.doc_date, "kind": "往来对冲",
+                "doc_no": ln.offset.doc_no, "inc": Z, "dec": ln.amount,
+                "ref_url": reverse("partner_offset_detail", args=[ln.offset_id]),
+            })
 
     opening = Z
     period = []

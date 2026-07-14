@@ -1178,3 +1178,229 @@ def reconcile_bank_journal(*, company, user, account, parsed, filename=""):
         summary=f"银行对账 {account} 匹配 {len(matched)}／仅系统 {len(system_only)}／仅网银 {len(bank_only)}")
     return {"batch": batch, "matched": matched, "system_only": system_only,
             "bank_only": bank_only, "period_from": pfrom, "period_to": pto}
+
+
+# ============================= M17 往来对冲 / 票据拆借 =============================
+
+@transaction.atomic
+def create_partner_offset(*, company, user, doc_date, customer, supplier,
+                          ar_lines, ap_lines, remark=""):
+    """往来对冲：应收发票与应付发票互抵（不经银行）。SPEC §7.5。
+
+    ar_lines / ap_lines: [{"invoice": inv, "amount": Decimal}, ...]
+    两侧金额合计须相等；单票对冲额不超过其未核销额。
+    """
+    from .models import PartnerOffset, PartnerOffsetAPLine, PartnerOffsetARLine
+
+    if customer.company_id != company.id or supplier.company_id != company.id:
+        raise SettlementError("客户/供应商必须属于当前账套")
+    ar_cleaned, ap_cleaned = [], []
+    ar_total = ap_total = ZERO_MONEY
+    for a in ar_lines or []:
+        amount = round_money(a["amount"])
+        if amount <= 0:
+            continue
+        inv = SalesInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
+        if inv.company_id != company.id or inv.customer_id != customer.id:
+            raise SettlementError("销售发票与所选客户不一致")
+        if inv.status != SalesInvoice.Status.REGISTERED:
+            raise SettlementError(f"销售发票 {inv.doc_no} 已作废")
+        if amount > inv.outstanding:
+            raise SettlementError(f"销售发票 {inv.doc_no} 对冲额 {amount} 超过未核销 {inv.outstanding}")
+        ar_cleaned.append((inv, amount))
+        ar_total += amount
+    for a in ap_lines or []:
+        amount = round_money(a["amount"])
+        if amount <= 0:
+            continue
+        inv = PurchaseInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
+        if inv.company_id != company.id or inv.supplier_id != supplier.id:
+            raise SettlementError("采购发票与所选供应商不一致")
+        if inv.status != PurchaseInvoice.Status.REGISTERED:
+            raise SettlementError(f"采购发票 {inv.doc_no} 已作废")
+        if amount > inv.outstanding:
+            raise SettlementError(f"采购发票 {inv.doc_no} 对冲额 {amount} 超过未核销 {inv.outstanding}")
+        ap_cleaned.append((inv, amount))
+        ap_total += amount
+    if not ar_cleaned or not ap_cleaned:
+        raise SettlementError("请同时勾选应收与应付发票并填写金额")
+    if ar_total != ap_total:
+        raise SettlementError(f"应收对冲合计 {ar_total} 与应付对冲合计 {ap_total} 不相等")
+
+    doc = PartnerOffset.objects.create(
+        company=company, created_by=user,
+        doc_no=next_doc_no(PartnerOffset, company, "DC", doc_date),
+        doc_date=doc_date, customer=customer, supplier=supplier,
+        amount=ar_total, remark=remark or "")
+    for inv, amount in ar_cleaned:
+        PartnerOffsetARLine.objects.create(offset=doc, invoice=inv, amount=amount)
+        inv.settled_amount += amount
+        inv.save(update_fields=["settled_amount"])
+    for inv, amount in ap_cleaned:
+        PartnerOffsetAPLine.objects.create(offset=doc, invoice=inv, amount=amount)
+        inv.settled_amount += amount
+        inv.save(update_fields=["settled_amount"])
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.OFFSET, target=doc,
+        summary=f"往来对冲 {doc.doc_no} 金额 {ar_total}（客户 {customer} / 供应商 {supplier}）")
+    return doc
+
+
+@transaction.atomic
+def reverse_partner_offset(doc, *, user):
+    """撤销往来对冲：回退双方发票 settled_amount，单据置已撤销。"""
+    from .models import PartnerOffset
+
+    doc = PartnerOffset.objects.select_for_update().get(pk=doc.pk)
+    if doc.status == PartnerOffset.Status.VOID:
+        raise SettlementError("该对冲单已撤销")
+    for ln in doc.ar_lines.select_related("invoice"):
+        inv = SalesInvoice.objects.select_for_update().get(pk=ln.invoice_id)
+        inv.settled_amount -= ln.amount
+        inv.save(update_fields=["settled_amount"])
+    for ln in doc.ap_lines.select_related("invoice"):
+        inv = PurchaseInvoice.objects.select_for_update().get(pk=ln.invoice_id)
+        inv.settled_amount -= ln.amount
+        inv.save(update_fields=["settled_amount"])
+    doc.status = PartnerOffset.Status.VOID
+    doc.save(update_fields=["status"])
+    AuditLog.record(
+        actor=user, company=doc.company, action=AuditLog.Action.OFFSET, target=doc,
+        summary=f"撤销往来对冲 {doc.doc_no} 金额 {doc.amount}")
+    return doc
+
+
+@transaction.atomic
+def lend_note_receivable(*, company, user, doc_date, note, borrower_company, amount, remark=""):
+    """应收票据拆借给关联公司：出借方减票面未用 + 其他应收；借入方增持票 + 其他应付。"""
+    from apps.core.models import Company
+    from .models import IntercoBalance, NoteLoan, NoteReceivable
+
+    note = NoteReceivable.objects.select_for_update().get(pk=note.pk)
+    if note.company_id != company.id:
+        raise SettlementError("票据不属于当前账套")
+    if note.status == NoteReceivable.Status.VOID:
+        raise SettlementError("票据已作废")
+    amount = round_money(amount)
+    if amount <= 0:
+        raise SettlementError("拆借金额须大于 0")
+    if amount > note.unused:
+        raise SettlementError(f"拆借额 {amount} 超过票据未用 {note.unused}")
+    if borrower_company.id == company.id:
+        raise SettlementError("不能拆借给本公司")
+    if not Company.objects.filter(pk=borrower_company.pk).exists():
+        raise SettlementError("对手公司不存在")
+
+    # 出借方消耗票面
+    note.settled_amount += amount
+    if note.unused == 0:
+        note.status = NoteReceivable.Status.SETTLED
+    note.save(update_fields=["settled_amount", "status"])
+
+    lend = NoteLoan.objects.create(
+        company=company, created_by=user, role=NoteLoan.Role.LEND,
+        doc_no=next_doc_no(NoteLoan, company, "CJ", doc_date),
+        doc_date=doc_date, note_kind=NoteLoan.NoteKind.RECEIVABLE,
+        counterparty_company=borrower_company, amount=amount,
+        note_receivable=note, remark=remark or "")
+    IntercoBalance.objects.create(
+        company=company, kind=IntercoBalance.Kind.OTHER_AR,
+        counterparty_company=borrower_company, direction=IntercoBalance.Direction.IN,
+        amount=amount, date=doc_date, source_type="NoteLoan", source_id=str(lend.pk),
+        source_no=lend.doc_no, remark=f"拆出应收票 {note.note_no or note.doc_no}")
+
+    # 借入方建票 + 其他应付
+    borrow_note = NoteReceivable.objects.create(
+        company=borrower_company,
+        doc_no=next_doc_no(NoteReceivable, borrower_company, "YSP", doc_date),
+        note_no=note.note_no, amount=amount,
+        draw_date=note.draw_date, due_date=note.due_date,
+        status=NoteReceivable.Status.ON_HAND,
+        remark=f"自 {company.short_name or company} 拆入 {lend.doc_no}")
+    borrow = NoteLoan.objects.create(
+        company=borrower_company, created_by=user, role=NoteLoan.Role.BORROW,
+        doc_no=next_doc_no(NoteLoan, borrower_company, "CJ", doc_date),
+        doc_date=doc_date, note_kind=NoteLoan.NoteKind.RECEIVABLE,
+        counterparty_company=company, amount=amount,
+        note_receivable=borrow_note, mirror=lend, remark=remark or "")
+    lend.mirror = borrow
+    lend.save(update_fields=["mirror"])
+    IntercoBalance.objects.create(
+        company=borrower_company, kind=IntercoBalance.Kind.OTHER_AP,
+        counterparty_company=company, direction=IntercoBalance.Direction.IN,
+        amount=amount, date=doc_date, source_type="NoteLoan", source_id=str(borrow.pk),
+        source_no=borrow.doc_no, remark=f"拆入应收票 {borrow_note.note_no or borrow_note.doc_no}")
+
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.LINK, target=lend,
+        summary=f"票据拆借 {lend.doc_no} 应收票 {amount} → {borrower_company}")
+    AuditLog.record(
+        actor=user, company=borrower_company, action=AuditLog.Action.LINK, target=borrow,
+        summary=f"票据拆入 {borrow.doc_no} 应收票 {amount} ← {company}")
+    return lend
+
+
+@transaction.atomic
+def return_note_loan(loan, *, user, amount, return_date, remark=""):
+    """归还票据拆借（出借方或借入方均可发起，以出借单为准处理双边）。"""
+    from .models import IntercoBalance, NoteLoan, NoteReceivable
+
+    loan = NoteLoan.objects.select_for_update().get(pk=loan.pk)
+    if loan.role != NoteLoan.Role.LEND:
+        loan = loan.mirror
+        if loan is None:
+            raise SettlementError("找不到出借方拆借单")
+        loan = NoteLoan.objects.select_for_update().get(pk=loan.pk)
+    if loan.status == NoteLoan.Status.VOID:
+        raise SettlementError("拆借单已撤销")
+    if loan.status == NoteLoan.Status.CLOSED:
+        raise SettlementError("拆借已全部归还")
+    amount = round_money(amount)
+    if amount <= 0:
+        raise SettlementError("归还金额须大于 0")
+    if amount > loan.outstanding:
+        raise SettlementError(f"归还额 {amount} 超过在借 {loan.outstanding}")
+
+    borrow = loan.mirror
+    if borrow is None:
+        raise SettlementError("缺少借入方镜像单")
+    borrow = NoteLoan.objects.select_for_update().get(pk=borrow.pk)
+
+    # 借入方票减少未用 / 出借方票恢复未用
+    bnote = NoteReceivable.objects.select_for_update().get(pk=borrow.note_receivable_id)
+    if amount > bnote.unused:
+        raise SettlementError(f"借入方票据未用 {bnote.unused} 不足归还 {amount}")
+    bnote.settled_amount += amount
+    if bnote.unused == 0:
+        bnote.status = NoteReceivable.Status.SETTLED
+    bnote.save(update_fields=["settled_amount", "status"])
+
+    lnote = NoteReceivable.objects.select_for_update().get(pk=loan.note_receivable_id)
+    lnote.settled_amount -= amount
+    if lnote.status == NoteReceivable.Status.SETTLED and lnote.unused > 0:
+        lnote.status = NoteReceivable.Status.ON_HAND
+    lnote.save(update_fields=["settled_amount", "status"])
+
+    loan.returned_amount += amount
+    borrow.returned_amount += amount
+    if loan.outstanding == 0:
+        loan.status = NoteLoan.Status.CLOSED
+        borrow.status = NoteLoan.Status.CLOSED
+    loan.save(update_fields=["returned_amount", "status"])
+    borrow.save(update_fields=["returned_amount", "status"])
+
+    IntercoBalance.objects.create(
+        company=loan.company, kind=IntercoBalance.Kind.OTHER_AR,
+        counterparty_company=loan.counterparty_company, direction=IntercoBalance.Direction.OUT,
+        amount=amount, date=return_date, source_type="NoteLoanReturn", source_id=str(loan.pk),
+        source_no=loan.doc_no, remark=remark or "拆借归还")
+    IntercoBalance.objects.create(
+        company=borrow.company, kind=IntercoBalance.Kind.OTHER_AP,
+        counterparty_company=borrow.counterparty_company, direction=IntercoBalance.Direction.OUT,
+        amount=amount, date=return_date, source_type="NoteLoanReturn", source_id=str(borrow.pk),
+        source_no=borrow.doc_no, remark=remark or "拆借归还")
+
+    AuditLog.record(
+        actor=user, company=loan.company, action=AuditLog.Action.OFFSET, target=loan,
+        summary=f"票据拆借归还 {loan.doc_no} {amount}")
+    return loan

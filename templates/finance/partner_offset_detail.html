@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}往来对冲 {{ doc.doc_no }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">往来对冲 {{ doc.doc_no }}
+    <span class="badge text-bg-{% if doc.status == 'registered' %}success{% else %}secondary{% endif %}">{{ doc.get_status_display }}</span>
+  </h4>
+  <a href="{% url 'partner_offset_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+</div>
+<p>日期 {{ doc.doc_date }} · 客户 {{ doc.customer }} · 供应商 {{ doc.supplier }} · 金额 <b>{{ doc.amount }}</b>
+  {% if doc.remark %}<br><span class="text-muted">{{ doc.remark }}</span>{% endif %}</p>
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-3"><div class="card-header">应收侧</div>
+      <ul class="list-group list-group-flush">
+        {% for ln in doc.ar_lines.all %}
+        <li class="list-group-item d-flex justify-content-between">
+          <a href="{% url 'sales_invoice_detail' ln.invoice_id %}">{{ ln.invoice.doc_no }}</a>
+          <span>{{ ln.amount }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-3"><div class="card-header">应付侧</div>
+      <ul class="list-group list-group-flush">
+        {% for ln in doc.ap_lines.all %}
+        <li class="list-group-item d-flex justify-content-between">
+          <a href="{% url 'purchase_invoice_detail' ln.invoice_id %}">{{ ln.invoice.doc_no }}</a>
+          <span>{{ ln.amount }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% if can_reverse %}
+<form method="post" action="{% url 'partner_offset_reverse' doc.pk %}"
+      onsubmit="return confirm('撤销后将回退双方发票已核销额，确定？');">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-outline-danger btn-sm">撤销对冲</button>
+</form>
+{% endif %}
+{% endblock %}

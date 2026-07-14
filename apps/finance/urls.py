@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import views
+from . import m17_views, views
 
 urlpatterns = [
     path("bank-accounts/", views.BankAccountListView.as_view(), name="bankaccount_list"),
@@ -87,4 +87,13 @@ urlpatterns = [
     path("notes-payable/import/", views.note_payable_import, name="note_payable_import"),
     path("reports/notes-balance/", views.notes_balance_report, name="notes_balance_report"),
     path("reports/borrow/", views.borrow_report, name="borrow_report"),
+    # M17 往来对冲 / 票据拆借
+    path("partner-offsets/", m17_views.partner_offset_list, name="partner_offset_list"),
+    path("partner-offsets/new/", m17_views.partner_offset_create, name="partner_offset_create"),
+    path("partner-offsets/<int:pk>/", m17_views.partner_offset_detail, name="partner_offset_detail"),
+    path("partner-offsets/<int:pk>/reverse/", m17_views.partner_offset_reverse, name="partner_offset_reverse"),
+    path("note-loans/", m17_views.note_loan_list, name="note_loan_list"),
+    path("note-loans/new/", m17_views.note_loan_create, name="note_loan_create"),
+    path("note-loans/<int:pk>/", m17_views.note_loan_detail, name="note_loan_detail"),
+    path("note-loans/<int:pk>/return/", m17_views.note_loan_return, name="note_loan_return"),
 ]

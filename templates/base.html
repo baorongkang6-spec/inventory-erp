@@ -85,6 +85,16 @@
         <li class="nav-item"><a class="nav-link" href="{% url 'query_center' %}">查询</a></li>
         {% endif %}
 
+        {# 财务管理：往来对冲 + 票据拆借（M17） #}
+        {% if perms.finance.view_salesinvoice or perms.finance.view_notereceivable %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">财务管理</a>
+          <ul class="dropdown-menu">
+            {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'partner_offset_list' %}">往来对冲</a></li>{% endif %}
+            {% if perms.finance.view_notereceivable %}<li><a class="dropdown-item" href="{% url 'note_loan_list' %}">票据拆借</a></li>{% endif %}
+          </ul>
+        </li>
+        {% endif %}
         {# 资金：其他收支登记 + 票据 #}
         {% if perms.finance.add_bankjournal or perms.finance.view_notereceivable or perms.finance.view_notepayable %}
         <li class="nav-item dropdown">

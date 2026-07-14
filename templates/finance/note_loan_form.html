@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}拆出应收票据 · 库存 ERP{% endblock %}
+{% block content %}
+<h4 class="mb-3">拆出应收票据<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+<form method="post" class="card card-body" style="max-width:560px">
+  {% csrf_token %}
+  <div class="mb-3"><label class="form-label">拆借日期</label>
+    <input type="date" name="doc_date" value="{{ doc_date }}" class="form-control" required></div>
+  <div class="mb-3"><label class="form-label">借入方（关联公司）</label>
+    <select name="borrower" class="form-select" required>
+      <option value="">请选择</option>
+      {% for c in counterparts %}<option value="{{ c.pk }}">{{ c }}</option>{% endfor %}
+    </select></div>
+  <div class="mb-3"><label class="form-label">本方应收票据</label>
+    <select name="note" class="form-select" required>
+      <option value="">请选择</option>
+      {% for n in notes %}
+      <option value="{{ n.pk }}">{{ n.doc_no }} {{ n.note_no }} 未用 {{ n.unused }}</option>
+      {% endfor %}
+    </select></div>
+  <div class="mb-3"><label class="form-label">拆借金额</label>
+    <input type="number" step="0.01" min="0.01" name="amount" class="form-control" required></div>
+  <div class="mb-3"><label class="form-label">备注</label>
+    <input type="text" name="remark" value="{{ remark }}" class="form-control"></div>
+  <button type="submit" class="btn btn-primary">确认拆出</button>
+  <a href="{% url 'note_loan_list' %}" class="btn btn-outline-secondary">取消</a>
+</form>
+{% endblock %}

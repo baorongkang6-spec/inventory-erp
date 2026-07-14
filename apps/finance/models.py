@@ -646,3 +646,160 @@ class ExpenseRecord(CompanyScopedModel):
 
     def __str__(self) -> str:
         return f"{self.get_category_display()} {self.amount}"
+
+
+# ============================= M17 往来对冲 / 票据拆借 =============================
+
+class PartnerOffset(CompanyScopedModel):
+    """往来对冲单：同一账套内应收↔应付互抵（不经银行）。SPEC §7.5。"""
+
+    class Status(models.TextChoices):
+        REGISTERED = "registered", "已登记"
+        VOID = "void", "已撤销"
+
+    doc_no = models.CharField("对冲单号", max_length=32)
+    doc_date = models.DateField("对冲日期")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="客户")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="供应商")
+    amount = models.DecimalField("对冲金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.REGISTERED)
+    remark = models.CharField("备注", max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    # 将来凭证映射约定
+    voucher_hint = models.CharField(max_length=32, default="AR_AP_NET", editable=False)
+
+    class Meta:
+        verbose_name = "往来对冲"
+        verbose_name_plural = "往来对冲"
+        ordering = ["-doc_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_partneroffset_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+
+class PartnerOffsetARLine(models.Model):
+    """对冲 — 应收（销售发票）侧明细。"""
+
+    offset = models.ForeignKey(PartnerOffset, on_delete=models.CASCADE, related_name="ar_lines")
+    invoice = models.ForeignKey("SalesInvoice", on_delete=models.PROTECT, related_name="offset_ar_lines")
+    amount = models.DecimalField("对冲金额", max_digits=18, decimal_places=2)
+
+    class Meta:
+        verbose_name = "往来对冲·应收行"
+        verbose_name_plural = "往来对冲·应收行"
+
+    def __str__(self) -> str:
+        return f"{self.offset.doc_no}→AR {self.invoice.doc_no} {self.amount}"
+
+
+class PartnerOffsetAPLine(models.Model):
+    """对冲 — 应付（采购发票）侧明细。"""
+
+    offset = models.ForeignKey(PartnerOffset, on_delete=models.CASCADE, related_name="ap_lines")
+    invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="offset_ap_lines")
+    amount = models.DecimalField("对冲金额", max_digits=18, decimal_places=2)
+
+    class Meta:
+        verbose_name = "往来对冲·应付行"
+        verbose_name_plural = "往来对冲·应付行"
+
+    def __str__(self) -> str:
+        return f"{self.offset.doc_no}→AP {self.invoice.doc_no} {self.amount}"
+
+
+class IntercoBalance(CompanyScopedModel):
+    """其他应收/其他应付·关联方台账（票据拆借等产生）。SPEC §7.6。"""
+
+    class Kind(models.TextChoices):
+        OTHER_AR = "other_ar", "其他应收·关联方"
+        OTHER_AP = "other_ap", "其他应付·关联方"
+
+    class Direction(models.TextChoices):
+        IN = "in", "增加"
+        OUT = "out", "减少"
+
+    kind = models.CharField("科目", max_length=16, choices=Kind.choices)
+    counterparty_company = models.ForeignKey(
+        "core.Company", on_delete=models.PROTECT, related_name="+", verbose_name="关联对手公司")
+    direction = models.CharField("方向", max_length=4, choices=Direction.choices)
+    amount = models.DecimalField("金额", max_digits=18, decimal_places=2)
+    date = models.DateField("日期")
+    source_type = models.CharField("来源类型", max_length=32, blank=True)
+    source_id = models.CharField("来源ID", max_length=32, blank=True)
+    source_no = models.CharField("来源单号", max_length=64, blank=True)
+    remark = models.CharField("备注", max_length=255, blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "关联方其他往来"
+        verbose_name_plural = "关联方其他往来"
+        ordering = ["-date", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} {self.counterparty_company} {self.amount}"
+
+    @property
+    def signed_amount(self):
+        return self.amount if self.direction == self.Direction.IN else -self.amount
+
+
+class NoteLoan(CompanyScopedModel):
+    """关联公司票据拆借单（各账套各记一笔，互链 mirror）。SPEC §7.6。
+
+    出借方：消耗本方票面未用额 + 其他应收·关联方增加。
+    借入方：新增/承接票据 + 其他应付·关联方增加。
+    """
+
+    class NoteKind(models.TextChoices):
+        RECEIVABLE = "receivable", "应收票据"
+        PAYABLE = "payable", "应付票据"
+
+    class Role(models.TextChoices):
+        LEND = "lend", "出借"
+        BORROW = "borrow", "借入"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "在借"
+        CLOSED = "closed", "已归还"
+        VOID = "void", "已撤销"
+
+    doc_no = models.CharField("拆借单号", max_length=32)
+    doc_date = models.DateField("拆借日期")
+    role = models.CharField("本方角色", max_length=8, choices=Role.choices)
+    note_kind = models.CharField("票据种类", max_length=16, choices=NoteKind.choices)
+    counterparty_company = models.ForeignKey(
+        "core.Company", on_delete=models.PROTECT, related_name="+", verbose_name="对手公司")
+    amount = models.DecimalField("拆借金额", max_digits=18, decimal_places=2)
+    returned_amount = models.DecimalField("已归还金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
+    note_receivable = models.ForeignKey(
+        NoteReceivable, on_delete=models.PROTECT, null=True, blank=True, related_name="loans")
+    note_payable = models.ForeignKey(
+        "NotePayable", on_delete=models.PROTECT, null=True, blank=True, related_name="loans")
+    mirror = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="mirror_of")
+    status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.OPEN)
+    remark = models.CharField("备注", max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    voucher_hint = models.CharField(max_length=32, default="NOTE_LEND", editable=False)
+
+    class Meta:
+        verbose_name = "票据拆借"
+        verbose_name_plural = "票据拆借"
+        ordering = ["-doc_date", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "doc_no"], name="uniq_noteloan_company_docno")
+        ]
+
+    def __str__(self) -> str:
+        return self.doc_no
+
+    @property
+    def outstanding(self):
+        return self.amount - self.returned_amount
