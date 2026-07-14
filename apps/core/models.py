@@ -26,6 +26,9 @@ class Company(models.Model):
     opening_locked = models.BooleanField(
         "期初已启用(锁定)", default=False,
         help_text="启用后期初数据不可修改/重导；未启用时可清空重导。")
+    period_closed_through = models.DateField(
+        "会计期间已结账至", null=True, blank=True,
+        help_text="该日及之前的业务单据不可修改/删除；月结时按顺序逐月推进。")
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
 
     class Meta:

@@ -18,6 +18,7 @@ from apps.core.crud import (
     ScopedUpdateView,
 )
 from apps.core.mixins import CompanyScopedMixin, FilteredListMixin
+from apps.core.period import get_report_dates
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 from apps.purchasing.models import PurchaseInbound
 from apps.sales.models import SalesOutbound
@@ -1253,9 +1254,7 @@ def bank_accounts_report(request):
     某公司各银行账户的 期初/本期收入/本期发出/期末，行可再点入该账户流水。"""
     from apps.opening.reports import bank_accounts_balance
     company = resolve_company(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request, company)
     rows = bank_accounts_balance(company, dfrom, dto) if company else []
     totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
               for k in ("opening", "income", "outgo", "ending")}
@@ -1331,9 +1330,7 @@ def _outstanding_balance_report(request, *, kind, title, partner_label, ledger_u
     from apps.opening.reports import (invoice_aging, payable_partners_balance,
                                       receivable_partners_balance)
     visible, chosen = _company_scope(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request)
     balance_fn = payable_partners_balance if kind == "payable" else receivable_partners_balance
     rows = []
     for company in chosen:
@@ -1442,9 +1439,7 @@ def _partner_report(request, kind):
     """往来余额表（公司→各往来对象 期初/本期增/本期减/期末），可下钻明细账。"""
     from apps.opening.reports import payable_partners_balance, receivable_partners_balance
     company = resolve_company(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request, company)
     if kind == "payable":
         rows = payable_partners_balance(company, dfrom, dto) if company else []
         cfg = {"title": "应付账款余额表（按供应商）", "partner_label": "供应商",
@@ -1471,9 +1466,7 @@ def _partner_ledger_page(request, kind):
     from apps.masterdata.models import Customer, Supplier
     from apps.opening.reports import partner_ledger
     company = resolve_company(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request, company)
     model = Supplier if kind == "payable" else Customer
     partner = get_object_or_404(model, pk=request.GET.get("partner"), company=company)
     data = partner_ledger(company, partner, kind, dfrom, dto)
@@ -1531,9 +1524,7 @@ def receivable_notes_report(request):
     """应收票据余额表：公司各票据 期初/本期出票/本期使用/期末（未用额），可下钻使用明细。"""
     from apps.opening.reports import receivable_notes_balance
     company = resolve_company(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request, company)
     rows = receivable_notes_balance(company, dfrom, dto) if company else []
     totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
               for k in ("opening", "income", "outgo", "ending")}
@@ -1560,8 +1551,7 @@ def receivable_note_ledger(request):
         from datetime import date as _date
         dfrom, dto = _date(1900, 1, 1), today   # 看全部使用记录（不受区间限制）
     else:
-        dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-        dto = _parse_date(request.GET.get("to")) or today
+        dfrom, dto = get_report_dates(request, company)
     note = get_object_or_404(NoteReceivable, pk=request.GET.get("note"), company=company)
     data = note_ledger(company, note, dfrom, dto)
     if request.GET.get("export") == "xlsx":
@@ -1583,9 +1573,7 @@ def sales_revenue_cost_report(request):
     """销售收入成本计算表（按开票口径、按商品；期间可选，默认本月）。"""
     from apps.opening.reports import sales_revenue_cost
     company = resolve_company(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request, company)
     data = (sales_revenue_cost(company, dfrom, dto) if company
             else {"rows": [], "est_count": 0, "gap_count": 0, "gap_amount": Decimal("0.00")})
     rows = data["rows"]
@@ -1684,9 +1672,7 @@ def sales_cost_by_outbound_report(request):
     from apps.opening.reports import sales_revenue_cost_by_outbound
     from .models import ExpenseRecord
     company = resolve_company(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request, company)
     rows = sales_revenue_cost_by_outbound(company, dfrom, dto) if company else []
     # 佣金列：仅总经理可见，按产品归集当期佣金，毛利=收入−成本−佣金
     show_commission = _is_gm(request.user)
@@ -2706,9 +2692,7 @@ def customer_sales_report(request):
             or request.user.has_perm("finance.view_salesinvoice")):
         raise PermissionDenied("无权查看客户销售分析")
     visible, chosen = _company_scope(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request)
     by_product = request.GET.get("by_product") == "1"
     show_commission = _is_gm(request.user)
     data = customer_sales_analysis(chosen, dfrom, dto, by_product, show_commission)
@@ -2755,9 +2739,7 @@ def management_profit_report(request):
     if not _is_gm(request.user):
         raise PermissionDenied("管理利润表仅总经理可见")
     visible, chosen = _company_scope(request)
-    today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request)
     eliminate = request.GET.get("eliminate") == "1"
     cols, total = management_profit(chosen, dfrom, dto, eliminate)
 

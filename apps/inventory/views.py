@@ -6,10 +6,10 @@
 from datetime import datetime
 from decimal import Decimal
 
-from django.utils import timezone
 from django.views.generic import ListView, TemplateView
 
 from apps.core.mixins import CompanyScopedMixin
+from apps.core.period import get_report_dates
 from apps.core.scope import resolve_company
 from apps.masterdata.models import Product
 
@@ -64,13 +64,11 @@ class StockReportView(CompanyScopedMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        today = timezone.localdate()
         ctx["can_view_amount"] = self.request.user.has_perm("inventory.view_amount")
         ctx["total_amount"] = sum((b.amount for b in ctx["balances"]), start=Decimal("0.00"))
         ctx["active_company"] = resolve_company(self.request)
         ctx["q"] = self.request.GET.get("q", "")
-        ctx["date_from"] = _parse_date(self.request.GET.get("from")) or today.replace(day=1)
-        ctx["date_to"] = _parse_date(self.request.GET.get("to")) or today
+        ctx["date_from"], ctx["date_to"] = get_report_dates(self.request, resolve_company(self.request))
         ctx["company_id"] = self.request.GET.get("company", "")
         return ctx
 
@@ -95,9 +93,7 @@ class StockProductsReportView(CompanyScopedMixin, TemplateView):
         from apps.core.exports import xlsx_response
         from apps.opening.reports import stock_products_balance
         company = resolve_company(self.request)
-        today = timezone.localdate()
-        dfrom = _parse_date(self.request.GET.get("from")) or today.replace(day=1)
-        dto = _parse_date(self.request.GET.get("to")) or today
+        dfrom, dto = get_report_dates(self.request, company)
         rows = stock_products_balance(company, dfrom, dto) if company else []
         headers = ["商品编码", "商品名称", "期初金额", "本期收入", "本期发出", "期末金额", "期末数量"]
         data = [[r["product"].code, r["product"].name, r["opening"], r["income"],
@@ -108,9 +104,7 @@ class StockProductsReportView(CompanyScopedMixin, TemplateView):
         from apps.opening.reports import stock_products_balance
         ctx = super().get_context_data(**kwargs)
         company = resolve_company(self.request)
-        today = timezone.localdate()
-        dfrom = _parse_date(self.request.GET.get("from")) or today.replace(day=1)
-        dto = _parse_date(self.request.GET.get("to")) or today
+        dfrom, dto = get_report_dates(self.request, company)
         rows = stock_products_balance(company, dfrom, dto) if company else []
         totals = {k: sum((r[k] for r in rows), ZERO) for k in ("opening", "income", "outgo", "ending")}
         ctx.update({
@@ -146,6 +140,8 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
             product = Product.objects.filter(company=company, pk=product_id).first()
         date_from = _parse_date(self.request.GET.get("from"))
         date_to = _parse_date(self.request.GET.get("to"))
+        if date_from is None and date_to is None:
+            date_from, date_to = get_report_dates(self.request, company)
 
         rows = []
         open_qty = open_amount = close_qty = close_amount = None

@@ -232,6 +232,10 @@ def void_purchase_invoice_doc(inv, user=None):
 
 def invoice_delete_block_reason(inv):
     """发票可否删除（彻底移除记录）：未核销、非期初。可删返回 None。"""
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(inv.company, inv.doc_date)
+    if reason:
+        return reason
     if inv.settled_amount > 0:
         return "已核销（或部分核销）不可删除，请先撤销核销"
     if inv.is_opening:
@@ -265,6 +269,10 @@ def delete_sales_invoice(inv, *, user):
 
 def sales_invoice_edit_block_reason(inv, today):
     """返回不可修改原因；可改返回 None。规则：非期初、未核销、本月。"""
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(inv.company, inv.doc_date)
+    if reason:
+        return reason
     if inv.is_opening:
         return "期初发票不可修改"
     if inv.settled_amount > 0:
@@ -313,6 +321,10 @@ def update_purchase_invoice(inv, *, user, doc_date, supplier, lines,
 
 def purchase_invoice_edit_block_reason(inv, today):
     """返回不可修改原因；可改返回 None。规则：非期初、未核销、本月。"""
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(inv.company, inv.doc_date)
+    if reason:
+        return reason
     if inv.is_opening:
         return "期初发票不可修改"
     if inv.settled_amount > 0:
@@ -437,6 +449,10 @@ def _cash_doc_block_reason(doc, today=None):
     方便修正错录。仍保留已核销（需先撤销核销）、已对账（需先取消对账）两道护栏。
     `today` 参数保留仅为兼容既有调用，不再参与判断。
     """
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(doc.company, doc.doc_date)
+    if reason:
+        return reason
     if doc.status == doc.Status.VOID:
         return "已作废，不可修改/删除"
     if doc.settled_amount > 0:
@@ -567,6 +583,10 @@ def create_note_receivable(*, company, user, draw_date, amount, customer=None,
 
 def note_receivable_edit_block_reason(note) -> str | None:
     """应收票据可否修改：仅「已作废」整单不可改。其余可补录（票面金额是否可改在 update 里按已用额控制）。"""
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(note.company, note.draw_date)
+    if reason:
+        return reason
     if note.status == NoteReceivable.Status.VOID:
         return "已作废的应收票据不可修改"
     return None
@@ -610,6 +630,10 @@ def note_receivable_delete_block_reason(note) -> str | None:
     未使用的票据（含期初导入的）不挂应收/应付、无日记账、无镜像，删除是干净的——
     期初票据正是导入时最易录错、最需删的，故不再额外拦期初。
     """
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(note.company, note.draw_date)
+    if reason:
+        return reason
     if note_has_usage(note):
         return "票据已使用（核销应收/背书抵应付），不可删除；如需更正请到对应发票撤销冲销后再删"
     return None
@@ -923,9 +947,13 @@ def reverse_note_disposal(*, disposal, user):
 
 def note_disposal_edit_block_reason(disposal) -> str | None:
     """票据兑付/贴现可否修改（改日期/收款银行账户/备注，不改金额）。可改返回 None。"""
+    from apps.core.period import period_edit_block_reason
     note = NoteReceivable.objects.filter(pk=disposal.note_id).first()
     if note is None:
         return "票据已不存在，无法修改"
+    reason = period_edit_block_reason(note.company, disposal.date)
+    if reason:
+        return reason
     if note.status == NoteReceivable.Status.VOID:
         return "票据已作废，不能修改其处置"
     if disposal.bank_journal_id and disposal.bank_journal.reconciled:
@@ -1056,6 +1084,10 @@ def other_cashflow_block_reason(journal, today=None):
     已放开原「仅当月」限制（2026-07-14），与收/付款一致；仍保留已对账护栏。
     `today` 参数保留仅为兼容既有调用。
     """
+    from apps.core.period import period_edit_block_reason
+    reason = period_edit_block_reason(journal.company, journal.date)
+    if reason:
+        return reason
     if journal.source_type != "Other":
         return "仅手工登记的其他收支可修改/删除；往来收付请到对应单据操作"
     if journal.reconciled:

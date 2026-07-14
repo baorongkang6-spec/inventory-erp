@@ -7,6 +7,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.accounts import roles
+from apps.core.period import close_period, get_report_dates, last_month_range, suggested_close_through, unclose_period
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
 
 from .imports import IMPORTERS, TEMPLATES, build_combined_template, build_template, import_combined
@@ -272,8 +273,7 @@ def overview(request):
         raise PermissionDenied("仅总经理/出纳可查看跨公司总览表")
     from django.utils import timezone
     today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request)
     companies = list(get_visible_companies(request.user))
     blocks = overview_table(companies, dfrom, dto)
     if request.GET.get("export") == "xlsx":
@@ -311,10 +311,7 @@ def query_center(request):
     subject = request.GET.get("subject") or "stock_moves"
     if subject not in SUBJECTS:
         subject = "stock_moves"
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
-
-    # 公司多选：未提交则默认全部可见
+    dfrom, dto = get_report_dates(request)
     sel_ids = request.GET.getlist("company")
     if sel_ids:
         chosen = [c for c in visible if str(c.pk) in sel_ids]
@@ -361,8 +358,7 @@ def account_balance(request):
         raise PermissionDenied("无权查看账户余额表")
     from django.utils import timezone
     today = timezone.localdate()
-    dfrom = _parse_date(request.GET.get("from")) or today.replace(day=1)
-    dto = _parse_date(request.GET.get("to")) or today
+    dfrom, dto = get_report_dates(request)
     visible = list(get_visible_companies(request.user))
     sel = request.GET.getlist("company")
     companies = [c for c in visible if str(c.pk) in sel] if sel else list(visible)
@@ -417,8 +413,10 @@ def reconciliation(request):
     result = None
 
     saved_run = None
+    today = timezone.localdate()
+    _, default_as_of = last_month_range(today)
     if request.method == "POST":
-        as_of = request.POST.get("as_of") or str(timezone.localdate())
+        as_of = request.POST.get("as_of") or str(default_as_of)
         run = ReconciliationRun.objects.create(
             company=company, created_by=request.user, category=category, as_of_date=as_of)
         result = []
@@ -440,8 +438,71 @@ def reconciliation(request):
     return render(request, "opening/reconciliation.html", {
         "categories": categories, "category": category,
         "sys_lines": sys_lines, "result": result, "saved_run": saved_run,
-        "today": timezone.localdate(),
+        "today": today, "default_as_of": default_as_of,
+        "period_closed_through": company.period_closed_through,
+        "suggested_close": suggested_close_through(company, today),
+        "can_period_close": request.user.has_perm("finance.add_purchaseinvoice"),
     })
+
+
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def period_close(request):
+    """月结结账：锁定截止日及之前业务不可改删。"""
+    from django.utils import timezone
+    from apps.core.models import AuditLog
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method != "POST" or company is None:
+        return redirect("reconciliation")
+    today = timezone.localdate()
+    close_through = _parse_date(request.POST.get("close_through"))
+    if not close_through:
+        close_through = suggested_close_through(company, today)
+    if not close_through:
+        messages.error(request, "当前无可结账期间（上月底可能已结账）。")
+        return redirect("reconciliation")
+    try:
+        close_period(company, close_through, today=today)
+    except ValueError as e:
+        messages.error(request, str(e))
+    else:
+        company.refresh_from_db()
+        AuditLog.record(
+            actor=request.user, company=company, action=AuditLog.Action.UPDATE,
+            target=company, summary=f"月结结账至 {company.period_closed_through:%Y-%m-%d}",
+        )
+        messages.success(request, f"已结账至 {company.period_closed_through:%Y-%m-%d}，该日及之前业务不可修改/删除。")
+    return redirect("reconciliation")
+
+
+@login_required
+@permission_required("finance.add_purchaseinvoice", raise_exception=True)
+def period_unclose(request):
+    """反结账：回退一个已结期间（特殊情况）。"""
+    from apps.core.models import AuditLog
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method != "POST" or company is None:
+        return redirect("reconciliation")
+    if not request.user.is_superuser:
+        raise PermissionDenied("反结账仅管理员可操作")
+    old = company.period_closed_through
+    try:
+        unclose_period(company)
+    except ValueError as e:
+        messages.error(request, str(e))
+    else:
+        company.refresh_from_db()
+        AuditLog.record(
+            actor=request.user, company=company, action=AuditLog.Action.UPDATE,
+            target=company,
+            summary=f"反结账 {old:%Y-%m-%d} → {company.period_closed_through or '未结账'}",
+        )
+        new = company.period_closed_through
+        msg = f"已反结账，当前结账至 {new:%Y-%m-%d}。" if new else "已完全反结账，所有期间可修改。"
+        messages.success(request, msg)
+    return redirect("reconciliation")
 
 
 @login_required

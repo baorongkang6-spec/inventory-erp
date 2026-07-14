@@ -182,7 +182,11 @@ def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, rema
 
 def inbound_edit_block_reason(doc, user, today, is_manager=False):
     """返回不可修改的原因字符串；可改则返回 None。规则：本人+管理员、未被下游引用、本月内。"""
+    from apps.core.period import period_edit_block_reason
     from apps.finance.models import PurchaseInvoiceLine
+    reason = period_edit_block_reason(doc.company, doc.doc_date)
+    if reason:
+        return reason
     if doc.status == PurchaseInbound.Status.VOID:
         return "单据已作废"
     if doc.source_outbound_id:
@@ -247,8 +251,12 @@ def inbound_delete_block_reason(doc, user, today, is_manager=False):
     出入库变动」时允许；另需：非作废、非镜像、未开票、当月、本人或管理员。
     其余情况请改用「作废」（反冲库存、留痕）。
     """
+    from apps.core.period import period_edit_block_reason
     from apps.finance.models import PurchaseInvoiceLine
     from apps.inventory.models import StockMove
+    reason = period_edit_block_reason(doc.company, doc.doc_date)
+    if reason:
+        return reason
     if doc.status == PurchaseInbound.Status.VOID:
         return "已作废的入库单无需再删除"
     if doc.source_outbound_id:
