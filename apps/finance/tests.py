@@ -460,7 +460,7 @@ class OtherCashflowTests(TestCase):
         from django.utils import timezone
 
         from apps.finance.models import BankJournal
-        # 删除受「仅当月」规则约束，用当月日期以免随系统时钟跨月而被拦
+        # 用当月日期（「仅当月」限制已放开，此处沿用当月日期即可）
         today = timezone.localdate().strftime("%Y-%m-%d")
         self.client.force_login(self.user)
         r = self.client.post("/finance/other-cashflow/new/", {
@@ -1255,7 +1255,6 @@ class ReceiptPaymentByNoteTests(TestCase):
     def test_edit_bank_receipt_convert_to_note(self):
         from django.utils import timezone
         # 误记成银行收款 → 修改时切换为「应收票据」：删旧收款+日记账，改记为收到票据并冲应收
-        # 修改受「仅当月」规则约束，用当月日期以免随系统时钟跨月而被拦
         today = timezone.localdate()
         acc = BankAccount.objects.create(company=self.c1, name="基本户")
         rec = create_receipt(company=self.c1, user=self.user, doc_date=today,
@@ -1431,12 +1430,12 @@ class ReceiptPaymentEditDeleteTests(TestCase):
         with self.assertRaises(SettlementError):
             delete_receipt(rec, user=self.user)
 
-    # ---- 跨月不可改 ----
-    def test_crossmonth_blocked(self):
+    # ---- 跨月可改（已放开「仅当月」限制，未核销/未对账即可更正）----
+    def test_crossmonth_now_editable(self):
         from apps.finance.services import receipt_edit_block_reason
         rec = create_receipt(company=self.c1, user=self.user, doc_date=date(2026, 5, 8),
                              bank_account=self.acc, customer=self.cust, amount=Decimal("500"))
-        self.assertEqual(receipt_edit_block_reason(rec, date(2026, 6, 11)), "仅当月单据可修改/删除")
+        self.assertIsNone(receipt_edit_block_reason(rec, date(2026, 6, 11)))
 
     # ---- 已对账不可改 ----
     def test_reconciled_blocked(self):
@@ -1524,14 +1523,14 @@ class OtherCashflowEditTests(TestCase):
                                   bank_account=self.acc, direction=BankJournal.Direction.OUT,
                                   amount=Decimal("350"), entry_type=BankJournal.EntryType.EXPENSE)
 
-    def test_block_reason_crossmonth(self):
+    def test_block_reason_crossmonth_now_editable(self):
+        # 已放开「仅当月」：往月其他收支只要未对账即可更正
         from apps.finance.services import create_other_cashflow, other_cashflow_block_reason
         j = create_other_cashflow(
             company=self.c1, user=self.user, doc_date=date(2026, 5, 8),
             bank_account=self.acc, direction=BankJournal.Direction.OUT, amount=Decimal("200"),
             entry_type=BankJournal.EntryType.EXPENSE, summary="上月电费")
-        self.assertEqual(other_cashflow_block_reason(j, date(2026, 6, 11)),
-                         "仅当月单据可修改/删除")
+        self.assertIsNone(other_cashflow_block_reason(j, date(2026, 6, 11)))
 
     def test_non_other_journal_cannot_be_edited(self):
         # 往来生成的（如付款）source_type != Other，不可走此修改

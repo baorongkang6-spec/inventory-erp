@@ -579,7 +579,7 @@ def _handle_payment_by_note(request, company, cd, inv_candidates):
 @login_required
 @permission_required("finance.add_payment", raise_exception=True)
 def payment_edit(request, pk):
-    """修改付款（仅当月、未核销/未对账）。
+    """修改付款（未核销/未对账；已放开「仅当月」限制，往月亦可更正）。
 
     可改银行付款字段并同步银行日记账；也可把付款方式切换为「应收票据(背书)」——
     此时自动删除原银行付款及其日记账，改记为票据背书抵应付。
@@ -643,7 +643,7 @@ def payment_edit(request, pk):
 @permission_required("finance.add_payment", raise_exception=True)
 @require_POST
 def payment_delete(request, pk):
-    """删除付款（仅银行方式、当月、未核销/未对账）。连同银行日记账删除。"""
+    """删除付款（仅银行方式、未核销/未对账；「仅当月」限制已放开）。连同银行日记账删除。"""
     company = get_active_company(request, list(get_visible_companies(request.user)))
     pay = get_object_or_404(Payment, pk=pk, company=company)
     reason = payment_edit_block_reason(pay, timezone.localdate())
@@ -1055,7 +1055,7 @@ def _handle_receipt_by_note(request, company, cd, inv_candidates):
 @login_required
 @permission_required("finance.add_receipt", raise_exception=True)
 def receipt_edit(request, pk):
-    """修改收款（仅当月、未核销/未对账）。
+    """修改收款（未核销/未对账；已放开「仅当月」限制，往月亦可更正）。
 
     可改银行收款字段并同步银行日记账；也可把收款方式切换为「应收票据」——
     此时自动删除原银行收款及其日记账，改记为收到一张应收票据（可顺带冲销售发票）。
@@ -1121,7 +1121,7 @@ def receipt_edit(request, pk):
 @permission_required("finance.add_receipt", raise_exception=True)
 @require_POST
 def receipt_delete(request, pk):
-    """删除收款（仅银行方式、当月、未核销/未对账）。连同银行日记账删除。"""
+    """删除收款（仅银行方式、未核销/未对账；「仅当月」限制已放开）。连同银行日记账删除。"""
     company = get_active_company(request, list(get_visible_companies(request.user)))
     rec = get_object_or_404(Receipt, pk=pk, company=company)
     reason = receipt_edit_block_reason(rec, timezone.localdate())
@@ -1960,7 +1960,7 @@ def other_cashflow_edit(request, pk):
 @login_required
 @permission_required("finance.delete_bankjournal", raise_exception=True)
 def other_cashflow_delete(request, pk):
-    """删除手工登记的其他收支（仅 source_type=Other、当月、未对账）。"""
+    """删除手工登记的其他收支（仅 source_type=Other、未对账；「仅当月」限制已放开）。"""
     from .services import SettlementError, delete_other_cashflow, other_cashflow_block_reason
 
     company = get_active_company(request, list(get_visible_companies(request.user)))

@@ -430,16 +430,19 @@ def allocate_receipt(*, receipt, allocations, user=None):
     return receipt
 
 
-def _cash_doc_block_reason(doc, today):
-    """收/付款单可否修改/删除：非作废、未核销、未对账、当月。可改返回 None。"""
+def _cash_doc_block_reason(doc, today=None):
+    """收/付款单可否修改/删除：非作废、未核销、未对账。可改返回 None。
+
+    已放开原「仅当月」会计期间限制（2026-07-14）：往月记录只要未核销、未对账即可更正，
+    方便修正错录。仍保留已核销（需先撤销核销）、已对账（需先取消对账）两道护栏。
+    `today` 参数保留仅为兼容既有调用，不再参与判断。
+    """
     if doc.status == doc.Status.VOID:
         return "已作废，不可修改/删除"
     if doc.settled_amount > 0:
         return "已核销，请先撤销核销后再操作"
     if doc.bank_journal_id and doc.bank_journal.reconciled:
         return "该笔已银行对账，不可修改/删除"
-    if (doc.doc_date.year, doc.doc_date.month) != (today.year, today.month):
-        return "仅当月单据可修改/删除"
     return None
 
 
@@ -1047,14 +1050,16 @@ def delete_other_cashflow(*, journal, user):
     journal.delete()
 
 
-def other_cashflow_block_reason(journal, today):
-    """其他收支可否修改/删除：仅手工登记(Other)、未对账、当月。可改返回 None。"""
+def other_cashflow_block_reason(journal, today=None):
+    """其他收支可否修改/删除：仅手工登记(Other)、未对账。可改返回 None。
+
+    已放开原「仅当月」限制（2026-07-14），与收/付款一致；仍保留已对账护栏。
+    `today` 参数保留仅为兼容既有调用。
+    """
     if journal.source_type != "Other":
         return "仅手工登记的其他收支可修改/删除；往来收付请到对应单据操作"
     if journal.reconciled:
         return "该笔已银行对账，不可修改/删除"
-    if (journal.date.year, journal.date.month) != (today.year, today.month):
-        return "仅当月单据可修改/删除"
     return None
 
 
