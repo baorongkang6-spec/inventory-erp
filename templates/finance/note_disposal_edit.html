@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}修改票据{{ disposal.get_kind_display }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">修改票据{{ disposal.get_kind_display }}<small class="text-muted fs-6 ms-2">{{ disposal.note.doc_no }} {{ disposal.note.note_no }}</small></h4>
+</div>
+
+<div class="alert alert-secondary">
+  票据：<strong>{{ disposal.note.doc_no }}</strong>　票号：{{ disposal.note.note_no|default:"—" }}
+  　票面金额：<strong>{{ disposal.amount }}</strong>
+  {% if disposal.kind == 'discount' %}　实收净额：<strong>{{ disposal.net_amount }}</strong>　贴现息：{{ disposal.discount_fee }}{% endif %}
+  <div class="small text-muted mt-1">
+    仅可修改<strong>日期 / 收款银行账户 / 备注</strong>；金额、贴现息、票据消耗额不变。
+    保存后对应银行存款日记账{% if disposal.kind == 'discount' %}与贴现息费用{% endif %}的日期/账户会一并同步。
+    如需改金额，请「撤销」后重录。
+  </div>
+</div>
+
+<form method="post" style="max-width:560px">
+  {% csrf_token %}
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  <div class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">收款银行账户</label>
+      <select name="bank_account" class="form-select" required>
+        {% for a in accounts %}
+        <option value="{{ a.pk }}" {% if a.pk == disposal.bank_account_id %}selected{% endif %}>{{ a.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">{% if disposal.kind == 'discount' %}贴现{% else %}兑付{% endif %}日期</label>
+      <input type="date" name="date" value="{{ disposal.date|date:'Y-m-d' }}" class="form-control" required>
+    </div>
+    <div class="col-12">
+      <label class="form-label">备注</label>
+      <input type="text" name="remark" value="{{ disposal.remark }}" class="form-control" maxlength="255">
+    </div>
+  </div>
+  <div class="d-flex gap-2 mt-3">
+    <button type="submit" class="btn btn-primary">保存</button>
+    <a href="javascript:history.back()" class="btn btn-outline-secondary">取消</a>
+  </div>
+</form>
+{% endblock %}

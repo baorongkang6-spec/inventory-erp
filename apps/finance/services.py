@@ -918,6 +918,53 @@ def reverse_note_disposal(*, disposal, user):
     return note
 
 
+def note_disposal_edit_block_reason(disposal) -> str | None:
+    """票据兑付/贴现可否修改（改日期/收款银行账户/备注，不改金额）。可改返回 None。"""
+    note = NoteReceivable.objects.filter(pk=disposal.note_id).first()
+    if note is None:
+        return "票据已不存在，无法修改"
+    if note.status == NoteReceivable.Status.VOID:
+        return "票据已作废，不能修改其处置"
+    if disposal.bank_journal_id and disposal.bank_journal.reconciled:
+        return "对应银行日记账已对账，请先取消对账后再修改"
+    return None
+
+
+@transaction.atomic
+def update_note_disposal(*, disposal, user, date, bank_account, remark=""):
+    """修改票据兑付/贴现的 日期 / 收款银行账户 / 备注（金额不变）。
+
+    同步更新对应银行存款日记账的日期与账户、以及贴现息费用记录的日期，
+    保证变现事件与派生账在时间/账户口径上一致。金额、贴现息、票据消耗额均不变。
+    """
+    d = NoteDisposal.objects.select_for_update().get(pk=disposal.pk)
+    note = NoteReceivable.objects.filter(pk=d.note_id).first()
+    if note is None:
+        raise SettlementError("票据已不存在，无法修改")
+    if note.status == NoteReceivable.Status.VOID:
+        raise SettlementError("票据已作废，不能修改其处置")
+    if d.bank_journal_id and d.bank_journal.reconciled:
+        raise SettlementError("对应银行日记账已对账，请先取消对账后再修改")
+
+    d.date = date
+    d.bank_account = bank_account
+    d.remark = remark
+    d.save(update_fields=["date", "bank_account", "remark"])
+    if d.bank_journal_id:
+        j = d.bank_journal
+        j.date = date
+        j.bank_account = bank_account
+        j.save(update_fields=["date", "bank_account"])
+    if d.expense_id:
+        e = d.expense
+        e.date = date
+        e.save(update_fields=["date"])
+    AuditLog.record(
+        actor=user, company=note.company, action=AuditLog.Action.UPDATE, target=note,
+        summary=f"修改票据{d.get_kind_display()} {note.doc_no}：日期 {date}（{bank_account}）")
+    return d
+
+
 # ============================= 期初往来（M5）==================================
 @transaction.atomic
 def create_opening_payable(*, company, user, supplier, amount, doc_date) -> PurchaseInvoice:

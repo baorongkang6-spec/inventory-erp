@@ -74,6 +74,7 @@ urlpatterns = [
     path("notes-receivable/<int:pk>/endorse/", views.note_receivable_endorse, name="note_receivable_endorse"),
     path("notes-receivable/<int:pk>/collect/", views.note_receivable_collect, name="note_receivable_collect"),
     path("notes-receivable/<int:pk>/discount/", views.note_receivable_discount, name="note_receivable_discount"),
+    path("note-disposals/<int:pk>/edit/", views.note_disposal_edit, name="note_disposal_edit"),
     path("note-disposals/<int:pk>/reverse/", views.note_disposal_reverse, name="note_disposal_reverse"),
     path("notes-receivable/export/", views.note_receivable_export, name="note_receivable_export"),
     path("notes-receivable/import/", views.note_receivable_import, name="note_receivable_import"),

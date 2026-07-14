@@ -2295,6 +2295,44 @@ def note_disposal_reverse(request, pk):
 
 @login_required
 @permission_required("finance.add_notesettlement", raise_exception=True)
+def note_disposal_edit(request, pk):
+    """修改票据兑付/贴现的 日期 / 收款银行账户 / 备注（金额不变，同步银行日记账）。"""
+    from .models import NoteDisposal
+    from .services import note_disposal_edit_block_reason, update_note_disposal
+    d = get_object_or_404(NoteDisposal, pk=pk, company__in=get_visible_companies(request.user))
+    accounts = BankAccount.objects.filter(company=d.company)
+
+    def _safe_next():
+        nxt = request.POST.get("next") or request.GET.get("next") or ""
+        if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+            return nxt
+        return ""
+
+    next_url = _safe_next()
+    reason = note_disposal_edit_block_reason(d)
+    if reason:
+        messages.error(request, f"不可修改：{reason}")
+        return redirect(next_url or "note_receivable_list")
+    if request.method == "POST":
+        try:
+            acc = accounts.get(pk=request.POST.get("bank_account"))
+            dt = _parse_date(request.POST.get("date")) or d.date
+            remark = request.POST.get("remark", "")
+            update_note_disposal(disposal=d, user=request.user, date=dt,
+                                 bank_account=acc, remark=remark)
+        except BankAccount.DoesNotExist:
+            messages.error(request, "请选择有效的银行账户")
+        except (SettlementError, ValueError) as e:
+            messages.error(request, f"修改失败：{e}")
+        else:
+            messages.success(request, "已更新票据兑付/贴现（含对应银行日记账日期与账户）")
+            return redirect(next_url or "note_receivable_list")
+    return render(request, "finance/note_disposal_edit.html",
+                  {"disposal": d, "accounts": accounts, "next": next_url})
+
+
+@login_required
+@permission_required("finance.add_notesettlement", raise_exception=True)
 def note_payable_settle(request, pk):
     """应付票据 → 抵应付（采购发票）。"""
     company = get_active_company(request, list(get_visible_companies(request.user)))

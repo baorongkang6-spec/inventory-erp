@@ -166,6 +166,7 @@
   - 运维踩坑：生产机若落后于 `dc01786`（"update 前自动备份 + sqlite backup API"），其在盘 `update.bat`/`backup.bat` 仍是旧版；直接跑旧 `update.bat` 会在 `git pull` 中途替换自身导致 cmd 边读边跑错乱。**落后多个提交时改手动分步**：`.\nssm stop` → 手动备份 → `git pull` → `uv sync` → `migrate` → `collectstatic` → `.\nssm start`。PowerShell 里 `nssm` 需写 `.\nssm`。
 
 ### 二、本轮（近几个 session）做完的增量（均已测试+提交+部署）
+0. **应收票据「兑付/贴现」可改（2026-07-14）**：录错兑付/贴现日期无法更正（旧只能撤销重录）。加 `update_note_disposal` + `note_disposal_edit_block_reason`——只改**日期/收款银行账户/备注**（金额、贴现息、票据消耗不变），**同步对应银行日记账的日期与账户、贴现息费用记录的日期**；票据作废或银行日记账已对账则拦截（避免破坏对账批次）。入口：应收票据使用明细处置行「撤销」旁加「修改」，`note_disposal_edit.html` 表单；权限沿用 `add_notesettlement`，`next` 安全回跳。改金额仍走「撤销重录」。
 1. **应收票据收付集成**：收款方式/付款方式下拉加「应收票据」——收款=银行账户+收到应收票据；付款=银行账户+应收票据背书抵应付。复用既有 `create_note_receivable / settle_receivable_against_sales / endorse_receivable_against_purchase`，不重写账务内核。
 2. **发票尾差手工微调**：采购/销售发票行的「税额」「含税金额」可手填（`_resolve_tax` 优先用录入值），尾差不再被自动算覆盖。
 3. **采购发票「修改」**：`update_purchase_invoice` + `purchase_invoice_edit`（对齐销售发票，保留单号、重算应付）。

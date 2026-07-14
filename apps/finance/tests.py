@@ -2041,6 +2041,51 @@ class NoteCashTests(TestCase):
         self.assertEqual(BankJournal.objects.filter(company=self.c1, source_type="NoteDisposal").count(), 0)
         self.assertEqual(ExpenseRecord.objects.filter(company=self.c1).count(), 0)
 
+    def test_update_disposal_fixes_date_and_account_syncs_journal(self):
+        """修改兑付/贴现的日期与银行账户：同步银行日记账与贴现息费用，金额不变。"""
+        from apps.finance.models import BankAccount, ExpenseRecord
+        from apps.finance.services import discount_note_receivable, update_note_disposal
+        acc2 = BankAccount.objects.create(company=self.c1, name="一般户")
+        note = self._note("1000")
+        d = discount_note_receivable(note=note, user=self.user, date=date(2026, 7, 1),
+                                     bank_account=self.acc, net_amount=Decimal("992"),
+                                     amount=Decimal("1000"), remark="录错日期")
+        update_note_disposal(disposal=d, user=self.user, date=date(2026, 6, 25),
+                             bank_account=acc2, remark="已更正")
+        d.refresh_from_db()
+        self.assertEqual(d.date, date(2026, 6, 25))
+        self.assertEqual(d.bank_account_id, acc2.pk)
+        self.assertEqual(d.remark, "已更正")
+        # 金额、贴现息、票据消耗不变
+        self.assertEqual(d.amount, Decimal("1000.00"))
+        self.assertEqual(d.net_amount, Decimal("992.00"))
+        note.refresh_from_db()
+        self.assertEqual(note.unused, Decimal("0.00"))
+        # 派生账同步：银行日记账日期/账户 + 贴现息费用日期
+        d.bank_journal.refresh_from_db()
+        self.assertEqual(d.bank_journal.date, date(2026, 6, 25))
+        self.assertEqual(d.bank_journal.bank_account_id, acc2.pk)
+        self.assertEqual(d.bank_journal.amount, Decimal("992.00"))   # 金额未变
+        exp = ExpenseRecord.objects.get(company=self.c1, category=ExpenseRecord.Category.FINANCE)
+        self.assertEqual(exp.date, date(2026, 6, 25))
+        self.assertEqual(exp.amount, Decimal("8.00"))
+
+    def test_update_disposal_blocked_when_journal_reconciled(self):
+        """对应银行日记账已对账时，禁止修改兑付/贴现（应先取消对账）。"""
+        from apps.finance.services import (
+            SettlementError, collect_note_receivable, note_disposal_edit_block_reason,
+            update_note_disposal,
+        )
+        note = self._note("1000")
+        d = collect_note_receivable(note=note, user=self.user, date=date(2026, 6, 20),
+                                    bank_account=self.acc, amount=Decimal("1000"))
+        d.bank_journal.reconciled = True
+        d.bank_journal.save(update_fields=["reconciled"])
+        self.assertIsNotNone(note_disposal_edit_block_reason(d))
+        with self.assertRaises(SettlementError):
+            update_note_disposal(disposal=d, user=self.user, date=date(2026, 6, 21),
+                                 bank_account=self.acc)
+
     def test_note_balance_counts_disposal_as_outgo(self):
         """票据余额表：兑付/贴现也算「本期发出」（票出去）。"""
         from apps.opening.reports import receivable_notes_balance
