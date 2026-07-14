@@ -366,8 +366,10 @@ def account_balance(request):
     blocks = [
         {"key": "bank", "label": "银行存款明细账户", "rows": sections["bank"]},
         {"key": "receivable", "label": "应收账款（按客户）", "rows": sections["receivable"]},
-        {"key": "payable", "label": "应付账款（按供应商）", "rows": sections["payable"]},
+        {"key": "payable", "label": "应付账款（按供应商·已收票）", "rows": sections["payable"]},
+        {"key": "ap_accrual", "label": "应付账款-暂估（按供应商·不含税）", "rows": sections["ap_accrual"]},
         {"key": "stock", "label": "库存商品（按品种·金额）", "rows": sections["stock"]},
+        {"key": "goods_shipped", "label": "发出商品（按品种·成本）", "rows": sections["goods_shipped"]},
     ]
     from apps.core.money import ZERO_MONEY
     for b in blocks:

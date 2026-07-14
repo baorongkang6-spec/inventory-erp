@@ -128,7 +128,8 @@ class OverviewReportTests(TestCase):
         from datetime import date
         from apps.opening.reports import company_overview
         ov = company_overview(self.c1, date(2026, 1, 1), date(2030, 1, 1))  # 覆盖全部
-        for key in ("bank", "stock", "payable", "receivable", "note_recv"):
+        for key in ("bank", "stock", "goods_shipped", "payable", "ap_accrual",
+                    "receivable", "note_recv"):
             r = ov[key]
             self.assertEqual(r["opening"] + r["income"] - r["outgo"], r["ending"],
                              f"{key} 四列不勾稽")
@@ -145,6 +146,55 @@ class OverviewReportTests(TestCase):
         self.assertEqual(ov["stock"]["income"], Decimal("0.00"))
         self.assertEqual(ov["stock"]["outgo"], Decimal("0.00"))
         self.assertEqual(ov["stock"]["opening"], ov["stock"]["ending"])
+
+
+class GoodsShippedApAccrualOverviewTests(TestCase):
+    """总览/账户余额：发出商品与应付暂估口径。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.purchasing.services import create_and_post_inbound
+        from apps.sales.services import create_and_post_outbound
+        from apps.finance.services import create_purchase_invoice, create_sales_invoice
+        from apps.masterdata.models import Customer, Supplier
+        from datetime import date
+
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        # 5/20 入库 100@10；6/10 出库 40；7/1 收票入库；7/5 开票出库
+        create_and_post_inbound(
+            company=cls.c1, user=None, doc_date=date(2026, 5, 20), supplier=cls.sup,
+            lines=[{"product": cls.p, "quantity": Decimal("100"), "unit_price": Decimal("10"),
+                    "tax_rate": Decimal("0")}])
+        cls.ob = create_and_post_outbound(
+            company=cls.c1, user=None, doc_date=date(2026, 6, 10), customer=cls.cust,
+            lines=[{"product": cls.p, "quantity": Decimal("40"), "sale_unit_price": Decimal("15"),
+                    "tax_rate": Decimal("0")}])
+        ib = cls.c1.purchaseinbound_set.order_by("id").first()
+        create_purchase_invoice(
+            company=cls.c1, user=None, doc_date=date(2026, 7, 1), supplier=cls.sup,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0"), "quantity": Decimal("100"),
+                    "source_inbound_line": ib.lines.first()}])
+        create_sales_invoice(
+            company=cls.c1, user=None, doc_date=date(2026, 7, 5), customer=cls.cust,
+            lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("600"),
+                    "tax_rate": Decimal("0"), "quantity": Decimal("40"),
+                    "source_outbound_line": cls.ob.lines.first()}])
+
+    def test_june_ending_balances(self):
+        from datetime import date
+        from apps.opening.reports import company_overview, account_balance_table
+        ov = company_overview(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        # 6月末：入库未收票1000；出库未开票成本400
+        self.assertEqual(ov["ap_accrual"]["ending"], Decimal("1000.00"))
+        self.assertEqual(ov["goods_shipped"]["ending"], Decimal("400.00"))
+        self.assertEqual(ov["goods_shipped"]["income"], Decimal("400.00"))
+        t = account_balance_table([self.c1], date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(t["ap_accrual"][0]["ending"], Decimal("1000.00"))
+        self.assertEqual(t["goods_shipped"][0]["ending"], Decimal("400.00"))
 
 
 class AccountBalanceTableTests(TestCase):
@@ -226,10 +276,12 @@ class AccountBalanceTableTests(TestCase):
         ws = load_workbook(BytesIO(resp.content)).active
         rows = list(ws.iter_rows(values_only=True))
         total_rows = [r for r in rows if r[2] == "合计"]
-        # 本数据有 银行/应付/库存 三个分组有数据（无应收）
-        self.assertEqual(len(total_rows), 3)
+        # 银行/应付/应付暂估/库存 有数据（无应收、无发出商品）
+        self.assertEqual(len(total_rows), 4)
         bank_total = next(r for r in total_rows if r[0] == "银行存款明细账户")
         self.assertEqual(Decimal(str(bank_total[6])), Decimal("500.00"))
+        accrual_total = next(r for r in total_rows if "暂估" in str(r[0]))
+        self.assertEqual(Decimal(str(accrual_total[6])), Decimal("1000.00"))
 
 
 class QueryCenterTests(TestCase):

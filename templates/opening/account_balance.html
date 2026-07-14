@@ -6,7 +6,8 @@
   <a class="btn btn-outline-success btn-sm"
      href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
-<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末；金额单位元。支持多公司联合查询（不选=全部）。默认月初~今天。</p>
+<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末；金额单位元。
+  含发出商品（成本）、应付账款-暂估（不含税）。支持多公司联合查询（不选=全部）。默认月初~今天。</p>
 
 <form method="get" class="mb-3">
   {% include "_company_filter.html" %}

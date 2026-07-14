@@ -57,7 +57,7 @@ def _period(inc_qs, dec_qs, inc_dfield, dec_dfield, dfrom, dto, inc_field="amoun
 
 
 def company_overview(company, dfrom, dto):
-    """返回 dict：5 类各自 {opening, income, outgo, ending}，按 [dfrom,dto] 统计。"""
+    """返回 dict：各类 {opening, income, outgo, ending}，按 [dfrom,dto] 统计。"""
     # 银行存款（期初余额 + 区间前日记账净额 = 期初）
     bank_open0 = round_money(
         BankAccount.objects.filter(company=company).aggregate(v=Sum("opening_balance"))["v"] or Z)
@@ -77,6 +77,9 @@ def company_overview(company, dfrom, dto):
     _add_opening(stock, _s(open_moves.filter(direction=StockMove.Direction.IN))
                  - _s(open_moves.filter(direction=StockMove.Direction.OUT)))
 
+    # 发出商品（成本）：增=本期销售出库结转成本；减=本期开票对应出库成本
+    goods_shipped = goods_shipped_period(company, dfrom, dto)
+
     # 供应商往来（应付）：期初发票(is_opening)恒计期初；增=本期采购发票；减=付款核销+票据抵付
     ap_all = PurchaseInvoice.objects.filter(company=company, status=PurchaseInvoice.Status.REGISTERED)
     ap_inv = ap_all.filter(is_opening=False)
@@ -85,6 +88,9 @@ def company_overview(company, dfrom, dto):
     payable = _merge_period(ap_inv, "doc_date", "amount_taxed",
                             [(ap_pay, "created_at__date"), (ap_note, "created_at__date")], dfrom, dto)
     _add_opening(payable, _s(ap_all.filter(is_opening=True), "amount_taxed"))
+
+    # 应付账款-暂估（不含税）：增=本期外部采购入库；减=本期收票对应入库不含税
+    ap_accrual = ap_accrual_period(company, dfrom, dto)
 
     # 客户往来（应收）：期初发票恒计期初；增=本期销售发票；减=收款核销+应收票据冲应收
     ar_all = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
@@ -107,7 +113,8 @@ def company_overview(company, dfrom, dto):
                               [(nr_use, "created_at__date"), (nr_disp, "date")], dfrom, dto)
     _add_opening(note_recv, _s(nr_all.filter(is_opening=True), "amount"))
 
-    return {"bank": bank, "stock": stock, "payable": payable,
+    return {"bank": bank, "stock": stock, "goods_shipped": goods_shipped,
+            "payable": payable, "ap_accrual": ap_accrual,
             "receivable": receivable, "note_recv": note_recv}
 
 
@@ -133,7 +140,9 @@ def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
 CATEGORIES = [
     ("bank", "银行存款", "bank_accounts_report"),
     ("stock", "库存商品（金额）", "stock_products_report"),
+    ("goods_shipped", "发出商品", "shipped_uninvoiced_report"),
     ("payable", "供应商往来（应付）", "payable_partners_report"),
+    ("ap_accrual", "应付账款-暂估", "received_uninvoiced_report"),
     ("receivable", "客户往来（应收）", "receivable_partners_report"),
     ("note_recv", "应收票据", "receivable_notes_report"),
 ]
@@ -252,12 +261,141 @@ def stock_products_balance(company, dfrom, dto):
     return rows
 
 
+def _attr_cost(src_line, inv_qty, amount_field="amount"):
+    """发票数量对应源出入库行金额（按数量比例分摊）。"""
+    if src_line is None or not src_line.quantity:
+        return Z
+    qty = inv_qty or Decimal("0.000")
+    return round_money(getattr(src_line, amount_field) * (qty / src_line.quantity))
+
+
+def goods_shipped_products_balance(company, dfrom, dto):
+    """发出商品按商品：增=本期销售出库结转成本；减=本期开票对应出库成本。
+
+    不含借出/归还。期末=期初+增−减，与「已出库未开票」截止日余额同口径。
+    """
+    from apps.finance.models import SalesInvoice, SalesInvoiceLine
+    from apps.sales.models import SalesOutbound, SalesOutboundLine
+
+    data = {}
+    def bucket(product):
+        return data.setdefault(product, {"opening": Z, "income": Z, "outgo": Z})
+
+    lines = (SalesOutboundLine.objects
+             .filter(outbound__company=company,
+                     outbound__sales_type=SalesOutbound.SalesType.SALE)
+             .exclude(outbound__status=SalesOutbound.Status.VOID)
+             .select_related("product", "outbound"))
+    for ln in lines:
+        d = bucket(ln.product)
+        if ln.outbound.doc_date < dfrom:
+            d["opening"] += ln.amount
+        elif ln.outbound.doc_date <= dto:
+            d["income"] += ln.amount
+
+    inv_lines = (SalesInvoiceLine.objects
+                 .filter(invoice__company=company,
+                         invoice__status=SalesInvoice.Status.REGISTERED,
+                         invoice__is_opening=False,
+                         source_outbound_line__isnull=False)
+                 .select_related("source_outbound_line", "source_outbound_line__product", "invoice"))
+    for il in inv_lines:
+        ob = il.source_outbound_line
+        cost = _attr_cost(ob, il.quantity, "amount")
+        if not cost:
+            continue
+        d = bucket(ob.product)
+        if il.invoice.doc_date < dfrom:
+            d["opening"] -= cost
+        elif il.invoice.doc_date <= dto:
+            d["outgo"] += cost
+
+    rows = []
+    for product, d in sorted(data.items(), key=lambda kv: (kv[0].code if kv[0] else "")):
+        ending = d["opening"] + d["income"] - d["outgo"]
+        if d["opening"] or d["income"] or d["outgo"] or ending:
+            rows.append({"product": product, "opening": d["opening"], "income": d["income"],
+                         "outgo": d["outgo"], "ending": ending})
+    return rows
+
+
+def goods_shipped_period(company, dfrom, dto):
+    """发出商品公司合计行。"""
+    opening = income = outgo = Z
+    for r in goods_shipped_products_balance(company, dfrom, dto):
+        opening += r["opening"]
+        income += r["income"]
+        outgo += r["outgo"]
+    return _row(opening, income, outgo, opening + income - outgo)
+
+
+def ap_accrual_partners_balance(company, dfrom, dto):
+    """应付账款-暂估按供应商（不含税）：增=本期外部采购入库；减=本期收票对应入库不含税。
+
+    借调入库不纳入。期末与「已入库未收票」截止日余额同口径。
+    """
+    from apps.finance.models import PurchaseInvoice, PurchaseInvoiceLine
+    from apps.purchasing.models import PurchaseInbound, PurchaseInboundLine
+
+    data = {}
+    def bucket(supplier):
+        return data.setdefault(supplier, {"opening": Z, "income": Z, "outgo": Z})
+
+    lines = (PurchaseInboundLine.objects
+             .filter(inbound__company=company,
+                     inbound__purchase_type=PurchaseInbound.PurchaseType.EXTERNAL)
+             .exclude(inbound__status=PurchaseInbound.Status.VOID)
+             .select_related("inbound", "inbound__supplier"))
+    for ln in lines:
+        d = bucket(ln.inbound.supplier)
+        if ln.inbound.doc_date < dfrom:
+            d["opening"] += ln.amount_untaxed
+        elif ln.inbound.doc_date <= dto:
+            d["income"] += ln.amount_untaxed
+
+    inv_lines = (PurchaseInvoiceLine.objects
+                 .filter(invoice__company=company,
+                         invoice__status=PurchaseInvoice.Status.REGISTERED,
+                         invoice__is_opening=False,
+                         source_inbound_line__isnull=False)
+                 .select_related("source_inbound_line", "source_inbound_line__inbound",
+                                 "source_inbound_line__inbound__supplier", "invoice"))
+    for il in inv_lines:
+        ib = il.source_inbound_line
+        amt = _attr_cost(ib, il.quantity, "amount_untaxed")
+        if not amt:
+            continue
+        d = bucket(ib.inbound.supplier)
+        if il.invoice.doc_date < dfrom:
+            d["opening"] -= amt
+        elif il.invoice.doc_date <= dto:
+            d["outgo"] += amt
+
+    rows = []
+    for supplier, d in sorted(data.items(), key=lambda kv: (kv[0].code if kv[0] else "")):
+        ending = d["opening"] + d["income"] - d["outgo"]
+        if d["opening"] or d["income"] or d["outgo"] or ending:
+            rows.append({"partner": supplier, "opening": d["opening"], "income": d["income"],
+                         "outgo": d["outgo"], "ending": ending})
+    return rows
+
+
+def ap_accrual_period(company, dfrom, dto):
+    """应付账款-暂估公司合计行。"""
+    opening = income = outgo = Z
+    for r in ap_accrual_partners_balance(company, dfrom, dto):
+        opening += r["opening"]
+        income += r["income"]
+        outgo += r["outgo"]
+    return _row(opening, income, outgo, opening + income - outgo)
+
+
 def account_balance_table(companies, dfrom, dto):
-    """三公司明细账户余额：银行分账户 / 库存按品种 / 应付按供应商 / 应收按客户。
+    """明细账户余额：银行 / 库存 / 发出商品 / 应付 / 应付暂估 / 应收。
 
     每行 期初(区间前净)/本期收入(增)/本期发出(减)/期末。低数据量，用 Python 归并。
     """
-    bank_rows, stock_rows, ap_rows, ar_rows = [], [], [], []
+    bank_rows, stock_rows, shipped_rows, ap_rows, accrual_rows, ar_rows = [], [], [], [], [], []
     for company in companies:
         # 银行：每账户
         for r in bank_accounts_balance(company, dfrom, dto):
@@ -272,6 +410,14 @@ def account_balance_table(companies, dfrom, dto):
                                "opening": r["opening"], "income": r["income"],
                                "outgo": r["outgo"], "ending": r["ending"]})
 
+        # 发出商品：每商品（成本）
+        for r in goods_shipped_products_balance(company, dfrom, dto):
+            prod = r["product"]
+            name = f"{prod.code} {prod.name}" if prod else "（未指定商品）"
+            shipped_rows.append({"company": company, "name": name,
+                                 "opening": r["opening"], "income": r["income"],
+                                 "outgo": r["outgo"], "ending": r["ending"]})
+
         # 应付：每供应商
         ap_rows += _partner_rows(
             company,
@@ -281,6 +427,17 @@ def account_balance_table(companies, dfrom, dto):
             lambda a: a.invoice.supplier,
             NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE),
             PurchaseInvoice, dfrom, dto)
+
+        # 应付账款-暂估：每供应商（不含税）
+        for r in ap_accrual_partners_balance(company, dfrom, dto):
+            partner = r["partner"]
+            accrual_rows.append({
+                "company": company,
+                "name": str(partner) if partner else "（未指定供应商）",
+                "opening": r["opening"], "income": r["income"],
+                "outgo": r["outgo"], "ending": r["ending"],
+            })
+
         # 应收：每客户
         ar_rows += _partner_rows(
             company,
@@ -292,7 +449,8 @@ def account_balance_table(companies, dfrom, dto):
                                           is_endorsement=False),
             SalesInvoice, dfrom, dto)
 
-    return {"bank": bank_rows, "stock": stock_rows, "payable": ap_rows, "receivable": ar_rows}
+    return {"bank": bank_rows, "stock": stock_rows, "goods_shipped": shipped_rows,
+            "payable": ap_rows, "ap_accrual": accrual_rows, "receivable": ar_rows}
 
 
 def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner, note_settlements,

@@ -6,7 +6,8 @@
   <a class="btn btn-outline-success btn-sm"
      href="?from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}&export=xlsx">导出 Excel</a>
 </div>
-<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末结存；金额单位元。默认月初~今天。</p>
+<p class="text-muted">口径：期初（区间起始日之前累计）+ 本期收入 − 本期发出 = 期末结存；金额单位元。
+  含「发出商品」（出库成本未开票）与「应付账款-暂估」（入库不含税未收票）。默认月初~今天。</p>
 
 <form method="get" class="row g-2 mb-3 align-items-end">
   <div class="col-auto"><label class="form-label">期初日期</label>
