@@ -1,5 +1,5 @@
 @echo off
-REM ERP 一键更新（右键 → 以管理员身份运行）
+REM ERP one-click update (Run as Administrator).
 cd /d C:\inventory-erp
 echo [1/6] backup ...
 call backup.bat nopause
