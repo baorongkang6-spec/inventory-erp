@@ -12,6 +12,7 @@ env/
 *.sqlite3
 /media/
 /staticfiles/
+/backups/
 
 # 环境变量 / 密钥（不要上传）
 .env
