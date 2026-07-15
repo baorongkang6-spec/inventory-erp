@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}生成入库 · {{ order.doc_no }}{% endblock %}
+{% block content %}
+<h4 class="mb-3">由订单生成入库<small class="text-muted fs-6 ms-2">{{ order.doc_no }}</small></h4>
+<form method="post">
+  {% csrf_token %}
+  <div class="card mb-2">
+    <div class="card-body py-2 row g-2">
+      <div class="col-md-3"><label class="form-label mb-0 small">{{ form.doc_date.label }}</label>{{ form.doc_date }}</div>
+      <div class="col-md-6"><label class="form-label mb-0 small">{{ form.remark.label }}</label>{{ form.remark }}</div>
+    </div>
+  </div>
+  <div class="card mb-3">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th>行号</th><th>商品</th><th class="text-end">待收货</th><th class="text-end">本次收货</th></tr>
+        </thead>
+        <tbody>
+          {% for r in recv_rows %}
+          <tr>
+            <td>{{ r.line.line_no }}</td>
+            <td>{{ r.line.product.code }} {{ r.line.product.name }}</td>
+            <td class="text-end">{{ r.remain }}</td>
+            <td class="text-end" style="max-width:8rem">
+              <input type="number" step="0.001" min="0" max="{{ r.remain }}" name="qty_{{ r.line.pk }}"
+                     value="{{ r.remain }}" class="form-control form-control-sm text-end">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">保存并过账</button>
+    <a href="{% url 'purchase_order_detail' order.pk %}" class="btn btn-outline-secondary">取消</a>
+  </div>
+</form>
+{% endblock %}

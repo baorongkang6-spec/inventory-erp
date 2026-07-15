@@ -10,6 +10,7 @@ from django.urls import NoReverseMatch, reverse
 # source_type → URL 名（详情页接受单个 pk 参数）
 SOURCE_URL_NAMES = {
     "PurchaseInbound": "inbound_detail",
+    "PurchaseOrder": "purchase_order_detail",
     "SalesOutbound": "outbound_detail",
     "SalesOrder": "order_detail",
     "Payment": "payment_detail",

@@ -52,6 +52,10 @@ class PurchaseInvoice(CompanyScopedModel):
     term_days = models.PositiveIntegerField("账期(天)", default=0,
                                             help_text="0=即期；到期日 = 开票日期 + 账期天数")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="供应商")
+    purchase_order = models.ForeignKey(
+        "purchasing.PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="invoices", verbose_name="来源采购订单",
+    )
     amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
@@ -111,6 +115,10 @@ class PurchaseInvoiceLine(models.Model):
     source_inbound_line = models.ForeignKey(
         "purchasing.PurchaseInboundLine", on_delete=models.SET_NULL,
         null=True, blank=True, verbose_name="来源入库明细",
+    )
+    order_line = models.ForeignKey(
+        "purchasing.PurchaseOrderLine", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="invoice_lines", verbose_name="来源订单行",
     )
 
     class Meta:

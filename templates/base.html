@@ -40,11 +40,12 @@
         </li>
         {% endif %}
 
-        {# 采购：入库 → 发票 → 付款 #}
-        {% if perms.purchasing.view_purchaseinbound or perms.finance.view_purchaseinvoice or perms.finance.view_payment %}
+        {# 采购：订单 → 入库 → 发票 → 付款 #}
+        {% if perms.purchasing.view_purchaseorder or perms.purchasing.view_purchaseinbound or perms.finance.view_purchaseinvoice or perms.finance.view_payment %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">采购</a>
           <ul class="dropdown-menu">
+            {% if perms.purchasing.view_purchaseorder %}<li><a class="dropdown-item" href="{% url 'purchase_order_list' %}">采购订单</a></li>{% endif %}
             {% if perms.purchasing.view_purchaseinbound %}<li><a class="dropdown-item" href="{% url 'inbound_list' %}">采购入库</a></li>{% endif %}
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'purchase_invoice_list' %}">采购发票</a></li>{% endif %}
             {% if perms.finance.view_payment %}<li><a class="dropdown-item" href="{% url 'payment_list' %}">付款</a></li>{% endif %}

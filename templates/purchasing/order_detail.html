@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ order.doc_no }} · 采购订单{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">采购订单 {{ order.doc_no }}
+    {% if order.status == 'void' %}<span class="badge text-bg-danger">已作废</span>{% endif %}</h4>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if can_receive and perms.purchasing.add_purchaseinbound %}
+    <a href="{% url 'purchase_order_receive' order.pk %}" class="btn btn-primary btn-sm">生成入库</a>
+    {% endif %}
+    {% if can_invoice and perms.finance.add_purchaseinvoice %}
+    <a href="{% url 'purchase_order_invoice' order.pk %}" class="btn btn-success btn-sm">生成发票</a>
+    {% endif %}
+    {% if can_edit and perms.purchasing.change_purchaseorder %}
+    <a href="{% url 'purchase_order_edit' order.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
+    {% endif %}
+    {% if can_void and perms.purchasing.change_purchaseorder %}
+    <form method="post" action="{% url 'purchase_order_void' order.pk %}" onsubmit="return confirm('确认作废本订单？');">
+      {% csrf_token %}<button type="submit" class="btn btn-outline-danger btn-sm">作废</button>
+    </form>
+    {% endif %}
+    <a href="{% url 'purchase_order_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body row g-2">
+    <div class="col-md-3"><span class="text-muted">公司：</span>{{ order.company }}</div>
+    <div class="col-md-3"><span class="text-muted">日期：</span>{{ order.doc_date }}</div>
+    <div class="col-md-3"><span class="text-muted">供应商：</span>{{ order.supplier }}</div>
+    <div class="col-md-3"><span class="text-muted">状态：</span>{{ order.get_status_display }}</div>
+    <div class="col-md-3"><span class="text-muted">收货：</span>{{ order.get_receive_status_display }}</div>
+    <div class="col-md-3"><span class="text-muted">收票：</span>{{ order.get_invoice_status_display }}</div>
+    <div class="col-md-3"><span class="text-muted">付款：</span>{{ order.get_payment_status_display }}</div>
+    <div class="col-md-9"><span class="text-muted">备注：</span>{{ order.remark|default:"—" }}</div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">订单明细</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>行号</th><th>商品</th><th class="text-end">订单数量</th>
+            <th class="text-end">已收货</th><th class="text-end">待收货</th>
+            <th class="text-end">已收票</th><th class="text-end">待收票</th>
+            <th class="text-end">不含税</th><th class="text-end">含税</th></tr>
+      </thead>
+      <tbody>
+        {% for r in line_rows %}
+        <tr>
+          <td>{{ r.line.line_no }}</td>
+          <td>{{ r.line.product.code }} {{ r.line.product.name }}</td>
+          <td class="text-end">{{ r.line.quantity }}</td>
+          <td class="text-end">{{ r.qty_received }}</td>
+          <td class="text-end">{{ r.qty_open_receive }}</td>
+          <td class="text-end">{{ r.qty_invoiced }}</td>
+          <td class="text-end">{{ r.qty_open_invoice }}</td>
+          <td class="text-end">{{ r.line.amount_untaxed }}</td>
+          <td class="text-end">{{ r.line.amount_taxed }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light fw-semibold">
+        <tr><td colspan="2">合计</td>
+            <td class="text-end">{{ order.total_quantity }}</td>
+            <td colspan="4"></td>
+            <td class="text-end">{{ order.total_untaxed }}</td>
+            <td class="text-end">{{ order.total_taxed }}</td></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+{% if order.inbounds.all %}
+<div class="card mb-3">
+  <div class="card-header">关联入库</div>
+  <ul class="list-group list-group-flush">
+    {% for ib in order.inbounds.all %}
+    <li class="list-group-item d-flex justify-content-between">
+      <a href="{% url 'inbound_detail' ib.pk %}">{{ ib.doc_no }}</a>
+      <span>{{ ib.doc_date }} · {{ ib.get_status_display }} · 数量 {{ ib.total_quantity }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% if order.invoices.all %}
+<div class="card mb-3">
+  <div class="card-header">关联发票</div>
+  <ul class="list-group list-group-flush">
+    {% for inv in order.invoices.all %}
+    <li class="list-group-item d-flex justify-content-between">
+      <a href="{% url 'purchase_invoice_detail' inv.pk %}">{{ inv.doc_no }}</a>
+      <span>{{ inv.doc_date }} · {{ inv.get_status_display }} · 含税 {{ inv.amount_taxed }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

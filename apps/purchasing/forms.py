@@ -97,3 +97,43 @@ class BaseInboundLineFormSet(forms.BaseFormSet):
 InboundLineFormSet = forms.formset_factory(
     InboundLineForm, formset=BaseInboundLineFormSet, extra=3
 )
+
+
+class PurchaseOrderHeaderForm(BootstrapForm):
+    doc_date = forms.DateField(label="订单日期")
+    supplier = forms.ModelChoiceField(
+        label="供应商", queryset=Supplier.objects.none(), empty_label="请选择供应商"
+    )
+    remark = forms.CharField(label="备注", required=False, max_length=255)
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["supplier"].queryset = Supplier.objects.filter(
+                company=company, is_active=True
+            )
+
+
+class PurchaseOrderLineForm(InboundLineForm):
+    pass
+
+
+class BasePurchaseOrderLineFormSet(BaseInboundLineFormSet):
+    pass
+
+
+PurchaseOrderLineFormSet = forms.formset_factory(
+    PurchaseOrderLineForm, formset=BasePurchaseOrderLineFormSet, extra=3
+)
+
+
+class PurchaseOrderReceiveForm(BootstrapForm):
+    doc_date = forms.DateField(label="入库日期")
+    remark = forms.CharField(label="备注", required=False, max_length=255)
+
+
+class PurchaseOrderInvoiceForm(BootstrapForm):
+    doc_date = forms.DateField(label="收票日期")
+    invoice_no = forms.CharField(label="发票号码", required=False, max_length=64)
+    term_days = forms.IntegerField(label="账期(天)", required=False, min_value=0, initial=0)
+    remark = forms.CharField(label="备注", required=False, max_length=255)

@@ -48,18 +48,20 @@ def _resolve_tax(untaxed, rate, ln):
 
 @transaction.atomic
 def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
-                            invoice_no="", remark="", term_days=0) -> PurchaseInvoice:
+                            invoice_no="", remark="", term_days=0,
+                            purchase_order=None) -> PurchaseInvoice:
     """登记采购发票并产生应付账款（发票即应付单据）。
 
     lines: [{"product": Product|None, "description": str,
              "amount_untaxed": Decimal, "tax_rate": Decimal,
-             "source_inbound_line": PurchaseInboundLine|None}, ...]
+             "source_inbound_line": PurchaseInboundLine|None,
+             "order_line": PurchaseOrderLine|None}, ...]
     """
     inv = PurchaseInvoice.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(PurchaseInvoice, company, "CGF", doc_date),
         invoice_no=invoice_no, doc_date=doc_date, term_days=term_days or 0,
-        supplier=supplier, remark=remark,
+        supplier=supplier, remark=remark, purchase_order=purchase_order,
     )
 
     total_untaxed = ZERO_MONEY
@@ -74,6 +76,7 @@ def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
             quantity=ln.get("quantity") or ZERO_QTY,
             amount_untaxed=untaxed, tax_rate=rate, tax_amount=tax, amount_taxed=taxed,
             source_inbound_line=ln.get("source_inbound_line"),
+            order_line=ln.get("order_line"),
         )
         total_untaxed += untaxed
         total_tax += tax
@@ -228,6 +231,9 @@ def void_purchase_invoice_doc(inv, user=None):
         raise SettlementError("已核销（或被票据抵冲）的发票不可作废，请先撤销核销")
     inv.status = PurchaseInvoice.Status.VOID
     inv.save(update_fields=["status"])
+    if inv.purchase_order_id:
+        from apps.purchasing.order_services import refresh_order_status
+        refresh_order_status(inv.purchase_order)
     AuditLog.record(actor=user, company=inv.company, action=AuditLog.Action.VOID, target=inv,
                     summary=f"作废采购发票 {inv.doc_no}（撤销应付 {inv.amount_taxed}）")
     return inv

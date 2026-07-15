@@ -16,14 +16,12 @@ from .models import PurchaseInbound, PurchaseInboundLine
 def create_and_post_inbound(*, company, user, doc_date, lines,
                             supplier=None, remark="", expenses=None,
                             purchase_type=PurchaseInbound.PurchaseType.EXTERNAL,
-                            borrow_counterparty="") -> PurchaseInbound:
+                            borrow_counterparty="",
+                            purchase_order=None) -> PurchaseInbound:
     """创建采购入库单并逐行过账增加库存。
 
-    lines: [{"product": Product, "quantity": Decimal, "unit_price": Decimal}, ...]
-    expenses: [{"category": ExpenseCategory, "amount": Decimal}, ...]（其他费用，SPEC §6.2）
-      计入成本的费用按各行基础金额比例分摊抬高入库成本（影响移动加权），余数归最后一行；
-      不计入成本的作期间费用记录。
-    整个过程在事务内：任一行异常则全部回滚。
+    lines: [{"product": Product, "quantity": Decimal, "unit_price": Decimal, 可选 order_line}, ...]
+    purchase_order: 可选来源采购订单（M18）。
     """
     doc = PurchaseInbound.objects.create(
         company=company,
@@ -33,6 +31,7 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
         supplier=supplier,
         purchase_type=purchase_type,
         remark=remark,
+        purchase_order=purchase_order,
     )
     total_qty, total_amount = _apply_inbound_lines(
         doc, user, doc_date, lines, expenses, purchase_type, supplier, borrow_counterparty)
@@ -76,7 +75,8 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
         rate = ln.get("tax_rate", DEFAULT_TAX_RATE)
         untaxed, tax, taxed = _line_amounts(qty, rate, ln)
         norm.append({"product": ln["product"], "quantity": qty, "tax_rate": rate,
-                     "untaxed": untaxed, "tax": tax, "taxed": taxed})
+                     "untaxed": untaxed, "tax": tax, "taxed": taxed,
+                     "order_line": ln.get("order_line")})
     base = [x["untaxed"] for x in norm]
     base_total = sum(base, ZERO_MONEY)
 
@@ -110,6 +110,7 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
             unit_price=move.unit_price, tax_rate=x["tax_rate"],
             amount_untaxed=b, tax_amount=x["tax"], amount_taxed=x["taxed"],
             amount=move.amount, stock_move=move,
+            order_line=x.get("order_line"),
         )
         total_qty = round_qty(total_qty + x["quantity"])
         total_amount = round_money(total_amount + move.amount)
@@ -239,6 +240,9 @@ def void_purchase_inbound(doc, user=None, *, _from_source=False):
         company=doc.company, source_type="PurchaseInbound", source_id=str(doc.pk)).delete()
     doc.status = PurchaseInbound.Status.VOID
     doc.save(update_fields=["status"])
+    if doc.purchase_order_id:
+        from .order_services import refresh_order_status
+        refresh_order_status(doc.purchase_order)
     AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.VOID, target=doc,
                     summary=f"作废采购入库 {doc.doc_no}（反冲库存）")
     return doc
