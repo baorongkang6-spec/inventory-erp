@@ -295,7 +295,9 @@ def goods_shipped_products_balance(company, dfrom, dto):
              .select_related("product", "outbound"))
     for ln in lines:
         d = bucket(ln.product)
-        if ln.outbound.doc_date < dfrom:
+        if ln.outbound.is_opening:
+            d["opening"] += ln.amount
+        elif ln.outbound.doc_date < dfrom:
             d["opening"] += ln.amount
         elif ln.outbound.doc_date <= dto:
             d["income"] += ln.amount
@@ -385,7 +387,10 @@ def goods_shipped_detail(companies, dfrom, dto):
         else:
             before_qty = billed_before.get(ln.pk, ZQ)
             period_qty = billed_period.get(ln.pk, ZQ)
-            if ob.doc_date < dfrom:
+            if ob.is_opening:
+                opening = round_money(cost - _attr_cost(ln, before_qty, "amount"))
+                income = Z
+            elif ob.doc_date < dfrom:
                 opening = round_money(cost - _attr_cost(ln, before_qty, "amount"))
                 income = Z
             elif ob.doc_date <= dto:
@@ -432,7 +437,9 @@ def ap_accrual_partners_balance(company, dfrom, dto):
              .select_related("inbound", "inbound__supplier"))
     for ln in lines:
         d = bucket(ln.inbound.supplier)
-        if ln.inbound.doc_date < dfrom:
+        if ln.inbound.is_opening:
+            d["opening"] += ln.amount_untaxed
+        elif ln.inbound.doc_date < dfrom:
             d["opening"] += ln.amount_untaxed
         elif ln.inbound.doc_date <= dto:
             d["income"] += ln.amount_untaxed

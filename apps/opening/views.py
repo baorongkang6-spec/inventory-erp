@@ -99,6 +99,8 @@ OPENING_CLEAR_KINDS = (
     ("bank", "期初银行存款"),
     ("note_receivable", "期初应收票据"),
     ("note_payable", "期初应付票据"),
+    ("goods_shipped", "期初发出商品"),
+    ("ap_accrual", "期初应付账款-暂估"),
 )
 
 
@@ -132,6 +134,20 @@ def _opening_clear_kind_block_reason(company, kind):
         for n in NotePayable.objects.filter(company=company, is_opening=True):
             if n.settled_amount > 0:
                 return f"期初应付票据 {n.doc_no} 已有使用"
+        return None
+    if kind == "goods_shipped":
+        from apps.finance.models import SalesInvoiceLine
+        if SalesInvoiceLine.objects.filter(
+                source_outbound_line__outbound__company=company,
+                source_outbound_line__outbound__is_opening=True).exists():
+            return "期初发出商品已有开票关联"
+        return None
+    if kind == "ap_accrual":
+        from apps.finance.models import PurchaseInvoiceLine
+        if PurchaseInvoiceLine.objects.filter(
+                source_inbound_line__inbound__company=company,
+                source_inbound_line__inbound__is_opening=True).exists():
+            return "期初应付暂估已有收票关联"
         return None
     return "未知类别"
 
@@ -188,6 +204,14 @@ def opening_clear(request):
         StockMove.objects.filter(company=company, source_type="Opening").delete()
         StockBalance.objects.filter(company=company).delete()
         BankAccount.objects.filter(company=company).update(opening_balance=0)
+        from apps.purchasing.models import PurchaseInbound
+        from apps.sales.models import SalesOutbound
+        for doc in list(SalesOutbound.objects.filter(company=company, is_opening=True)):
+            doc.lines.all().delete()
+            doc.delete()
+        for doc in list(PurchaseInbound.objects.filter(company=company, is_opening=True)):
+            doc.lines.all().delete()
+            doc.delete()
     messages.success(request, "已清空本账套期初数据，可重新「下载模板」修正后导入。")
     return redirect("opening_import")
 
@@ -233,6 +257,16 @@ def opening_clear_kind(request, kind):
             NoteReceivable.objects.filter(company=company, is_opening=True).delete()
         elif kind == "note_payable":
             NotePayable.objects.filter(company=company, is_opening=True).delete()
+        elif kind == "goods_shipped":
+            from apps.sales.models import SalesOutbound
+            for doc in list(SalesOutbound.objects.filter(company=company, is_opening=True)):
+                doc.lines.all().delete()
+                doc.delete()
+        elif kind == "ap_accrual":
+            from apps.purchasing.models import PurchaseInbound
+            for doc in list(PurchaseInbound.objects.filter(company=company, is_opening=True)):
+                doc.lines.all().delete()
+                doc.delete()
     messages.success(request, f"已清空{labels[kind]}，可重新导入修正。")
     return redirect("opening_import")
 

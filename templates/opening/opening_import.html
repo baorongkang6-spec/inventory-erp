@@ -3,7 +3,8 @@
 {% block content %}
 <h4 class="mb-1">期初数据导入<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
 <p class="text-muted">启用日（期初基准日）：<strong>{{ opening_date }}</strong>。
-  下载一个模板（每类一个 sheet）→各 sheet 填好→上传一次全部导入。</p>
+      下载一个模板（每类一个 sheet）→各 sheet 填好→上传一次全部导入。
+  发出商品/应付暂估仅记台账、不重复动库存（仓库结存在「期初库存」sheet）。</p>
 
 <div class="card mb-4" style="max-width: 720px;">
   <div class="card-body d-flex flex-wrap align-items-center gap-2">
@@ -68,6 +69,7 @@
       期初已锁定，不可导入；请先解锁。
       {% else %}
       不需要的类别留空即可；库存为<b>数量金额式</b>（数量 + 金额，不录单价）。
+      「发出商品」「应付账款-暂估」只记台账、<b>不重复加减库存</b>（仓库结存请填「期初库存」）。
       <b>未启用时重复导入会覆盖更新</b>已有期初（非跳过）。
       {% endif %}
     </p>

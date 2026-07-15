@@ -433,7 +433,57 @@ class OpeningImportViewTests(TestCase):
         wb = load_workbook(BytesIO(resp.content))
         self.assertIn("期初库存", wb.sheetnames)
         self.assertIn("期初应付", wb.sheetnames)
+        self.assertIn("期初发出商品", wb.sheetnames)
+        self.assertIn("期初应付账款-暂估", wb.sheetnames)
         self.assertEqual([c.value for c in wb["期初库存"][1]], ["商品编码", "数量", "金额"])
+        self.assertEqual(
+            [c.value for c in wb["期初发出商品"][1]],
+            ["客户编码(可空)", "商品编码", "数量", "结转成本", "售价不含税(可空)"])
+        self.assertEqual(
+            [c.value for c in wb["期初应付账款-暂估"][1]],
+            ["供应商编码", "商品编码", "数量", "不含税金额"])
+
+    def test_import_goods_shipped_and_ap_accrual(self):
+        """期初发出商品/暂估导入进总览期初，且不改库存结存。"""
+        from datetime import date
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
+        from apps.inventory.models import StockBalance
+        from apps.masterdata.models import Supplier
+        from apps.opening.reports import company_overview
+        from apps.purchasing.models import PurchaseInbound
+        from apps.sales.models import SalesOutbound
+
+        Supplier.objects.create(company=self.c1, code="S1", name="供甲")
+        # 先有期初库存，确认发出商品导入不减库存
+        from apps.opening.imports import _apply_stock
+        _apply_stock(self.c1, self.user, [(2, ["P001", 100, 1000])])
+        self.assertEqual(StockBalance.objects.get(company=self.c1, product=self.p).quantity,
+                         Decimal("100.000"))
+
+        wb = Workbook(); wb.remove(wb.active)
+        ws = wb.create_sheet("期初发出商品")
+        ws.append(["客户编码(可空)", "商品编码", "数量", "结转成本", "售价不含税(可空)"])
+        ws.append(["", "P001", 10, 200, 300])
+        ws2 = wb.create_sheet("期初应付账款-暂估")
+        ws2.append(["供应商编码", "商品编码", "数量", "不含税金额"])
+        ws2.append(["S1", "P001", 5, 50])
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        self.client.force_login(self.user)
+        resp = self.client.post("/opening/", {
+            "file": SimpleUploadedFile("o.xlsx", buf.read(),
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        }, SERVER_NAME="localhost", follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(StockBalance.objects.get(company=self.c1, product=self.p).quantity,
+                         Decimal("100.000"))
+        self.assertTrue(SalesOutbound.objects.filter(company=self.c1, is_opening=True).exists())
+        self.assertTrue(PurchaseInbound.objects.filter(company=self.c1, is_opening=True).exists())
+        ov = company_overview(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(ov["goods_shipped"]["opening"], Decimal("200.00"))
+        self.assertEqual(ov["goods_shipped"]["income"], Decimal("0.00"))
+        self.assertEqual(ov["ap_accrual"]["opening"], Decimal("50.00"))
+        self.assertEqual(ov["ap_accrual"]["income"], Decimal("0.00"))
 
     def test_clear_kind_payable_when_stock_has_biz(self):
         """已有日常库存业务时，整体清空被拦，但可分类清空期初应付。"""

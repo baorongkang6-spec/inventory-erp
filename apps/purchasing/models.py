@@ -40,6 +40,8 @@ class PurchaseInbound(CompanyScopedModel):
         "sales.SalesOutbound", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+", verbose_name="关联来源出库单",
     )
+    is_opening = models.BooleanField("期初应付暂估", default=False,
+                                     help_text="期初导入的已入库未收票；不重复加库存")
 
     class Meta:
         verbose_name = "采购入库单"
