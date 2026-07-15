@@ -11,6 +11,7 @@ from django.urls import NoReverseMatch, reverse
 SOURCE_URL_NAMES = {
     "PurchaseInbound": "inbound_detail",
     "SalesOutbound": "outbound_detail",
+    "SalesOrder": "order_detail",
     "Payment": "payment_detail",
     "Receipt": "receipt_detail",
     "PurchaseInvoice": "purchase_invoice_detail",

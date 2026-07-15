@@ -211,6 +211,9 @@ def void_sales_invoice(inv, user=None):
         raise SettlementError("已核销（或被票据抵冲）的发票不可作废，请先撤销核销")
     inv.status = SalesInvoice.Status.VOID
     inv.save(update_fields=["status"])
+    if inv.sales_order_id:
+        from apps.sales.order_services import refresh_order_status
+        refresh_order_status(inv.sales_order)
     AuditLog.record(actor=user, company=inv.company, action=AuditLog.Action.VOID, target=inv,
                     summary=f"作废销售发票 {inv.doc_no}（撤销应收 {inv.amount_taxed}）")
     return inv
@@ -337,13 +340,14 @@ def purchase_invoice_edit_block_reason(inv, today):
 # ============================= 销售侧（镜像采购侧）=============================
 @transaction.atomic
 def create_sales_invoice(*, company, user, doc_date, customer, lines,
-                         invoice_no="", remark="", term_days=0) -> SalesInvoice:
+                         invoice_no="", remark="", term_days=0,
+                         sales_order=None) -> SalesInvoice:
     """开具销售发票并产生应收账款（发票即应收单据）。镜像 create_purchase_invoice。"""
     inv = SalesInvoice.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(SalesInvoice, company, "XSF", doc_date),
         invoice_no=invoice_no, doc_date=doc_date, term_days=term_days or 0,
-        customer=customer, remark=remark,
+        customer=customer, remark=remark, sales_order=sales_order,
     )
     total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for ln in lines:
@@ -355,6 +359,7 @@ def create_sales_invoice(*, company, user, doc_date, customer, lines,
             quantity=ln.get("quantity") or ZERO_QTY,
             amount_untaxed=untaxed, tax_rate=rate, tax_amount=tax, amount_taxed=taxed,
             source_outbound_line=ln.get("source_outbound_line"),
+            order_line=ln.get("order_line"),
         )
         total_untaxed += untaxed
         total_tax += tax

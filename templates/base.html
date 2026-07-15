@@ -52,11 +52,12 @@
         </li>
         {% endif %}
 
-        {# 销售：出库 → 发票 → 收款 #}
-        {% if perms.sales.view_salesoutbound or perms.finance.view_salesinvoice or perms.finance.view_receipt %}
+        {# 销售：订单 → 出库 → 发票 → 收款 #}
+        {% if perms.sales.view_salesorder or perms.sales.view_salesoutbound or perms.finance.view_salesinvoice or perms.finance.view_receipt %}
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">销售</a>
           <ul class="dropdown-menu">
+            {% if perms.sales.view_salesorder %}<li><a class="dropdown-item" href="{% url 'order_list' %}">销售订单</a></li>{% endif %}
             {% if perms.sales.view_salesoutbound %}<li><a class="dropdown-item" href="{% url 'outbound_list' %}">销售出库</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_invoice_list' %}">销售发票</a></li>{% endif %}
             {% if perms.finance.view_receipt %}<li><a class="dropdown-item" href="{% url 'receipt_list' %}">收款</a></li>{% endif %}

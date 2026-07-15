@@ -270,6 +270,10 @@ class SalesInvoice(CompanyScopedModel):
     term_days = models.PositiveIntegerField("账期(天)", default=0,
                                             help_text="0=即期；到期日 = 开票日期 + 账期天数")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="客户")
+    sales_order = models.ForeignKey(
+        "sales.SalesOrder", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="invoices", verbose_name="来源销售订单",
+    )
     amount_untaxed = models.DecimalField("不含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     tax_amount = models.DecimalField("税额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     amount_taxed = models.DecimalField("含税金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
@@ -328,6 +332,10 @@ class SalesInvoiceLine(models.Model):
     source_outbound_line = models.ForeignKey(
         "sales.SalesOutboundLine", on_delete=models.SET_NULL,
         null=True, blank=True, verbose_name="来源出库明细",
+    )
+    order_line = models.ForeignKey(
+        "sales.SalesOrderLine", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="invoice_lines", verbose_name="来源订单行",
     )
 
     class Meta:

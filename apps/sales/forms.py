@@ -93,3 +93,45 @@ class BaseOutboundLineFormSet(forms.BaseFormSet):
 OutboundLineFormSet = forms.formset_factory(
     OutboundLineForm, formset=BaseOutboundLineFormSet, extra=3
 )
+
+
+class OrderHeaderForm(BootstrapForm):
+    doc_date = forms.DateField(label="订单日期")
+    customer = forms.ModelChoiceField(
+        label="客户", queryset=Customer.objects.none(), empty_label="请选择客户"
+    )
+    remark = forms.CharField(label="备注", required=False, max_length=255)
+
+    def __init__(self, *args, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["customer"].queryset = Customer.objects.filter(
+                company=company, is_active=True
+            )
+
+
+class OrderLineForm(OutboundLineForm):
+    """与出库行同字段（售价三价），订单不强制填价时不允许空金额。"""
+    pass
+
+
+class BaseOrderLineFormSet(BaseOutboundLineFormSet):
+    pass
+
+
+OrderLineFormSet = forms.formset_factory(
+    OrderLineForm, formset=BaseOrderLineFormSet, extra=3
+)
+
+
+class OrderShipForm(BootstrapForm):
+    """由订单生成出库：日期；数量默认待发货。"""
+    doc_date = forms.DateField(label="出库日期")
+    remark = forms.CharField(label="备注", required=False, max_length=255)
+
+
+class OrderInvoiceForm(BootstrapForm):
+    doc_date = forms.DateField(label="开票日期")
+    invoice_no = forms.CharField(label="发票号码", required=False, max_length=64)
+    term_days = forms.IntegerField(label="账期(天)", required=False, min_value=0, initial=0)
+    remark = forms.CharField(label="备注", required=False, max_length=255)

@@ -32,7 +32,7 @@ _VIEW_MASTERDATA = ["masterdata.view_product", "masterdata.view_customer", "mast
 ROLE_PERMS = {
     # 总经理：跨公司只读总览，可看金额（SPEC §9.1）
     roles.GM: _VIEW_MASTERDATA + [
-        "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
+        "purchasing.view_purchaseinbound", "sales.view_salesoutbound", "sales.view_salesorder",
         "inventory.view_stockbalance", "inventory.view_amount",
         "finance.view_bankaccount", "finance.view_purchaseinvoice",
         "finance.view_payment", "finance.view_bankjournal",
@@ -42,7 +42,7 @@ ROLE_PERMS = {
     ],
     # 出纳：只读总览 + 资金录入（管理银行账户、登记付款/收款及核销）
     roles.CASHIER: _VIEW_MASTERDATA + [
-        "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
+        "purchasing.view_purchaseinbound", "sales.view_salesoutbound", "sales.view_salesorder",
         "inventory.view_stockbalance", "inventory.view_amount",
         "finance.add_bankaccount", "finance.change_bankaccount",
         "finance.view_bankaccount", "finance.delete_bankaccount",
@@ -77,13 +77,14 @@ ROLE_PERMS = {
         "masterdata.view_customer", "masterdata.delete_customer",
         "sales.add_salesoutbound", "sales.view_salesoutbound",
         "sales.void_salesoutbound",
+        "sales.add_salesorder", "sales.view_salesorder", "sales.change_salesorder",
         "inventory.view_stockbalance",
         "masterdata.view_expensecategory", "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
     # 财务：看全部往来、看单据、看库存含金额、管理银行账户与发票/应付
     roles.FINANCE: _VIEW_MASTERDATA + [
         "masterdata.change_customer", "masterdata.change_supplier",
-        "purchasing.view_purchaseinbound", "sales.view_salesoutbound",
+        "purchasing.view_purchaseinbound", "sales.view_salesoutbound", "sales.view_salesorder",
         "inventory.view_stockbalance", "inventory.view_amount",
         "finance.add_bankaccount", "finance.change_bankaccount",
         "finance.view_bankaccount", "finance.delete_bankaccount",

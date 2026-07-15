@@ -18,11 +18,13 @@ from .models import SalesOutbound, SalesOutboundLine
 def create_and_post_outbound(*, company, user, doc_date, lines,
                              customer=None, remark="", expenses=None,
                              sales_type=SalesOutbound.SalesType.SALE,
-                             borrow_counterparty="") -> SalesOutbound:
+                             borrow_counterparty="",
+                             sales_order=None) -> SalesOutbound:
     """创建销售出库单并逐行过账减少库存（结转移动加权成本）。
 
-    lines: [{"product": Product, "quantity": Decimal}, ...]
+    lines: [{"product": Product, "quantity": Decimal, 可选 order_line}, ...]
     expenses: 其他费用（销售出库的费用一律作期间费用，不改库存成本，SPEC §6.2）。
+    sales_order: 可选来源销售订单（M18）。
     """
     doc = SalesOutbound.objects.create(
         company=company,
@@ -32,6 +34,7 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
         customer=customer,
         sales_type=sales_type,
         remark=remark,
+        sales_order=sales_order,
     )
     total_qty, total_cost = _apply_outbound_lines(
         doc, user, doc_date, lines, expenses, sales_type, customer, borrow_counterparty)
@@ -69,6 +72,7 @@ def _apply_outbound_lines(doc, user, doc_date, lines, expenses, sales_type,
             sale_unit_price=sale_price, tax_rate=rate,
             amount_untaxed=untaxed, tax_amount=tax, amount_taxed=taxed,
             unit_cost=move.unit_price, amount=move.amount, stock_move=move,
+            order_line=ln.get("order_line"),
         )
         total_qty = round_qty(total_qty + quantity)
         total_cost = round_money(total_cost + move.amount)
@@ -272,6 +276,9 @@ def void_sales_outbound(doc, user=None):
         company=doc.company, source_type="SalesOutbound", source_id=str(doc.pk)).delete()
     doc.status = SalesOutbound.Status.VOID
     doc.save(update_fields=["status"])
+    if doc.sales_order_id:
+        from .order_services import refresh_order_status
+        refresh_order_status(doc.sales_order)
     AuditLog.record(actor=user, company=doc.company, action=AuditLog.Action.VOID, target=doc,
                     summary=f"作废销售出库 {doc.doc_no}（反冲库存"
                             + ("，并联动作废镜像入库）" if mirror else "）"))
