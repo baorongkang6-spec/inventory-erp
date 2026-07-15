@@ -3,7 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.core.models import Company
 from apps.core.period import (
@@ -11,6 +11,7 @@ from apps.core.period import (
     last_month_range,
     period_edit_block_reason,
     report_date_range,
+    report_date_range_overview,
     suggested_close_through,
     unclose_period,
 )
@@ -30,12 +31,25 @@ class PeriodCloseTests(TestCase):
         self.assertEqual(first, date(2026, 6, 1))
         self.assertEqual(last, date(2026, 6, 30))
 
+    @override_settings(OPENING_DATE=date(2026, 6, 1))
     def test_report_date_defaults_to_last_month_when_open(self):
         today = date(2026, 7, 14)
         dfrom, dto = report_date_range(self.company, today, None, None)
         self.assertEqual(dfrom, date(2026, 6, 1))
         self.assertEqual(dto, date(2026, 6, 30))
 
+    @override_settings(OPENING_DATE=date(2026, 7, 1))
+    def test_report_date_clamps_to_opening_when_last_month_before_opening(self):
+        """启用日 7/1、今天 7 月：上月 6 月早于启用日 → 默认启用日~今天。"""
+        today = date(2026, 7, 14)
+        dfrom, dto = report_date_range(self.company, today, None, None)
+        self.assertEqual(dfrom, date(2026, 7, 1))
+        self.assertEqual(dto, today)
+        od_from, od_to = report_date_range_overview(today, None, None)
+        self.assertEqual(od_from, date(2026, 7, 1))
+        self.assertEqual(od_to, today)
+
+    @override_settings(OPENING_DATE=date(2026, 6, 1))
     def test_report_date_defaults_to_current_month_after_close(self):
         today = date(2026, 7, 14)
         close_period(self.company, date(2026, 6, 30), today=today)

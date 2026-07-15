@@ -48,26 +48,55 @@ def period_edit_block_reason(company, doc_date: date | None) -> str | None:
     return None
 
 
+def _opening_date() -> date:
+    from django.conf import settings
+    return settings.OPENING_DATE
+
+
+def _clamp_to_opening(dfrom: date, dto: date) -> tuple[date, date]:
+    """报表区间不早于启用日；若裁切后倒置则退回启用日~启用日。"""
+    opening = _opening_date()
+    if dfrom < opening:
+        dfrom = opening
+    if dto < dfrom:
+        dto = dfrom
+    return dfrom, dto
+
+
+def _default_report_range(today: date) -> tuple[date, date]:
+    """未指定日期时的默认区间：上月整月（须整段 ≥ 启用日），否则启用日与本月1日取大 ~ 今天。"""
+    opening = _opening_date()
+    lm_first, lm_last = last_month_range(today)
+    if lm_first >= opening:
+        return lm_first, lm_last
+    dfrom = max(opening, today.replace(day=1))
+    return dfrom, today
+
+
 def report_date_range(company, today: date, req_from, req_to) -> tuple[date, date]:
-    """解析 ?from/?to；未指定时：未结上月底则默认上月整月，否则默认本月 1 日~今天。"""
+    """解析 ?from/?to；未指定时：未结上月底则默认上月整月，否则默认本月 1 日~今天（均不低于启用日）。"""
     rf = _parse_date(req_from)
     rt = _parse_date(req_to)
     if rf or rt:
-        return rf or today.replace(day=1), rt or today
+        dfrom = rf or max(_opening_date(), today.replace(day=1))
+        dto = rt or today
+        return _clamp_to_opening(dfrom, dto)
     lm_first, lm_last = last_month_range(today)
     closed = getattr(company, "period_closed_through", None) if company else None
     if closed and closed >= lm_last:
-        return today.replace(day=1), today
-    return lm_first, lm_last
+        return _clamp_to_opening(max(_opening_date(), today.replace(day=1)), today)
+    return _default_report_range(today)
 
 
 def report_date_range_overview(today: date, req_from, req_to) -> tuple[date, date]:
-    """跨公司总览：未指定日期时默认上月整月。"""
+    """跨公司总览：未指定日期时默认上月整月；若上月早于启用日则启用日~今天。"""
     rf = _parse_date(req_from)
     rt = _parse_date(req_to)
     if rf or rt:
-        return rf or today.replace(day=1), rt or today
-    return last_month_range(today)
+        dfrom = rf or max(_opening_date(), today.replace(day=1))
+        dto = rt or today
+        return _clamp_to_opening(dfrom, dto)
+    return _default_report_range(today)
 
 
 def suggested_close_through(company, today: date) -> date | None:
