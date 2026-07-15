@@ -147,7 +147,7 @@ def _merge_period(inc_qs, inc_dfield, inc_field, dec_specs, dfrom, dto):
 CATEGORIES = [
     ("bank", "银行存款", "bank_accounts_report"),
     ("stock", "库存商品（金额）", "stock_products_report"),
-    ("goods_shipped", "发出商品", "shipped_uninvoiced_report"),
+    ("goods_shipped", "发出商品", "goods_shipped_detail_report"),
     ("payable", "供应商往来（应付）", "payable_partners_report"),
     ("ap_accrual", "应付账款-暂估", "received_uninvoiced_report"),
     ("receivable", "客户往来（应收）", "receivable_partners_report"),
@@ -336,6 +336,83 @@ def goods_shipped_period(company, dfrom, dto):
     return _row(opening, income, outgo, opening + income - outgo)
 
 
+def goods_shipped_detail(companies, dfrom, dto):
+    """发出商品明细（按出库行）：期初 / 本期收入(出库成本) / 本期发出(开票冲减) / 期末。
+
+    与总览「发出商品」四列同一口径；含本期已全部开票的出库行（未开票余额为 0 也列出，
+    只要四列任一非零）。不含借出/归还。companies 支持多公司。
+    """
+    from apps.finance.models import SalesInvoice, SalesInvoiceLine
+    from apps.sales.models import SalesOutbound, SalesOutboundLine
+    ZQ = Decimal("0.000")
+    companies = list(companies)
+    if not companies or dfrom is None or dto is None:
+        return []
+
+    lines = (SalesOutboundLine.objects
+             .filter(outbound__company__in=companies,
+                     outbound__sales_type=SalesOutbound.SalesType.SALE)
+             .exclude(outbound__status=SalesOutbound.Status.VOID)
+             .select_related("outbound", "outbound__company", "outbound__customer", "product"))
+
+    inv_lines = (SalesInvoiceLine.objects
+                 .filter(invoice__company__in=companies,
+                         invoice__status=SalesInvoice.Status.REGISTERED,
+                         invoice__is_opening=False,
+                         source_outbound_line__isnull=False,
+                         source_outbound_line__outbound__sales_type=SalesOutbound.SalesType.SALE)
+                 .exclude(source_outbound_line__outbound__status=SalesOutbound.Status.VOID)
+                 .select_related("invoice", "source_outbound_line"))
+
+    billed_before = {}   # line_id -> qty before dfrom
+    billed_period = {}   # line_id -> qty in [dfrom, dto]
+    for il in inv_lines:
+        lid = il.source_outbound_line_id
+        qty = il.quantity or ZQ
+        idate = il.invoice.doc_date
+        if idate < dfrom:
+            billed_before[lid] = billed_before.get(lid, ZQ) + qty
+        elif idate <= dto:
+            billed_period[lid] = billed_period.get(lid, ZQ) + qty
+
+    rows = []
+    for ln in lines.order_by("outbound__company__code", "outbound__doc_date",
+                             "outbound__doc_no", "id"):
+        ob = ln.outbound
+        cost = ln.amount or Z
+        if not ln.quantity:
+            opening = income = outgo = ending = Z
+        else:
+            before_qty = billed_before.get(ln.pk, ZQ)
+            period_qty = billed_period.get(ln.pk, ZQ)
+            if ob.doc_date < dfrom:
+                opening = round_money(cost - _attr_cost(ln, before_qty, "amount"))
+                income = Z
+            elif ob.doc_date <= dto:
+                opening = Z
+                income = cost
+            else:
+                # 区间后出库，不进入本表
+                continue
+            outgo = _attr_cost(ln, period_qty, "amount")
+            ending = opening + income - outgo
+        if not (opening or income or outgo or ending):
+            continue
+        rows.append({
+            "company": ob.company,
+            "customer": ob.customer,
+            "outbound": ob,
+            "product": ln.product,
+            "out_qty": ln.quantity,
+            "out_cost": cost,
+            "opening": opening,
+            "income": income,
+            "outgo": outgo,
+            "ending": ending,
+        })
+    return rows
+
+
 def ap_accrual_partners_balance(company, dfrom, dto):
     """应付账款-暂估按供应商（不含税）：增=本期外部采购入库；减=本期收票对应入库不含税。
 
@@ -442,12 +519,12 @@ def account_balance_table(companies, dfrom, dto):
                     **{"from": dfrom, "to": dto}),
             })
 
-        # 发出商品：每商品 → 已出库未开票明细（按商品）
+        # 发出商品：每商品 → 发出商品明细表（本期发生全量）
         for r in goods_shipped_products_balance(company, dfrom, dto):
             prod = r["product"]
             name = f"{prod.code} {prod.name}" if prod else "（未指定商品）"
             url = _ledger_url(
-                "shipped_uninvoiced_report", company=company.pk,
+                "goods_shipped_detail_report", company=company.pk,
                 product=prod.pk if prod else None,
                 **{"from": dfrom, "to": dto}) if prod else ""
             shipped_rows.append({

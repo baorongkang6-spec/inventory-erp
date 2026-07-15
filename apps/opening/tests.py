@@ -196,6 +196,33 @@ class GoodsShippedApAccrualOverviewTests(TestCase):
         self.assertEqual(t["ap_accrual"][0]["ending"], Decimal("1000.00"))
         self.assertEqual(t["goods_shipped"][0]["ending"], Decimal("400.00"))
 
+    def test_goods_shipped_detail_matches_overview(self):
+        """发出商品明细表合计 = 总览发出商品四列；含未开票出库收入。"""
+        from datetime import date
+        from apps.opening.reports import company_overview, goods_shipped_detail
+        dfrom, dto = date(2026, 6, 1), date(2026, 6, 30)
+        ov = company_overview(self.c1, dfrom, dto)["goods_shipped"]
+        rows = goods_shipped_detail([self.c1], dfrom, dto)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["income"], Decimal("400.00"))
+        self.assertEqual(rows[0]["outgo"], Decimal("0.00"))
+        self.assertEqual(rows[0]["ending"], Decimal("400.00"))
+        for k in ("opening", "income", "outgo", "ending"):
+            self.assertEqual(sum((r[k] for r in rows), Decimal("0.00")), ov[k], k)
+
+    def test_goods_shipped_detail_includes_fully_invoiced(self):
+        """本期已全部开票的出库行仍出现（收入=发出，期末0）。"""
+        from datetime import date
+        from apps.opening.reports import goods_shipped_detail
+        dfrom, dto = date(2026, 7, 1), date(2026, 7, 31)
+        rows = goods_shipped_detail([self.c1], dfrom, dto)
+        # 6月出库在七月开票：期初400、本期发出400、期末0；无七月新出库收入
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["opening"], Decimal("400.00"))
+        self.assertEqual(rows[0]["income"], Decimal("0.00"))
+        self.assertEqual(rows[0]["outgo"], Decimal("400.00"))
+        self.assertEqual(rows[0]["ending"], Decimal("0.00"))
+
 
 class AccountBalanceTableTests(TestCase):
     @classmethod

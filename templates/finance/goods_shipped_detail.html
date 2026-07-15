@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}发出商品明细表 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <h4 class="mb-0">发出商品明细表</h4>
+  <a class="btn btn-outline-success btn-sm"
+     href="?{% for cid in chosen_ids %}company={{ cid }}&{% endfor %}from={{ date_from|date:'Y-m-d' }}&to={{ date_to|date:'Y-m-d' }}{% if product_id %}&product={{ product_id }}{% endif %}&export=xlsx">导出 Excel</a>
+</div>
+<p class="text-muted mb-1">与总览「发出商品」同口径：<b>本期收入</b>=销售出库结转成本；
+  <b>本期发出</b>=本期间开票冲减的出库成本；期初+收入−发出=期末。含本期已全部开票的出库行。
+  借出/归还不纳入。核对未开票余额请用「已出库未开票明细表」。</p>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-12">
+    <label class="form-label mb-1">公司（可多选，不选=全部）</label>
+    <div>
+      {% for c in visible_companies %}
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="checkbox" name="company" value="{{ c.pk }}"
+               id="gs{{ c.pk }}" {% if c.pk in chosen_ids %}checked{% endif %}>
+        <label class="form-check-label" for="gs{{ c.pk }}">{{ c }}</label>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="col-auto"><label class="form-label">期初日期</label>
+    <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}" class="form-control"></div>
+  <div class="col-auto"><label class="form-label">期末日期</label>
+    <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}" class="form-control"></div>
+  {% if product_id %}<input type="hidden" name="product" value="{{ product_id }}">{% endif %}
+  <div class="col-auto"><button class="btn btn-primary">查询</button></div>
+</form>
+
+<div class="card mb-3">
+  <div class="card-body py-2 small text-muted">
+    与总览勾稽（所选公司）：期初 {{ overview.opening }}　本期收入 {{ overview.income }}　
+    本期发出 {{ overview.outgo }}　期末 {{ overview.ending }}
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped mb-0 align-middle text-end">
+      <thead class="table-light">
+        <tr>
+          <th class="text-start">公司</th><th class="text-start">客户</th>
+          <th class="text-start">出库单号</th><th class="text-start">出库日期</th>
+          <th class="text-start">商品</th>
+          <th>出库数量</th><th>出库成本</th>
+          <th>期初</th><th>本期收入</th><th>本期发出</th><th>期末结存</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="text-start">{{ r.company.short_name|default:r.company }}</td>
+          <td class="text-start">{{ r.customer|default:"—" }}</td>
+          <td class="text-start"><a href="{% url 'outbound_detail' r.outbound.pk %}">{{ r.outbound.doc_no }}</a></td>
+          <td class="text-start">{{ r.outbound.doc_date|date:"Y-m-d" }}</td>
+          <td class="text-start">{% if r.product %}{{ r.product.code }} {{ r.product.name }}{% else %}—{% endif %}</td>
+          <td>{{ r.out_qty }}</td>
+          <td>{{ r.out_cost }}</td>
+          <td>{{ r.opening }}</td>
+          <td>{{ r.income }}</td>
+          <td>{{ r.outgo }}</td>
+          <td class="fw-semibold">{{ r.ending }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" class="text-center text-muted py-4">该期间无发出商品发生</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-secondary">
+        <tr>
+          <th class="text-start" colspan="6">合计</th>
+          <th>{{ totals.out_cost }}</th>
+          <th>{{ totals.opening }}</th>
+          <th>{{ totals.income }}</th>
+          <th>{{ totals.outgo }}</th>
+          <th>{{ totals.ending }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

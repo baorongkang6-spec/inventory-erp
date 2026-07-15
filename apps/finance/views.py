@@ -1646,6 +1646,50 @@ def shipped_uninvoiced_report(request):
 
 
 @login_required
+@permission_required("finance.view_salesinvoice", raise_exception=True)
+def goods_shipped_detail_report(request):
+    """发出商品明细表：与总览同口径列出本期出库收入、开票发出及期初/期末。"""
+    from apps.opening.reports import goods_shipped_detail, goods_shipped_period
+    visible = list(get_visible_companies(request.user))
+    dfrom, dto = get_report_dates(request)
+    sel_ids = request.GET.getlist("company")
+    if sel_ids:
+        chosen = [c for c in visible if str(c.pk) in sel_ids]
+    else:
+        chosen = list(visible)
+    rows = goods_shipped_detail(chosen, dfrom, dto)
+    product_id = request.GET.get("product")
+    if product_id:
+        rows = [r for r in rows if r.get("product") and str(r["product"].pk) == product_id]
+    totals = {k: sum((r[k] for r in rows), Decimal("0.00"))
+              for k in ("opening", "income", "outgo", "ending", "out_cost")}
+    # 与总览行勾稽：所选公司合计应等于总览发出商品四列
+    overview = {k: Decimal("0.00") for k in ("opening", "income", "outgo", "ending")}
+    for c in chosen:
+        r = goods_shipped_period(c, dfrom, dto)
+        for k in overview:
+            overview[k] += r[k]
+    if request.GET.get("export") == "xlsx":
+        from apps.core.exports import xlsx_response
+        headers = ["公司", "客户", "出库单号", "出库日期", "商品", "出库数量", "出库成本",
+                   "期初", "本期收入", "本期发出", "期末结存"]
+        out = [[r["company"].short_name or str(r["company"]), str(r["customer"] or ""),
+                r["outbound"].doc_no, r["outbound"].doc_date, str(r["product"] or ""),
+                r["out_qty"], r["out_cost"],
+                r["opening"], r["income"], r["outgo"], r["ending"]]
+               for r in rows]
+        out.append(["合计", "", "", "", "", "", totals["out_cost"],
+                    totals["opening"], totals["income"], totals["outgo"], totals["ending"]])
+        company_arg = chosen[0] if len(chosen) == 1 else None
+        return xlsx_response("发出商品明细表", headers, out,
+                             company=company_arg, period=(dfrom, dto))
+    return render(request, "finance/goods_shipped_detail.html", {
+        "rows": rows, "totals": totals, "overview": overview,
+        "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
+        "date_from": dfrom, "date_to": dto, "product_id": product_id or ""})
+
+
+@login_required
 @permission_required("finance.view_purchaseinvoice", raise_exception=True)
 def received_uninvoiced_report(request):
     """已入库未收到发票明细表（入库数量 − 已收票数量 ≠ 0），支持多公司联合查询。
