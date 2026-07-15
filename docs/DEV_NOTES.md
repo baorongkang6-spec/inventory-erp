@@ -206,6 +206,7 @@
 - **DB 状态偏差（本轮已修文档）**：CLAUDE.md/DEPLOY.md 原写生产用 PostgreSQL，**实际生产跑的是 SQLite**（代码两者都支持，靠 `DB_ENGINE` 切换）。已在本轮把文档改为"实际 SQLite"。
 
 ### 四、下一步建议从哪继续
+- **销售成本计算单打印（2026-07-14）**：销售出库详情「打印」旁加「销售成本计算单」按钮（需 `inventory.view_amount`）；新页 `outbound_cost_print` 按本单列示销售数量、不含税/含税金额、结转成本，便于按单结转成本核对。无迁移。
 - **M17 财务管理（2026-07-14）**：菜单「财务管理」→ 往来对冲 / 票据拆借。SPEC §7.5–§7.6。往来对冲：`PartnerOffset` 互抵 AR/AP 发票 `settled_amount`；票据拆借：应收票跨公司转移 + `IntercoBalance` 其他应收/其他应付·关联方。应付票据拆借尚未做。
 - 本项目无固定 backlog，处于**用户驱动按需迭代**。下次大概率是用户截图提新需求/报 bug。
 - **改完务必**：`uv run python manage.py test` 全绿 + 重生成 `docs/操作手册.docx/.pdf`（脚本：`uv run --with python-docx python docs/_md2docx.py …`；PDF 走 `_md2html.py` + headless Chrome 打印，命令见近期 commit）。

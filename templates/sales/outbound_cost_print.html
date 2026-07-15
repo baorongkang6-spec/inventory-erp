@@ -1,0 +1,54 @@
+{% extends "print_base.html" %}
+{% block title %}销售成本计算单 {{ doc.doc_no }}{% endblock %}
+{% block doc_title %}销售成本计算单{% endblock %}
+{% block meta %}
+<div class="meta">
+  <div>单据编号：{{ doc.doc_no }}</div>
+  <div>出库日期：{{ doc.doc_date|date:"Y-m-d" }}</div>
+  <div>客户：{{ doc.customer|default:"—" }}</div>
+  <div>销售方式：{{ doc.get_sales_type_display }}</div>
+  <div>状态：{{ doc.get_status_display }}</div>
+  {% if doc.remark %}<div>备注：{{ doc.remark }}</div>{% endif %}
+</div>
+{% endblock %}
+{% block lines %}
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>商品编码</th>
+      <th>商品名称</th>
+      <th>单位</th>
+      <th class="num">销售数量</th>
+      <th class="num">不含税金额</th>
+      <th class="num">含税金额</th>
+      <th class="num">结转成本</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for ln in doc.lines.all %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ ln.product.code }}</td>
+      <td>{{ ln.product.name }}</td>
+      <td>{{ ln.product.unit|default:"" }}</td>
+      <td class="num">{{ ln.quantity }}</td>
+      <td class="num">{{ ln.amount_untaxed }}</td>
+      <td class="num">{{ ln.amount_taxed }}</td>
+      <td class="num">{{ ln.amount }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="8" style="text-align:center;">无明细</td></tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <th colspan="4">合计</th>
+      <th class="num">{{ doc.total_quantity }}</th>
+      <th class="num">{{ doc.total_untaxed }}</th>
+      <th class="num">{{ doc.total_taxed }}</th>
+      <th class="num">{{ doc.total_cost }}</th>
+    </tr>
+  </tfoot>
+</table>
+{% endblock %}

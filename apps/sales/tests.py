@@ -216,3 +216,54 @@ class OutboundDeleteTests(TestCase):
                              SERVER_NAME="localhost", follow=True)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(SalesOutbound.objects.filter(pk=doc.pk).count(), 0)
+
+
+class OutboundCostPrintTests(TestCase):
+    """销售成本计算单打印：需 view_amount，列示数量/金额/结转成本。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        post_inbound(cls.c1, cls.p, Decimal("100"), Decimal("10"))
+        cls.doc = create_and_post_outbound(
+            company=cls.c1, user=None, doc_date=date(2026, 6, 5),
+            lines=[{"product": cls.p, "quantity": Decimal("10"),
+                    "amount_untaxed": Decimal("2000"), "tax_rate": Decimal("0.13")}])
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="costprint", password="x",
+                                         can_view_all_companies=True)
+        cls.user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="sales",
+                                   codename="view_salesoutbound"))
+        cls.amt_perm = Permission.objects.get(
+            content_type__app_label="inventory", codename="view_amount")
+
+    def test_cost_print_requires_view_amount(self):
+        self.client.force_login(self.user)
+        r = self.client.get(f"/sales/outbound/{self.doc.pk}/cost-print/",
+                            SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 403)
+
+    def test_cost_print_shows_qty_amount_cost(self):
+        self.user.user_permissions.add(self.amt_perm)
+        self.client.force_login(self.user)
+        r = self.client.get(f"/sales/outbound/{self.doc.pk}/cost-print/",
+                            SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "销售成本计算单")
+        self.assertContains(r, "销售数量")
+        self.assertContains(r, "结转成本")
+        self.assertContains(r, "2,000.00")
+        self.assertContains(r, "100.00")  # 结转成本 10×10
+
+    def test_detail_shows_cost_print_button(self):
+        self.user.user_permissions.add(self.amt_perm)
+        self.client.force_login(self.user)
+        r = self.client.get(f"/sales/outbound/{self.doc.pk}/",
+                            SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "销售成本计算单")
+        self.assertContains(r, f"/sales/outbound/{self.doc.pk}/cost-print/")

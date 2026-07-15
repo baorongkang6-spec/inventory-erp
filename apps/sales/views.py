@@ -2,6 +2,7 @@
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -84,6 +85,21 @@ def outbound_print(request, pk):
         SalesOutbound.objects.select_related("company", "customer", "created_by"),
         pk=pk, company=company)
     return render(request, "sales/outbound_print.html",
+                  {"doc": doc, "now": timezone.now()})
+
+
+@login_required
+@permission_required("sales.view_salesoutbound", raise_exception=True)
+def outbound_cost_print(request, pk):
+    """销售成本计算单打印：按本出库单列示数量、销售额、结转成本（结转成本需 view_amount）。"""
+    if not request.user.has_perm("inventory.view_amount"):
+        raise PermissionDenied("无库存金额查看权限，不能打印销售成本计算单")
+    company = resolve_company(request)
+    doc = get_object_or_404(
+        SalesOutbound.objects.select_related("company", "customer", "created_by")
+        .prefetch_related("lines__product"),
+        pk=pk, company=company)
+    return render(request, "sales/outbound_cost_print.html",
                   {"doc": doc, "now": timezone.now()})
 
 
