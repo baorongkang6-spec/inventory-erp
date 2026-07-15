@@ -15,6 +15,8 @@ from apps.core.scope import get_active_company, get_visible_companies, resolve_c
 from apps.finance.models import PurchaseInvoice, PurchaseInvoiceLine
 from apps.inventory.services import InventoryError
 
+from apps.masterdata.models import Supplier
+
 from .forms import (
     PurchaseOrderHeaderForm, PurchaseOrderInvoiceForm, PurchaseOrderLineFormSet,
     PurchaseOrderReceiveForm,
@@ -22,10 +24,13 @@ from .forms import (
 from .models import PurchaseInboundLine, PurchaseOrder
 from .order_services import (
     PurchaseOrderError,
+    backfill_purchase_order,
     create_inbound_from_order,
     create_invoice_from_order,
     create_purchase_order,
     line_progress,
+    purchase_backfill_candidates,
+    purchase_order_progress_rows,
     qty_open_invoice,
     qty_open_receive,
     refresh_order_status,
@@ -300,3 +305,57 @@ def purchase_order_void(request, pk):
     except PurchaseOrderError as e:
         messages.error(request, "; ".join(e.messages) if hasattr(e, "messages") else str(e))
     return redirect("purchase_order_detail", pk=pk)
+
+
+@login_required
+@permission_required("purchasing.add_purchaseorder", raise_exception=True)
+def purchase_order_backfill_list(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "请先选择账套")
+        return redirect("home")
+    rows = purchase_backfill_candidates(company)
+    return render(request, "purchasing/order_backfill_list.html", {
+        "active_company": company, "rows": rows,
+    })
+
+
+@login_required
+@permission_required("purchasing.add_purchaseorder", raise_exception=True)
+def purchase_order_backfill_supplier(request, supplier_id):
+    company = resolve_company(request)
+    supplier = get_object_or_404(Supplier, pk=supplier_id, company=company)
+    candidates = {r["supplier"].pk: r for r in purchase_backfill_candidates(company)}
+    row = candidates.get(supplier.pk)
+    if not row:
+        messages.info(request, "该供应商暂无待补单据")
+        return redirect("purchase_order_backfill_list")
+    if request.method == "POST":
+        ib_ids = request.POST.getlist("inbound_ids")
+        inv_ids = request.POST.getlist("invoice_ids")
+        try:
+            order = backfill_purchase_order(
+                company=company, user=request.user, supplier=supplier,
+                inbound_ids=ib_ids, invoice_ids=inv_ids,
+                remark=request.POST.get("remark") or "",
+            )
+            messages.success(request, f"已补单 {order.doc_no}（仅回挂关联，未改入账金额）")
+            return redirect("purchase_order_detail", pk=order.pk)
+        except PurchaseOrderError as e:
+            messages.error(request, "; ".join(e.messages) if hasattr(e, "messages") else str(e))
+    return render(request, "purchasing/order_backfill_form.html", {
+        "active_company": company, "supplier": supplier, "row": row,
+    })
+
+
+@login_required
+@permission_required("purchasing.view_purchaseorder", raise_exception=True)
+def purchase_order_progress(request):
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "请先选择账套")
+        return redirect("home")
+    rows = purchase_order_progress_rows(company)
+    return render(request, "purchasing/order_progress.html", {
+        "active_company": company, "rows": rows,
+    })

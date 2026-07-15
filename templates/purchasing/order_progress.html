@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}采购订单进度 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">采购订单进度<small class="text-muted fs-6 ms-2">{{ active_company }} · 执行中</small></h4>
+  <a href="{% url 'purchase_order_list' %}" class="btn btn-outline-secondary btn-sm">订单列表</a>
+</div>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>订单号</th><th>日期</th><th>供应商</th>
+            <th>收货</th><th>收票</th><th>付款</th>
+            <th class="text-end">待收数量</th><th class="text-end">待收票数量</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><a href="{% url 'purchase_order_detail' r.order.pk %}">{{ r.order.doc_no }}</a></td>
+          <td>{{ r.order.doc_date }}</td>
+          <td>{{ r.order.supplier }}</td>
+          <td>{{ r.order.get_receive_status_display }}</td>
+          <td>{{ r.order.get_invoice_status_display }}</td>
+          <td>{{ r.order.get_payment_status_display }}</td>
+          <td class="text-end">{{ r.qty_open_receive }}</td>
+          <td class="text-end">{{ r.qty_open_invoice }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-center text-muted py-4">暂无执行中订单</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

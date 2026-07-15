@@ -22,23 +22,26 @@ from apps.masterdata.models import Customer, Product, Supplier
 class PartnerOffsetTests(TestCase):
     @classmethod
     def setUpTestData(cls):
+        from apps.masterdata.models import BusinessPartner
         cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
-        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="甲公司客户")
-        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="甲公司供应商")
+        # 同一往来单位兼客户+供应商
+        cls.partner = BusinessPartner.objects.create(
+            company=cls.c1, code="W1", name="甲公司",
+            is_customer=True, is_supplier=True)
         cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
         cls.sinv = create_sales_invoice(
-            company=cls.c1, user=None, doc_date=date(2026, 6, 10), customer=cls.cust,
+            company=cls.c1, user=None, doc_date=date(2026, 6, 10), customer=cls.partner,
             lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("1000"),
                     "tax_rate": Decimal("0")}])
         cls.pinv = create_purchase_invoice(
-            company=cls.c1, user=None, doc_date=date(2026, 6, 11), supplier=cls.sup,
+            company=cls.c1, user=None, doc_date=date(2026, 6, 11), supplier=cls.partner,
             lines=[{"product": cls.p, "description": "", "amount_untaxed": Decimal("800"),
                     "tax_rate": Decimal("0")}])
 
     def test_offset_and_reverse(self):
         doc = create_partner_offset(
             company=self.c1, user=None, doc_date=date(2026, 6, 20),
-            customer=self.cust, supplier=self.sup,
+            partner=self.partner,
             ar_lines=[{"invoice": self.sinv, "amount": Decimal("500")}],
             ap_lines=[{"invoice": self.pinv, "amount": Decimal("500")}])
         self.sinv.refresh_from_db()
@@ -59,7 +62,7 @@ class PartnerOffsetTests(TestCase):
         with self.assertRaises(SettlementError):
             create_partner_offset(
                 company=self.c1, user=None, doc_date=date(2026, 6, 20),
-                customer=self.cust, supplier=self.sup,
+                partner=self.partner,
                 ar_lines=[{"invoice": self.sinv, "amount": Decimal("500")}],
                 ap_lines=[{"invoice": self.pinv, "amount": Decimal("400")}])
 

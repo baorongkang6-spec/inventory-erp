@@ -7,7 +7,7 @@
   </h4>
   <a href="{% url 'partner_offset_list' %}" class="btn btn-outline-secondary btn-sm">返回列表</a>
 </div>
-<p>日期 {{ doc.doc_date }} · 客户 {{ doc.customer }} · 供应商 {{ doc.supplier }} · 金额 <b>{{ doc.amount }}</b>
+<p>日期 {{ doc.doc_date }} · 往来单位 {{ doc.partner }} · 金额 <b>{{ doc.amount }}</b>
   {% if doc.remark %}<br><span class="text-muted">{{ doc.remark }}</span>{% endif %}</p>
 <div class="row">
   <div class="col-md-6">

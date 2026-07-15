@@ -1646,6 +1646,69 @@ class OtherCashflowEditTests(TestCase):
         self.assertEqual(j.amount, Decimal("500.00"))
         self.assertEqual(j.counterparty, "电力公司")
 
+    def test_journal_report_shows_actions_for_prior_month(self):
+        """往月其他收支（未对账）在日记账报表应出现修改/删除。"""
+        from apps.finance.services import create_other_cashflow
+        j = create_other_cashflow(
+            company=self.c1, user=self.user, doc_date=date(2026, 6, 30),
+            bank_account=self.acc, direction=BankJournal.Direction.OUT,
+            amount=Decimal("100"), entry_type=BankJournal.EntryType.EXPENSE,
+            summary="运费")
+        self.client.force_login(self.user)
+        r = self.client.get(
+            f"/finance/reports/bank-journal/?account={self.acc.pk}&from=2026-06-01&to=2026-06-30",
+            SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, f"/finance/other-cashflow/{j.pk}/edit/")
+        self.assertContains(r, f"/finance/other-cashflow/{j.pk}/delete/")
+
+    def test_blank_source_imported_row_editable(self):
+        """无来源挂接的导入行也可改删。"""
+        from apps.finance.services import other_cashflow_block_reason, update_other_cashflow
+        j = BankJournal.objects.create(
+            company=self.c1, bank_account=self.acc, date=date(2026, 6, 30),
+            direction=BankJournal.Direction.OUT, amount=Decimal("50"),
+            entry_type=BankJournal.EntryType.EXPENSE, summary="银行费用",
+            is_imported=True, source_type="")
+        self.assertIsNone(other_cashflow_block_reason(j))
+        update_other_cashflow(
+            journal=j, user=self.user, doc_date=date(2026, 6, 30),
+            bank_account=self.acc, direction=BankJournal.Direction.OUT,
+            amount=Decimal("55"), entry_type=BankJournal.EntryType.EXPENSE,
+            summary="银行费用(更正)")
+        j.refresh_from_db()
+        self.assertEqual(j.amount, Decimal("55.00"))
+        self.assertEqual(j.source_type, "Other")
+
+
+class BankJournalMultiBalanceTests(TestCase):
+    """全部账户视图：余额从期初合计连续滚动。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.acc_a = BankAccount.objects.create(
+            company=cls.c1, name="招商银行", opening_balance=Decimal("0"))
+        cls.acc_b = BankAccount.objects.create(
+            company=cls.c1, name="工行", opening_balance=Decimal("1000000.00"))
+
+    def test_multi_balance_starts_from_total_opening(self):
+        from apps.finance.services import create_other_cashflow
+        from apps.finance.views import _journal_rows_multi
+        from django.contrib.auth import get_user_model
+        user = get_user_model().objects.create_user(username="bj", password="x")
+        create_other_cashflow(
+            company=self.c1, user=user, doc_date=date(2026, 6, 30),
+            bank_account=self.acc_a, direction=BankJournal.Direction.OUT,
+            amount=Decimal("72458.37"), entry_type=BankJournal.EntryType.EXPENSE,
+            summary="运费")
+        opening, rows, closing = _journal_rows_multi(
+            [self.acc_a, self.acc_b], date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(opening, Decimal("1000000.00"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["balance"], Decimal("927541.63"))  # 1000000 - 72458.37
+        self.assertEqual(closing, Decimal("927541.63"))
+
 
 class NoteMixedUseTests(TestCase):
     """一张应收票据可分次混合使用：部分冲应收 + 部分背书抵应付，未用完保持在手。"""

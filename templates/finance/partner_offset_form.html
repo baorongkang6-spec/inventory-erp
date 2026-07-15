@@ -3,23 +3,17 @@
 {% block content %}
 <h4 class="mb-3">新建往来对冲<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
 <form method="get" class="row g-2 mb-3 align-items-end">
-  <div class="col-auto"><label class="form-label">客户</label>
-    <select name="customer" class="form-select" onchange="this.form.submit()">
-      <option value="">请选择</option>
-      {% for c in customers %}<option value="{{ c.pk }}" {% if customer and c.pk == customer.pk %}selected{% endif %}>{{ c }}</option>{% endfor %}
-    </select></div>
-  <div class="col-auto"><label class="form-label">供应商</label>
-    <select name="supplier" class="form-select" onchange="this.form.submit()">
-      <option value="">请选择</option>
-      {% for s in suppliers %}<option value="{{ s.pk }}" {% if supplier and s.pk == supplier.pk %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  <div class="col-md-5"><label class="form-label">往来单位</label>
+    <select name="partner" class="form-select" onchange="this.form.submit()">
+      <option value="">请选择（须兼客户与供应商角色）</option>
+      {% for p in partners %}<option value="{{ p.pk }}" {% if partner and p.pk == partner.pk %}selected{% endif %}>{{ p }}</option>{% endfor %}
     </select></div>
 </form>
 
-{% if customer and supplier %}
+{% if partner %}
 <form method="post">
   {% csrf_token %}
-  <input type="hidden" name="customer" value="{{ customer.pk }}">
-  <input type="hidden" name="supplier" value="{{ supplier.pk }}">
+  <input type="hidden" name="partner" value="{{ partner.pk }}">
   <div class="row g-2 mb-3">
     <div class="col-auto"><label class="form-label">对冲日期</label>
       <input type="date" name="doc_date" value="{{ doc_date }}" class="form-control" required></div>
@@ -29,7 +23,7 @@
   <div class="row">
     <div class="col-md-6">
       <div class="card mb-3">
-        <div class="card-header">应收（销售发票）— {{ customer }}</div>
+        <div class="card-header">应收（销售发票）— {{ partner }}</div>
         <div class="table-responsive">
           <table class="table table-sm mb-0">
             <thead><tr><th>单号</th><th>日期</th><th class="text-end">未核销</th><th class="text-end">对冲额</th></tr></thead>
@@ -49,7 +43,7 @@
     </div>
     <div class="col-md-6">
       <div class="card mb-3">
-        <div class="card-header">应付（采购发票）— {{ supplier }}</div>
+        <div class="card-header">应付（采购发票）— {{ partner }}</div>
         <div class="table-responsive">
           <table class="table table-sm mb-0">
             <thead><tr><th>单号</th><th>日期</th><th class="text-end">未核销</th><th class="text-end">对冲额</th></tr></thead>
@@ -73,6 +67,6 @@
   <a href="{% url 'partner_offset_list' %}" class="btn btn-outline-secondary">取消</a>
 </form>
 {% else %}
-<p class="text-muted">请先选择客户与供应商。</p>
+<p class="text-muted">请先选择往来单位。兼营单位可在「基础资料 → 往来单位」中勾选客户+供应商。</p>
 {% endif %}
 {% endblock %}

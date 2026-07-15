@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}补单 · {{ customer }} · 库存 ERP{% endblock %}
+{% block content %}
+<div class="mb-3">
+  <h4 class="mb-1">补单回挂 · {{ customer }}</h4>
+  <a href="{% url 'order_backfill_list' %}" class="small">← 返回候选列表</a>
+</div>
+<p class="text-muted small">勾选要挂到同一张订单的出库与发票。订单行按商品合并，数量取已出库与已开票的较大值。</p>
+<form method="post">
+  {% csrf_token %}
+  <div class="card mb-3">
+    <div class="card-header">出库单</div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light"><tr><th style="width:2rem"></th><th>单号</th><th>日期</th><th class="text-end">数量</th><th class="text-end">含税</th></tr></thead>
+        <tbody>
+          {% for o in row.outbounds %}
+          <tr>
+            <td><input type="checkbox" name="outbound_ids" value="{{ o.pk }}" checked></td>
+            <td>{{ o.doc_no }}</td>
+            <td>{{ o.doc_date }}</td>
+            <td class="text-end">{{ o.total_quantity }}</td>
+            <td class="text-end">{{ o.total_taxed }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-muted text-center py-3">无</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card mb-3">
+    <div class="card-header">销售发票（尚有余额）</div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light"><tr><th style="width:2rem"></th><th>单号</th><th>日期</th><th class="text-end">含税</th><th class="text-end">未核销</th></tr></thead>
+        <tbody>
+          {% for i in row.invoices %}
+          <tr>
+            <td><input type="checkbox" name="invoice_ids" value="{{ i.pk }}" checked></td>
+            <td>{{ i.doc_no }}</td>
+            <td>{{ i.doc_date }}</td>
+            <td class="text-end">{{ i.total_taxed }}</td>
+            <td class="text-end">{{ i.outstanding }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-muted text-center py-3">无</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">备注</label>
+    <input type="text" name="remark" class="form-control form-control-sm" placeholder="可选">
+  </div>
+  <button type="submit" class="btn btn-primary">生成订单并回挂</button>
+</form>
+{% endblock %}

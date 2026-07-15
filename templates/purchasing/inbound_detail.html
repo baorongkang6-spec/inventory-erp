@@ -40,7 +40,12 @@
     <div class="col-md-3"><span class="text-muted">供应商：</span>{{ doc.supplier|default:"—" }}</div>
     <div class="col-md-3"><span class="text-muted">方式：</span>{{ doc.get_purchase_type_display }}</div>
     <div class="col-md-3"><span class="text-muted">状态：</span>{{ doc.get_status_display }}</div>
-    <div class="col-md-9"><span class="text-muted">备注：</span>{{ doc.remark|default:"—" }}</div>
+    <div class="col-md-3"><span class="text-muted">采购订单：</span>
+      {% if doc.purchase_order_id %}
+      <a href="{% url 'purchase_order_detail' doc.purchase_order_id %}">{{ doc.purchase_order.doc_no }}</a>
+      {% else %}—{% endif %}
+    </div>
+    <div class="col-md-6"><span class="text-muted">备注：</span>{{ doc.remark|default:"—" }}</div>
   </div>
 </div>
 

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}采购补单回挂 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">未完成业务补单<small class="text-muted fs-6 ms-2">{{ active_company }}</small></h4>
+  <a href="{% url 'purchase_order_list' %}" class="btn btn-outline-secondary btn-sm">返回订单列表</a>
+</div>
+<p class="text-muted small">仅把「无订单」且尚未完结的入库/发票挂到新订单上；不改库存成本、发票金额与核销。</p>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-striped mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>供应商</th><th class="text-end">待补入库</th><th class="text-end">待补发票</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.supplier }}</td>
+          <td class="text-end">{{ r.ib_count }}</td>
+          <td class="text-end">{{ r.inv_count }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-primary" href="{% url 'purchase_order_backfill_supplier' r.supplier.pk %}">补单</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="text-center text-muted py-4">暂无待补供应商</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

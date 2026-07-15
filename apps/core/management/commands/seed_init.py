@@ -28,7 +28,10 @@ COMPANIES = [
 # 菜单可见性另由 roles.menu_flags / 模板 perms 控制；这里让 Django 权限与角色一致。
 # 说明：商品主数据仅超管维护（业务角色只读，已与客户确认）；
 #       inventory.view_amount = 可看库存金额（采购/销售无 → 只看数量，SPEC §9.2）。
-_VIEW_MASTERDATA = ["masterdata.view_product", "masterdata.view_customer", "masterdata.view_supplier"]
+_VIEW_MASTERDATA = [
+    "masterdata.view_product", "masterdata.view_customer", "masterdata.view_supplier",
+    "masterdata.view_businesspartner",
+]
 ROLE_PERMS = {
     # 总经理：跨公司只读总览，可看金额（SPEC §9.1）
     roles.GM: _VIEW_MASTERDATA + [
@@ -60,11 +63,13 @@ ROLE_PERMS = {
         "finance.add_notesettlement", "finance.view_notesettlement",
         "masterdata.view_expensecategory", "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
-    # 采购：管供应商、建采购入库、看库存（仅数量）
+    # 采购：管供应商/往来单位、建采购入库、看库存（仅数量）
     roles.PURCHASER: [
         "masterdata.view_product",
         "masterdata.add_supplier", "masterdata.change_supplier",
         "masterdata.view_supplier", "masterdata.delete_supplier",
+        "masterdata.add_businesspartner", "masterdata.change_businesspartner",
+        "masterdata.view_businesspartner", "masterdata.delete_businesspartner",
         "purchasing.add_purchaseinbound", "purchasing.view_purchaseinbound",
         "purchasing.void_purchaseinbound",
         "purchasing.add_purchaseorder", "purchasing.view_purchaseorder",
@@ -74,11 +79,13 @@ ROLE_PERMS = {
         "masterdata.view_expensecategory", "masterdata.delete_expensecategory",
         "finance.view_expenseentry", "finance.view_borrowtransaction",
     ],
-    # 销售：管客户、建销售出库、看库存（仅数量）
+    # 销售：管客户/往来单位、建销售出库、看库存（仅数量）
     roles.SALES: [
         "masterdata.view_product",
         "masterdata.add_customer", "masterdata.change_customer",
         "masterdata.view_customer", "masterdata.delete_customer",
+        "masterdata.add_businesspartner", "masterdata.change_businesspartner",
+        "masterdata.view_businesspartner", "masterdata.delete_businesspartner",
         "sales.add_salesoutbound", "sales.view_salesoutbound",
         "sales.void_salesoutbound",
         "sales.add_salesorder", "sales.view_salesorder", "sales.change_salesorder",
@@ -88,6 +95,7 @@ ROLE_PERMS = {
     # 财务：看全部往来、看单据、看库存含金额、管理银行账户与发票/应付
     roles.FINANCE: _VIEW_MASTERDATA + [
         "masterdata.change_customer", "masterdata.change_supplier",
+        "masterdata.change_businesspartner", "masterdata.add_businesspartner",
         "purchasing.view_purchaseinbound", "purchasing.view_purchaseorder",
         "sales.view_salesoutbound", "sales.view_salesorder",
         "inventory.view_stockbalance", "inventory.view_amount",

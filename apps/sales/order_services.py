@@ -33,7 +33,8 @@ def _progress(ordered: Decimal, done: Decimal) -> str:
 
 def qty_shipped(order_line: SalesOrderLine) -> Decimal:
     v = (SalesOutboundLine.objects
-         .filter(order_line=order_line)
+         .filter(order_line=order_line,
+                 outbound__sales_type=SalesOutbound.SalesType.SALE)
          .exclude(outbound__status=SalesOutbound.Status.VOID)
          .aggregate(v=Sum("quantity"))["v"])
     return round_qty(v or ZERO_QTY)
@@ -346,3 +347,257 @@ def create_invoice_from_order(*, order, user, doc_date, lines=None, remark="",
     )
     refresh_order_status(order)
     return inv
+
+
+def bind_outbound_lines_to_order(order, lines, *, exclude_outbound=None):
+    """手工出库挂订单：按商品匹配订单行，校验不超过待发货数量。
+
+    exclude_outbound: 修改本单时排除已计入的本单数量。
+    返回带 order_line 的新 lines 列表。
+    """
+    if order.status != SalesOrder.Status.OPEN:
+        raise SalesOrderError("只能关联「执行中」的销售订单")
+    # product_id -> list of (order_line, remaining)
+    buckets = {}
+    for ol in order.lines.select_related("product"):
+        remain = qty_open_ship(ol)
+        if exclude_outbound is not None:
+            already = (SalesOutboundLine.objects
+                       .filter(order_line=ol, outbound=exclude_outbound)
+                       .exclude(outbound__status=SalesOutbound.Status.VOID)
+                       .aggregate(v=Sum("quantity"))["v"] or ZERO_QTY)
+            remain = round_qty(remain + already)
+        if remain > 0:
+            buckets.setdefault(ol.product_id, []).append([ol, remain])
+
+    out = []
+    for i, ln in enumerate(lines, start=1):
+        product = ln["product"]
+        qty = round_qty(ln["quantity"])
+        pool = buckets.get(product.pk)
+        if not pool:
+            raise SalesOrderError(
+                f"第{i}行商品「{product}」不在订单 {order.doc_no} 的待发货明细中")
+        ol, remain = pool[0]
+        if qty > remain:
+            raise SalesOrderError(
+                f"第{i}行发货数量 {qty} 超过订单行待发货 {remain}（{order.doc_no}）")
+        pool[0][1] = round_qty(remain - qty)
+        if pool[0][1] <= 0:
+            pool.pop(0)
+        out.append({**ln, "order_line": ol})
+    return out
+
+
+def open_ship_initial_lines(order):
+    """供出库单「载入订单待发明细」预填。"""
+    rows = []
+    for ol in order.lines.select_related("product"):
+        remain = qty_open_ship(ol)
+        if remain <= 0:
+            continue
+        tip = (round_money(ol.amount_taxed / ol.quantity)
+               if ol.quantity else ZERO_MONEY)
+        rows.append({
+            "product": ol.product,
+            "quantity": remain,
+            "tax_rate": ol.tax_rate,
+            "tax_inclusive_price": tip,
+            "amount_untaxed": round_money(ol.amount_untaxed * (remain / ol.quantity)),
+            "tax_amount": round_money(ol.tax_amount * (remain / ol.quantity)),
+            "amount_taxed": round_money(ol.amount_taxed * (remain / ol.quantity)),
+        })
+    return rows
+
+
+# ============================= M18-4 补单回挂 =============================
+
+def _sales_outbound_fully_invoiced(outbound) -> bool:
+    from django.db.models import Sum
+    from apps.finance.models import SalesInvoice, SalesInvoiceLine
+    lines = list(outbound.lines.values("pk", "quantity"))
+    if not lines:
+        return True
+    invoiced = {r["source_outbound_line"]: (r["q"] or ZERO_QTY) for r in
+                SalesInvoiceLine.objects.filter(source_outbound_line__outbound=outbound)
+                .exclude(invoice__status=SalesInvoice.Status.VOID)
+                .values("source_outbound_line").annotate(q=Sum("quantity"))}
+    return all(invoiced.get(ln["pk"], ZERO_QTY) >= ln["quantity"] for ln in lines)
+
+
+def sales_backfill_candidates(company):
+    """按客户汇总「未完成且无订单」的出库/发票，供补单工具列表。"""
+    from apps.finance.models import SalesInvoice
+
+    outbounds = (SalesOutbound.objects
+                 .filter(company=company, sales_order__isnull=True,
+                         sales_type=SalesOutbound.SalesType.SALE, is_opening=False)
+                 .exclude(status=SalesOutbound.Status.VOID)
+                 .select_related("customer")
+                 .prefetch_related("lines"))
+    incomplete_ob = [o for o in outbounds if not _sales_outbound_fully_invoiced(o)]
+
+    invoices = (SalesInvoice.objects
+                .filter(company=company, sales_order__isnull=True, is_opening=False,
+                        status=SalesInvoice.Status.REGISTERED)
+                .select_related("customer")
+                .prefetch_related("lines"))
+    incomplete_inv = [i for i in invoices if i.outstanding > 0]
+
+    by_cust = {}
+    for o in incomplete_ob:
+        if not o.customer_id:
+            continue
+        d = by_cust.setdefault(o.customer_id, {"customer": o.customer,
+                                               "outbounds": [], "invoices": []})
+        d["outbounds"].append(o)
+    for inv in incomplete_inv:
+        d = by_cust.setdefault(inv.customer_id, {"customer": inv.customer,
+                                                 "outbounds": [], "invoices": []})
+        d["invoices"].append(inv)
+    rows = sorted(by_cust.values(), key=lambda r: r["customer"].code)
+    for r in rows:
+        r["ob_count"] = len(r["outbounds"])
+        r["inv_count"] = len(r["invoices"])
+    return rows
+
+
+def sales_order_progress_rows(company):
+    """执行中订单进度（待发/待开数量合计）。"""
+    rows = []
+    qs = (SalesOrder.objects.filter(company=company, status=SalesOrder.Status.OPEN)
+          .select_related("customer").prefetch_related("lines"))
+    for order in qs:
+        open_ship = open_inv = ZERO_QTY
+        for ln in order.lines.all():
+            open_ship = round_qty(open_ship + qty_open_ship(ln))
+            open_inv = round_qty(open_inv + qty_open_invoice(ln))
+        rows.append({
+            "order": order,
+            "qty_open_ship": open_ship,
+            "qty_open_invoice": open_inv,
+        })
+    return rows
+
+
+@transaction.atomic
+def backfill_sales_order(*, company, user, customer, outbound_ids, invoice_ids,
+                         doc_date=None, remark="") -> SalesOrder:
+    """为未完成出库/发票补建销售订单并回挂（不改金额与库存）。
+
+    订单行按商品合并；数量 = max(已出库合计, 已开票合计)。
+    """
+    from django.utils import timezone
+    from apps.finance.models import SalesInvoice
+
+    if not customer:
+        raise SalesOrderError("客户必填")
+    outbound_ids = [int(x) for x in outbound_ids]
+    invoice_ids = [int(x) for x in invoice_ids]
+    if not outbound_ids and not invoice_ids:
+        raise SalesOrderError("请至少选择一张出库单或发票")
+
+    outbounds = list(SalesOutbound.objects.filter(
+        company=company, pk__in=outbound_ids).prefetch_related("lines__product"))
+    invoices = list(SalesInvoice.objects.filter(
+        company=company, pk__in=invoice_ids).prefetch_related("lines__product"))
+    if len(outbounds) != len(set(outbound_ids)):
+        raise SalesOrderError("所选出库单不存在或不属于本账套")
+    if len(invoices) != len(set(invoice_ids)):
+        raise SalesOrderError("所选发票不存在或不属于本账套")
+
+    for ob in outbounds:
+        if ob.sales_order_id:
+            raise SalesOrderError(f"出库单 {ob.doc_no} 已挂订单，不能再补")
+        if ob.customer_id and ob.customer_id != customer.pk:
+            raise SalesOrderError(f"出库单 {ob.doc_no} 客户与所选客户不一致")
+        if ob.customer_id is None:
+            raise SalesOrderError(f"出库单 {ob.doc_no} 无客户，无法补单")
+        if ob.status == SalesOutbound.Status.VOID or ob.is_opening:
+            raise SalesOrderError(f"出库单 {ob.doc_no} 状态不可补（已作废/期初）")
+        if ob.sales_type != SalesOutbound.SalesType.SALE:
+            raise SalesOrderError(f"出库单 {ob.doc_no} 非销售方式，不纳入补单")
+    for inv in invoices:
+        if inv.sales_order_id:
+            raise SalesOrderError(f"发票 {inv.doc_no} 已挂订单，不能再补")
+        if inv.customer_id != customer.pk:
+            raise SalesOrderError(f"发票 {inv.doc_no} 客户与所选客户不一致")
+        if inv.status == SalesInvoice.Status.VOID or inv.is_opening:
+            raise SalesOrderError(f"发票 {inv.doc_no} 状态不可补")
+
+    # product_id -> {ship_qty, inv_qty, ship_untaxed, inv_untaxed, rate}
+    buckets = {}
+    def buck(pid):
+        return buckets.setdefault(pid, {
+            "product": None, "ship_qty": ZERO_QTY, "inv_qty": ZERO_QTY,
+            "ship_untaxed": ZERO_MONEY, "inv_untaxed": ZERO_MONEY,
+            "rate": DEFAULT_TAX_RATE,
+        })
+
+    for ob in outbounds:
+        for ln in ob.lines.all():
+            b = buck(ln.product_id)
+            b["product"] = ln.product
+            b["ship_qty"] = round_qty(b["ship_qty"] + ln.quantity)
+            b["ship_untaxed"] = round_money(b["ship_untaxed"] + ln.amount_untaxed)
+            b["rate"] = ln.tax_rate
+    for inv in invoices:
+        for ln in inv.lines.all():
+            if not ln.product_id:
+                continue
+            b = buck(ln.product_id)
+            b["product"] = ln.product
+            b["inv_qty"] = round_qty(b["inv_qty"] + ln.quantity)
+            b["inv_untaxed"] = round_money(b["inv_untaxed"] + ln.amount_untaxed)
+            b["rate"] = ln.tax_rate
+
+    if not buckets:
+        raise SalesOrderError("所选单据无商品明细，无法生成订单行")
+
+    order_lines = []
+    for b in buckets.values():
+        qty = max(b["ship_qty"], b["inv_qty"])
+        if qty <= 0:
+            continue
+        if b["ship_qty"] > 0:
+            untaxed = round_money(b["ship_untaxed"] / b["ship_qty"] * qty)
+        else:
+            untaxed = round_money(b["inv_untaxed"] / b["inv_qty"] * qty)
+        order_lines.append({
+            "product": b["product"], "quantity": qty,
+            "amount_untaxed": untaxed, "tax_rate": b["rate"],
+        })
+
+    doc_date = doc_date or timezone.localdate()
+    order = create_sales_order(
+        company=company, user=user, doc_date=doc_date, customer=customer,
+        lines=order_lines,
+        remark=remark or "补单回挂（未完成业务）",
+    )
+    # create_sales_order already audited; append note
+    prod_map = {ln.product_id: ln for ln in order.lines.all()}
+
+    for ob in outbounds:
+        ob.sales_order = order
+        ob.save(update_fields=["sales_order"])
+        for ln in ob.lines.all():
+            ol = prod_map.get(ln.product_id)
+            if ol:
+                ln.order_line = ol
+                ln.save(update_fields=["order_line"])
+    for inv in invoices:
+        inv.sales_order = order
+        inv.save(update_fields=["sales_order"])
+        for ln in inv.lines.all():
+            ol = prod_map.get(ln.product_id) if ln.product_id else None
+            if ol:
+                ln.order_line = ol
+                ln.save(update_fields=["order_line"])
+
+    refresh_order_status(order)
+    AuditLog.record(
+        actor=user, company=company, action=AuditLog.Action.LINK, target=order,
+        summary=(f"补单回挂 {order.doc_no}：出库 {len(outbounds)} 张、"
+                 f"发票 {len(invoices)} 张（未改变入账金额）"),
+    )
+    return order

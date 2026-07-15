@@ -11,7 +11,7 @@ from django.views.decorators.http import require_POST
 
 from apps.core.models import Company
 from apps.core.scope import get_active_company, get_visible_companies, resolve_company
-from apps.masterdata.models import Customer, Supplier
+from apps.masterdata.models import BusinessPartner
 
 from .models import NoteLoan, NoteReceivable, PartnerOffset, PurchaseInvoice, SalesInvoice
 from .services import (
@@ -42,7 +42,7 @@ def _parse_money(s):
 def partner_offset_list(request):
     company = get_active_company(request, list(get_visible_companies(request.user)))
     qs = PartnerOffset.objects.filter(company=company).select_related(
-        "customer", "supplier").order_by("-doc_date", "-id") if company else PartnerOffset.objects.none()
+        "partner").order_by("-doc_date", "-id") if company else PartnerOffset.objects.none()
     return render(request, "finance/partner_offset_list.html", {
         "rows": qs, "active_company": company,
         "can_add": request.user.has_perm("finance.add_salesinvoice"),
@@ -56,23 +56,21 @@ def partner_offset_create(request):
     if company is None:
         messages.error(request, "无可用公司账套")
         return redirect("partner_offset_list")
-    customers = Customer.objects.filter(company=company, is_active=True).order_by("code")
-    suppliers = Supplier.objects.filter(company=company, is_active=True).order_by("code")
-    cust_id = request.GET.get("customer") or request.POST.get("customer")
-    sup_id = request.GET.get("supplier") or request.POST.get("supplier")
-    customer = customers.filter(pk=cust_id).first() if cust_id else None
-    supplier = suppliers.filter(pk=sup_id).first() if sup_id else None
+    partners = (BusinessPartner.objects
+                .filter(company=company, is_active=True, is_customer=True, is_supplier=True)
+                .order_by("code"))
+    partner_id = request.GET.get("partner") or request.POST.get("partner")
+    partner = partners.filter(pk=partner_id).first() if partner_id else None
     ar_invs, ap_invs = [], []
-    if customer:
+    if partner:
         ar_invs = [i for i in SalesInvoice.objects.filter(
-            company=company, customer=customer, status=SalesInvoice.Status.REGISTERED
+            company=company, customer_id=partner.pk, status=SalesInvoice.Status.REGISTERED
         ).order_by("doc_date") if i.outstanding > 0]
-    if supplier:
         ap_invs = [i for i in PurchaseInvoice.objects.filter(
-            company=company, supplier=supplier, status=PurchaseInvoice.Status.REGISTERED
+            company=company, supplier_id=partner.pk, status=PurchaseInvoice.Status.REGISTERED
         ).order_by("doc_date") if i.outstanding > 0]
 
-    if request.method == "POST" and customer and supplier:
+    if request.method == "POST" and partner:
         doc_date = _parse_date(request.POST.get("doc_date"))
         if not doc_date:
             messages.error(request, "请填写对冲日期")
@@ -89,7 +87,7 @@ def partner_offset_create(request):
             try:
                 doc = create_partner_offset(
                     company=company, user=request.user, doc_date=doc_date,
-                    customer=customer, supplier=supplier,
+                    partner=partner,
                     ar_lines=ar_lines, ap_lines=ap_lines,
                     remark=request.POST.get("remark") or "")
             except SettlementError as e:
@@ -100,8 +98,7 @@ def partner_offset_create(request):
 
     from django.utils import timezone
     return render(request, "finance/partner_offset_form.html", {
-        "active_company": company, "customers": customers, "suppliers": suppliers,
-        "customer": customer, "supplier": supplier,
+        "active_company": company, "partners": partners, "partner": partner,
         "ar_invs": ar_invs, "ap_invs": ap_invs,
         "doc_date": request.POST.get("doc_date") or timezone.localdate().isoformat(),
         "remark": request.POST.get("remark") or "",
@@ -113,7 +110,7 @@ def partner_offset_create(request):
 def partner_offset_detail(request, pk):
     company = get_active_company(request, list(get_visible_companies(request.user)))
     doc = get_object_or_404(
-        PartnerOffset.objects.select_related("customer", "supplier"),
+        PartnerOffset.objects.select_related("partner"),
         pk=pk, company=company)
     return render(request, "finance/partner_offset_detail.html", {
         "doc": doc, "active_company": company,

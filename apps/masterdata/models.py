@@ -1,19 +1,19 @@
-"""基础资料：商品、客户、供应商。均为公司维度（各公司独立维护）。
+"""基础资料：商品、往来单位（客户/供应商角色）。均为公司维度。
 
 SPEC §1.2：每家公司库存品种 ≤ 100。
-SPEC §6.1：发票默认税率 13%，可按行改 —— 商品上存「默认税率」供录单带出。
-客户/供应商预留 related_company：当对方就是系统内的关联企业时挂上，M4 关联交易
-自动联动据此识别对手账套。
+SPEC §6.1：商品默认税率 13%。
+SPEC §21：客户/供应商合并为「往来单位」统一编码；`is_customer` / `is_supplier` 角色开关。
+关联企业挂 related_company，供跨公司镜像联动。
 """
 
 from django.db import models
 
 from apps.core.models import CompanyScopedModel
-from apps.core.money import DEFAULT_TAX_RATE  # noqa: F401  (保持旧引用路径可用)
+from apps.core.money import DEFAULT_TAX_RATE  # noqa: F401
 
 
 class Product(CompanyScopedModel):
-    """库存商品（主数据）。实际库存数量/金额/移动加权单价在 M1 的库存模块维护。"""
+    """库存商品（主数据）。实际库存数量/金额/移动加权单价在库存模块维护。"""
 
     code = models.CharField("商品编码", max_length=32)
     name = models.CharField("商品名称", max_length=128)
@@ -40,8 +40,18 @@ class Product(CompanyScopedModel):
         return f"{self.code} {self.name}"
 
 
-class Partner(CompanyScopedModel):
-    """客户/供应商的公共抽象基类。"""
+class CustomerManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_customer=True)
+
+
+class SupplierManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_supplier=True)
+
+
+class BusinessPartner(CompanyScopedModel):
+    """往来单位（SPEC §21）：统一编码；可同时是客户与供应商。"""
 
     code = models.CharField("编码", max_length=32)
     name = models.CharField("名称", max_length=128)
@@ -56,52 +66,76 @@ class Partner(CompanyScopedModel):
         blank=True,
         verbose_name="对应关联企业",
         related_name="+",
-        help_text="当对方是系统内关联企业（C1/C2/C3）时选择；用于 M4 关联交易自动联动。",
+        help_text="当对方是系统内关联企业（C1/C2/C3）时选择；用于关联交易自动联动。",
     )
+    is_customer = models.BooleanField("客户", default=False)
+    is_supplier = models.BooleanField("供应商", default=False)
     is_active = models.BooleanField("启用", default=True)
     remark = models.CharField("备注", max_length=255, blank=True)
 
     class Meta:
-        abstract = True
+        verbose_name = "往来单位"
+        verbose_name_plural = "往来单位"
+        ordering = ["company", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "code"], name="uniq_partner_company_code"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(is_customer=True) | models.Q(is_supplier=True),
+                name="partner_must_have_role",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.code} {self.name}"
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if not self.is_customer and not self.is_supplier:
+            raise ValidationError("至少勾选「客户」或「供应商」之一")
 
-class Customer(Partner):
-    """客户（销售对象）。"""
+
+class Customer(BusinessPartner):
+    """兼容代理：仅客户角色；create/save 自动打 is_customer。"""
+
+    objects = CustomerManager()
 
     class Meta:
+        proxy = True
         verbose_name = "客户"
         verbose_name_plural = "客户"
-        ordering = ["company", "code"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["company", "code"], name="uniq_customer_company_code"
-            )
-        ]
+
+    def clean(self):
+        self.is_customer = True
+        super().clean()
+
+    def save(self, *args, **kwargs):
+        self.is_customer = True
+        super().save(*args, **kwargs)
 
 
-class Supplier(Partner):
-    """供应商（采购对象）。"""
+class Supplier(BusinessPartner):
+    """兼容代理：仅供应商角色；create/save 自动打 is_supplier。"""
+
+    objects = SupplierManager()
 
     class Meta:
+        proxy = True
         verbose_name = "供应商"
         verbose_name_plural = "供应商"
-        ordering = ["company", "code"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["company", "code"], name="uniq_supplier_company_code"
-            )
-        ]
+
+    def clean(self):
+        self.is_supplier = True
+        super().clean()
+
+    def save(self, *args, **kwargs):
+        self.is_supplier = True
+        super().save(*args, **kwargs)
 
 
 class ExpenseCategory(CompanyScopedModel):
-    """其他费用类别（SPEC §6.2）。可自行增加；「是否计入存货成本」开关。
-
-    计入成本（如运费）→ 采购入库时按行分摊抬高入库成本（影响移动加权）；
-    不计入（如差旅费）→ 作期间费用单列。
-    """
+    """其他费用类别（SPEC §6.2）。"""
 
     name = models.CharField("费用类别", max_length=64)
     include_in_cost = models.BooleanField("计入存货成本", default=False)
@@ -121,7 +155,7 @@ class ExpenseCategory(CompanyScopedModel):
 
 
 class InvoiceQuota(CompanyScopedModel):
-    """每月可开具发票额度（按公司，一家一个；每月相同，可随时调整）。不含税金额。"""
+    """每月可开具发票额度（按公司）。不含税金额。"""
 
     amount = models.DecimalField("每月可开票额度(不含税)", max_digits=18, decimal_places=2, default=0)
     remark = models.CharField("备注", max_length=255, blank=True)

@@ -10,18 +10,30 @@
   <div class="card mb-2">
     <div class="card-body py-2">
       <div class="row g-2">
-        <div class="col-md-3"><label class="form-label mb-0 small">{{ header.doc_date.label }}</label>
+        <div class="col-md-2"><label class="form-label mb-0 small">{{ header.doc_date.label }}</label>
           {{ header.doc_date }}{% for e in header.doc_date.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
         <div class="col-md-2"><label class="form-label mb-0 small">{{ header.sales_type.label }}</label>{{ header.sales_type }}</div>
-        <div class="col-md-4"><label class="form-label mb-0 small">{{ header.customer.label }}</label>{{ header.customer }}</div>
-        <div class="col-md-3"><label class="form-label mb-0 small">{{ header.remark.label }}</label>{{ header.remark }}</div>
+        <div class="col-md-3"><label class="form-label mb-0 small">{{ header.customer.label }}</label>{{ header.customer }}
+          {% for e in header.customer.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-3"><label class="form-label mb-0 small">{{ header.sales_order.label }}</label>
+          <div class="input-group input-group-sm">
+            {{ header.sales_order }}
+            {% if not editing %}
+            <button type="button" class="btn btn-outline-secondary" title="载入所选订单待发明细"
+                    onclick="var v=document.getElementById('id_sales_order').value; if(v) location.href='?order='+v; else alert('请先选择销售订单');">载入</button>
+            {% endif %}
+          </div>
+          {% for e in header.sales_order.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-2"><label class="form-label mb-0 small">{{ header.remark.label }}</label>{{ header.remark }}</div>
       </div>
+      <p class="text-muted small mb-0 mt-1">关联销售订单后，明细商品须在该订单待发货范围内；也可从订单详情「生成出库」。</p>
     </div>
   </div>
 
   {{ formset.management_form }}
   <div class="card mb-2">
-    <div class="card-header py-1">出库明细（成本由系统按移动加权结转）</div>
+    <div class="card-header py-1">出库明细（成本由系统按移动加权结转；「销售退回」为退货入库）</div>
     <div class="table-responsive">
       <table class="table table-sm mb-0 align-middle">
         <thead class="table-light">

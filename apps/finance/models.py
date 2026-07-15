@@ -667,7 +667,7 @@ class ExpenseRecord(CompanyScopedModel):
 # ============================= M17 往来对冲 / 票据拆借 =============================
 
 class PartnerOffset(CompanyScopedModel):
-    """往来对冲单：同一账套内应收↔应付互抵（不经银行）。SPEC §7.5。"""
+    """往来对冲单：同一账套内应收↔应付互抵（不经银行）。SPEC §7.5 / §21。"""
 
     class Status(models.TextChoices):
         REGISTERED = "registered", "已登记"
@@ -675,8 +675,11 @@ class PartnerOffset(CompanyScopedModel):
 
     doc_no = models.CharField("对冲单号", max_length=32)
     doc_date = models.DateField("对冲日期")
-    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="客户")
-    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, verbose_name="供应商")
+    partner = models.ForeignKey(
+        "masterdata.BusinessPartner", on_delete=models.PROTECT,
+        verbose_name="往来单位", related_name="partner_offsets",
+        help_text="须同时具备客户与供应商角色（或该单位下既有未结应收又有未结应付）。",
+    )
     amount = models.DecimalField("对冲金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     status = models.CharField("状态", max_length=12, choices=Status.choices, default=Status.REGISTERED)
     remark = models.CharField("备注", max_length=255, blank=True)
@@ -696,6 +699,16 @@ class PartnerOffset(CompanyScopedModel):
 
     def __str__(self) -> str:
         return self.doc_no
+
+    @property
+    def customer(self):
+        """兼容旧模板/导出：对冲单位即客户侧。"""
+        return self.partner
+
+    @property
+    def supplier(self):
+        """兼容旧模板/导出：对冲单位即供应商侧。"""
+        return self.partner
 
 
 class PartnerOffsetARLine(models.Model):

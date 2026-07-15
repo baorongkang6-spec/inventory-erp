@@ -7,6 +7,9 @@ from . import order_views, views
 urlpatterns = [
     path("orders/", order_views.OrderListView.as_view(), name="order_list"),
     path("orders/new/", order_views.order_create, name="order_create"),
+    path("orders/backfill/", order_views.order_backfill_list, name="order_backfill_list"),
+    path("orders/backfill/<int:customer_id>/", order_views.order_backfill_customer, name="order_backfill_customer"),
+    path("orders/progress/", order_views.order_progress, name="order_progress"),
     path("orders/<int:pk>/", order_views.OrderDetailView.as_view(), name="order_detail"),
     path("orders/<int:pk>/edit/", order_views.order_edit, name="order_edit"),
     path("orders/<int:pk>/ship/", order_views.order_ship, name="order_ship"),

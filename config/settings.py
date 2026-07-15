@@ -18,8 +18,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # 加载项目根 .env（存在则用；开发期可不建，走安全默认值）。生产由 .env 提供配置。
 load_dotenv(BASE_DIR / ".env")
 
-# 启用日（期初基准日）。SPEC §8.1：2026-06-01，可经环境变量覆盖。
-OPENING_DATE = datetime.date.fromisoformat(os.environ.get("ERP_OPENING_DATE", "2026-06-01"))
+# 启用日（期初基准日）。SPEC §8.1：2026-07-01，可经环境变量覆盖。
+OPENING_DATE = datetime.date.fromisoformat(os.environ.get("ERP_OPENING_DATE", "2026-07-01"))
 
 
 def env_bool(key: str, default: bool) -> bool:

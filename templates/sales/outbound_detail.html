@@ -39,7 +39,12 @@
     <div class="col-md-3"><span class="text-muted">客户：</span>{{ doc.customer|default:"—" }}</div>
     <div class="col-md-3"><span class="text-muted">方式：</span>{{ doc.get_sales_type_display }}</div>
     <div class="col-md-3"><span class="text-muted">状态：</span>{{ doc.get_status_display }}</div>
-    <div class="col-md-9"><span class="text-muted">备注：</span>{{ doc.remark|default:"—" }}</div>
+    <div class="col-md-3"><span class="text-muted">销售订单：</span>
+      {% if doc.sales_order_id %}
+      <a href="{% url 'order_detail' doc.sales_order_id %}">{{ doc.sales_order.doc_no }}</a>
+      {% else %}—{% endif %}
+    </div>
+    <div class="col-md-6"><span class="text-muted">备注：</span>{{ doc.remark|default:"—" }}</div>
   </div>
 </div>
 

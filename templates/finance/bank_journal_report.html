@@ -80,13 +80,11 @@
           <td class="text-end">{% if r.j.direction == 'out' %}{{ r.j.amount }}{% endif %}</td>
           <td class="text-end">{{ r.balance }}</td>
           <td class="text-end">
-            {% if r.j.source_type == 'Other' and not r.j.reconciled and r.j.date|date:'Y-m' == today|date:'Y-m' %}
-              {% if perms.finance.add_bankjournal %}
+            {% if r.can_edit_other and perms.finance.add_bankjournal %}
               <a href="{% url 'other_cashflow_edit' r.j.pk %}" class="btn btn-sm btn-outline-secondary py-0">修改</a>
-              {% endif %}
-              {% if perms.finance.delete_bankjournal %}
               <a href="{% url 'other_cashflow_delete' r.j.pk %}" class="btn btn-sm btn-outline-danger py-0">删除</a>
-              {% endif %}
+            {% elif r.other_block_reason %}
+              <span class="text-muted" title="{{ r.other_block_reason }}">—</span>
             {% else %}—{% endif %}
           </td>
         </tr>
@@ -108,5 +106,5 @@
     </table>
   </div>
 </div>
-{% if multi %}<p class="text-muted small mt-2">多账户合并视图：「余额」为各账户自身的滚动余额（跨账户无统一余额）；期初/期末为所选账户合计。选定单一账户即为经典存折式。</p>{% endif %}
+{% if multi %}<p class="text-muted small mt-2">多账户合并视图：「余额」从「期初余额（各账户合计）」起按列表顺序连续滚动（上一行余额+本行收入−本行支出）；期末为滚动结果。要看单户存折式余额，请在筛选项选定一个银行账户。</p>{% endif %}
 {% endblock %}

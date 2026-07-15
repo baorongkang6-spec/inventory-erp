@@ -2,7 +2,7 @@
 
 from apps.core.forms import CompanyScopedModelForm
 
-from .models import Customer, ExpenseCategory, Product, Supplier
+from .models import BusinessPartner, Customer, ExpenseCategory, Product, Supplier
 
 
 class ProductForm(CompanyScopedModelForm):
@@ -14,6 +14,29 @@ class ProductForm(CompanyScopedModelForm):
         ]
 
 
+class BusinessPartnerForm(CompanyScopedModelForm):
+    class Meta:
+        model = BusinessPartner
+        fields = [
+            "code", "name", "contact", "phone", "tax_no", "address",
+            "related_company", "is_customer", "is_supplier", "is_active", "remark",
+        ]
+
+    def clean(self):
+        cleaned = super().clean()
+        if not cleaned.get("is_customer") and not cleaned.get("is_supplier"):
+            from django.core.exceptions import ValidationError
+            raise ValidationError("至少勾选「客户」或「供应商」之一")
+        return cleaned
+
+    def clean(self):
+        cleaned = super().clean()
+        if not cleaned.get("is_customer") and not cleaned.get("is_supplier"):
+            from django.core.exceptions import ValidationError
+            raise ValidationError("至少勾选「客户」或「供应商」之一")
+        return cleaned
+
+
 class CustomerForm(CompanyScopedModelForm):
     class Meta:
         model = Customer
@@ -21,6 +44,11 @@ class CustomerForm(CompanyScopedModelForm):
             "code", "name", "contact", "phone", "tax_no",
             "address", "related_company", "is_active", "remark",
         ]
+
+    def clean(self):
+        cleaned = super().clean()
+        self.instance.is_customer = True
+        return cleaned
 
 
 class SupplierForm(CompanyScopedModelForm):
@@ -30,6 +58,11 @@ class SupplierForm(CompanyScopedModelForm):
             "code", "name", "contact", "phone", "tax_no",
             "address", "related_company", "is_active", "remark",
         ]
+
+    def clean(self):
+        cleaned = super().clean()
+        self.instance.is_supplier = True
+        return cleaned
 
 
 class ExpenseCategoryForm(CompanyScopedModelForm):

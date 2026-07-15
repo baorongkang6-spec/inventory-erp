@@ -117,3 +117,78 @@ class PurchaseOrderFlowTests(TestCase):
         self.assertEqual(r2.status_code, 200)
         self.assertContains(r2, "生成入库")
         self.assertContains(r2, "生成发票")
+
+
+class PurchaseOrderBackfillTests(TestCase):
+    """M18-4：未完成入库补单回挂。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="pobf", password="x", can_view_all_companies=True)
+        for app, code in (
+            ("purchasing", "view_purchaseorder"), ("purchasing", "add_purchaseorder"),
+            ("purchasing", "view_purchaseinbound"), ("purchasing", "add_purchaseinbound"),
+            ("finance", "add_purchaseinvoice"), ("finance", "view_purchaseinvoice"),
+        ):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label=app, codename=code))
+
+    def test_backfill_inbound_links_without_changing_amounts(self):
+        from apps.inventory.models import StockBalance
+        from apps.purchasing.order_services import (
+            PurchaseOrderError, backfill_purchase_order, purchase_backfill_candidates,
+        )
+        from apps.purchasing.services import create_and_post_inbound
+
+        doc = create_and_post_inbound(
+            company=self.c1, user=self.user, doc_date=date(2026, 7, 2),
+            supplier=self.sup,
+            lines=[{"product": self.p, "quantity": Decimal("5"),
+                    "amount_untaxed": Decimal("500"), "tax_rate": Decimal("0.13")}])
+        taxed_before = doc.total_taxed
+        bal = StockBalance.objects.get(company=self.c1, product=self.p)
+        qty_after, cost_after = bal.quantity, bal.avg_price
+
+        cand = purchase_backfill_candidates(self.c1)
+        self.assertEqual(len(cand), 1)
+        self.assertEqual(cand[0]["ib_count"], 1)
+
+        order = backfill_purchase_order(
+            company=self.c1, user=self.user, supplier=self.sup,
+            inbound_ids=[doc.pk], invoice_ids=[])
+        doc.refresh_from_db()
+        self.assertEqual(doc.purchase_order_id, order.pk)
+        self.assertEqual(doc.lines.get().order_line_id, order.lines.get().pk)
+        self.assertEqual(doc.total_taxed, taxed_before)
+        self.assertEqual(order.total_quantity, Decimal("5.000"))
+        self.assertEqual(order.receive_status, PurchaseOrder.Progress.FULL)
+        self.assertEqual(order.invoice_status, PurchaseOrder.Progress.NONE)
+
+        bal.refresh_from_db()
+        self.assertEqual(bal.quantity, qty_after)
+        self.assertEqual(bal.avg_price, cost_after)
+
+        with self.assertRaises(PurchaseOrderError):
+            backfill_purchase_order(
+                company=self.c1, user=self.user, supplier=self.sup,
+                inbound_ids=[doc.pk], invoice_ids=[])
+
+    def test_backfill_pages(self):
+        from apps.purchasing.services import create_and_post_inbound
+        create_and_post_inbound(
+            company=self.c1, user=self.user, doc_date=date(2026, 7, 2),
+            supplier=self.sup,
+            lines=[{"product": self.p, "quantity": Decimal("2"),
+                    "amount_untaxed": Decimal("200"), "tax_rate": Decimal("0")}])
+        self.client.force_login(self.user)
+        r = self.client.get("/purchasing/orders/backfill/", SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "供应商甲")
+        r2 = self.client.get(f"/purchasing/orders/backfill/{self.sup.pk}/", SERVER_NAME="localhost")
+        self.assertEqual(r2.status_code, 200)
+        r3 = self.client.get("/purchasing/orders/progress/", SERVER_NAME="localhost")
+        self.assertEqual(r3.status_code, 200)

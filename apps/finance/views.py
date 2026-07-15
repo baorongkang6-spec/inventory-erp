@@ -1238,24 +1238,45 @@ def _journal_rows(company, account, date_from=None, date_to=None, entry_type=Non
 
 
 def _journal_rows_multi(accounts, date_from=None, date_to=None, entry_type=None):
-    """多账户合并日记账：每个账户内部按时间累计逐笔余额，再合并。
+    """多账户合并日记账：列表按 公司/账户/日期 排序，**余额按期初合计连续滚动**。
 
-    返回 (期初合计, 行[每行含 account 与该账户逐笔余额], 期末合计)。
-    行按 公司/账户/日期 排序——逐笔「余额」是各账户自身的滚动余额（跨账户无统一余额）。
+    这样「余额」= 上一行余额 + 本行收入 − 本行支出，与顶栏「期初余额（各账户合计）」衔接。
+    entry_type 仅过滤显示；被滤掉的流水仍计入滚动余额与期末。
     """
+    from apps.core.docrefs import doc_url
+
+    if not accounts:
+        return Decimal("0.00"), [], Decimal("0.00")
+
     total_opening = Decimal("0.00")
-    total_closing = Decimal("0.00")
-    all_rows = []
+    events = []  # (sort_key..., account, journal)
     for acc in accounts:
-        op, rows, cl = _journal_rows(acc.company, acc, date_from, date_to, entry_type)
-        total_opening += op
-        total_closing += cl
-        for r in rows:
-            r["account"] = acc
-            all_rows.append(r)
-    all_rows.sort(key=lambda r: (r["account"].company.code, r["account"].name,
-                                 r["j"].date, r["j"].id))
-    return total_opening, all_rows, total_closing
+        qs = BankJournal.objects.filter(company=acc.company, bank_account=acc)
+        period_opening = acc.opening_balance
+        if date_from:
+            before = qs.filter(date__lt=date_from)
+            period_opening += sum((j.signed_amount for j in before), start=Decimal("0.00"))
+        total_opening += period_opening
+        period = qs
+        if date_from:
+            period = period.filter(date__gte=date_from)
+        if date_to:
+            period = period.filter(date__lte=date_to)
+        for j in period.order_by("date", "id"):
+            events.append((acc.company.code, acc.name, j.date, j.id, acc, j))
+
+    events.sort(key=lambda t: t[:4])
+    balance = total_opening
+    rows = []
+    for *_k, acc, j in events:
+        balance += j.signed_amount
+        if entry_type and j.entry_type != entry_type:
+            continue
+        rows.append({
+            "j": j, "balance": balance, "account": acc,
+            "ref_url": doc_url(j.source_type, j.source_id),
+        })
+    return total_opening, rows, balance
 
 
 @login_required
@@ -1285,8 +1306,7 @@ def bank_accounts_report(request):
 def bank_journal_report(request):
     """银行存款日记账：支持多公司联合查询；银行账户不选=全部账户。
 
-    选定单一账户时为经典存折式（逐笔滚动余额）；多账户时各账户内部滚动、
-    合并按 公司/账户/日期 排序，期初/期末为各账户合计。
+    选定单一账户时为经典存折式；全部账户时余额从期初合计起按列表连续滚动。
     """
     visible = list(get_visible_companies(request.user))
     sel_ids = request.GET.getlist("company")
@@ -1312,6 +1332,13 @@ def bank_journal_report(request):
     income_total = sum((r["j"].amount for r in rows if r["j"].direction == "in"), Decimal("0.00"))
     outgo_total = sum((r["j"].amount for r in rows if r["j"].direction == "out"), Decimal("0.00"))
 
+    from .services import other_cashflow_block_reason
+    today = timezone.localdate()
+    for r in rows:
+        reason = other_cashflow_block_reason(r["j"], today)
+        r["can_edit_other"] = reason is None
+        r["other_block_reason"] = reason or ""
+
     return render(request, "finance/bank_journal_report.html", {
         "accounts": accounts, "account": account, "rows": rows,
         "opening": opening, "closing": closing,
@@ -1319,7 +1346,7 @@ def bank_journal_report(request):
         "entry_type": entry_type, "entry_types": BankJournal.EntryType.choices,
         "date_from": request.GET.get("from", ""), "date_to": request.GET.get("to", ""),
         "visible_companies": visible, "chosen_ids": {c.pk for c in chosen},
-        "multi": account is None, "today": timezone.localdate(),
+        "multi": account is None, "today": today,
     })
 
 
@@ -1882,7 +1909,7 @@ def bank_journal_import(request):
                         company=company, created_by=request.user, bank_account=account,
                         date=r["date"], direction=r["direction"], amount=r["amount"],
                         summary=r["summary"], counterparty=r["counterparty"],
-                        txn_no=txn, is_imported=True,
+                        txn_no=txn, is_imported=True, source_type="Other",
                     )
                     created += 1
                 msg = f"导入完成：新增 {created} 条，跳过重复 {skipped} 条"
@@ -2010,9 +2037,9 @@ def other_cashflow_edit(request, pk):
 
 
 @login_required
-@permission_required("finance.delete_bankjournal", raise_exception=True)
+@permission_required("finance.add_bankjournal", raise_exception=True)
 def other_cashflow_delete(request, pk):
-    """删除手工登记的其他收支（仅 source_type=Other、未对账；「仅当月」限制已放开）。"""
+    """删除手工登记的其他收支（仅 source_type=Other、未对账；与修改同权）。"""
     from .services import SettlementError, delete_other_cashflow, other_cashflow_block_reason
 
     company = get_active_company(request, list(get_visible_companies(request.user)))

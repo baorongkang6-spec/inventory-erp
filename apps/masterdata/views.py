@@ -9,8 +9,12 @@ from apps.core.crud import (
     ScopedUpdateView,
 )
 
-from .forms import CustomerForm, ExpenseCategoryForm, ProductForm, SupplierForm
-from .models import Customer, ExpenseCategory, InvoiceQuota, Product, Supplier
+from .forms import (
+    BusinessPartnerForm, CustomerForm, ExpenseCategoryForm, ProductForm, SupplierForm,
+)
+from .models import (
+    BusinessPartner, Customer, ExpenseCategory, InvoiceQuota, Product, Supplier,
+)
 
 
 # --- 商品 ---------------------------------------------------------------------
@@ -46,7 +50,50 @@ class ProductDeleteView(ScopedDeleteView):
     success_url = reverse_lazy("product_list")
 
 
-# --- 客户 ---------------------------------------------------------------------
+# --- 往来单位（SPEC §21）-------------------------------------------------------
+class PartnerListView(ScopedListView):
+    model = BusinessPartner
+    title = "往来单位"
+    columns = [("编码", "code"), ("名称", "name"),
+               ("客户", "is_customer"), ("供应商", "is_supplier"),
+               ("电话", "phone"), ("关联企业", "related_company"), ("启用", "is_active")]
+    search_fields = ["code", "name", "contact", "phone", "tax_no"]
+    q_placeholder = "编码/名称/税号"
+    create_url_name = "partner_create"
+    update_url_name = "partner_update"
+    delete_url_name = "partner_delete"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        role = self.request.GET.get("role") or ""
+        if role == "customer":
+            qs = qs.filter(is_customer=True)
+        elif role == "supplier":
+            qs = qs.filter(is_supplier=True)
+        return qs
+
+
+class PartnerCreateView(ScopedCreateView):
+    model = BusinessPartner
+    form_class = BusinessPartnerForm
+    title = "往来单位"
+    success_url = reverse_lazy("partner_list")
+
+
+class PartnerUpdateView(ScopedUpdateView):
+    model = BusinessPartner
+    form_class = BusinessPartnerForm
+    title = "往来单位"
+    success_url = reverse_lazy("partner_list")
+
+
+class PartnerDeleteView(ScopedDeleteView):
+    model = BusinessPartner
+    title = "往来单位"
+    success_url = reverse_lazy("partner_list")
+
+
+# --- 客户（代理兼容入口，列表实为 is_customer）--------------------------------
 class CustomerListView(ScopedListView):
     model = Customer
     title = "客户"

@@ -15,6 +15,7 @@ class PurchaseInbound(CompanyScopedModel):
     class PurchaseType(models.TextChoices):
         EXTERNAL = "external", "外购"
         BORROW = "borrow", "借调"  # M6 实现（借调往来、不涉税）
+        PURCHASE_RETURN = "purchase_return", "采购退回"  # 退货给供应商（库存↓）
 
     class Status(models.TextChoices):
         POSTED = "posted", "已过账"

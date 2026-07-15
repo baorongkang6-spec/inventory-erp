@@ -142,6 +142,11 @@ def outbound_create(request):
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
+    from .models import SalesOrder
+    from .order_services import (
+        SalesOrderError, bind_outbound_lines_to_order, open_ship_initial_lines,
+    )
+
     if request.method == "POST":
         header = OutboundHeaderForm(request.POST, company=company)
         formset = OutboundLineFormSet(request.POST, company=company)
@@ -149,12 +154,17 @@ def outbound_create(request):
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [
                 {"product": cd["product"], "quantity": cd["quantity"],
-                 "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"), "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed")}
+                 "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"),
+                 "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"),
+                 "amount_taxed": cd.get("amount_taxed")}
                 for cd in formset.valid_lines
             ]
             expenses = [{"category": e["category"], "amount": e["amount"]}
                         for e in expenses_fs.expense_lines]
+            sales_order = header.cleaned_data.get("sales_order")
             try:
+                if sales_order:
+                    lines = bind_outbound_lines_to_order(sales_order, lines)
                 doc = create_and_post_outbound(
                     company=company, user=request.user,
                     doc_date=header.cleaned_data["doc_date"],
@@ -162,15 +172,32 @@ def outbound_create(request):
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
                     sales_type=header.cleaned_data["sales_type"],
+                    sales_order=sales_order,
                 )
-            except InventoryError as e:
+            except (InventoryError, SalesOrderError) as e:
                 messages.error(request, f"过账失败，整单未保存：{e}")
             else:
                 messages.success(request, f"销售出库已过账：{doc.doc_no}")
                 return redirect("outbound_detail", pk=doc.pk)
     else:
-        header = OutboundHeaderForm(company=company, initial={"doc_date": timezone.localdate()})
-        formset = OutboundLineFormSet(company=company)
+        order_pk = request.GET.get("order")
+        order = None
+        if order_pk:
+            order = SalesOrder.objects.filter(
+                pk=order_pk, company=company, status=SalesOrder.Status.OPEN).first()
+        initial = {"doc_date": timezone.localdate()}
+        line_init = None
+        if order:
+            initial["sales_order"] = order.pk
+            initial["customer"] = order.customer_id
+            line_init = open_ship_initial_lines(order)
+            if not line_init:
+                messages.warning(request, f"订单 {order.doc_no} 已无待发货数量")
+        header = OutboundHeaderForm(company=company, initial=initial)
+        formset = (OutboundLineFormSet(company=company, initial=line_init)
+                   if line_init else OutboundLineFormSet(company=company))
+        if line_init:
+            formset.extra = max(0, 3 - len(line_init))
         expenses_fs = ExpenseFormSet(prefix="exp", company=company)
 
     return render(request, "sales/outbound_form.html",
@@ -186,8 +213,9 @@ def _outbound_is_manager(user):
 def outbound_edit(request, pk):
     """修改销售出库单（冲正重过账，保留单号）。本人+管理员、本月、未被下游引用方可改。"""
     from .services import outbound_edit_block_reason, update_and_repost_outbound
+    from .order_services import SalesOrderError, bind_outbound_lines_to_order
     company = get_active_company(request, list(get_visible_companies(request.user)))
-    doc = get_object_or_404(SalesOutbound.objects.select_related("customer", "mirror_inbound"),
+    doc = get_object_or_404(SalesOutbound.objects.select_related("customer", "mirror_inbound", "sales_order"),
                             pk=pk, company=company)
     reason = outbound_edit_block_reason(doc, request.user, timezone.localdate(),
                                         _outbound_is_manager(request.user))
@@ -201,18 +229,25 @@ def outbound_edit(request, pk):
         expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [{"product": cd["product"], "quantity": cd["quantity"],
-                      "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"), "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed")}
+                      "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"),
+                      "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"),
+                      "amount_taxed": cd.get("amount_taxed")}
                      for cd in formset.valid_lines]
             expenses = [{"category": e["category"], "amount": e["amount"]}
                         for e in expenses_fs.expense_lines]
+            sales_order = header.cleaned_data.get("sales_order")
             try:
+                if sales_order:
+                    lines = bind_outbound_lines_to_order(
+                        sales_order, lines, exclude_outbound=doc)
                 update_and_repost_outbound(
                     doc, user=request.user, doc_date=header.cleaned_data["doc_date"],
                     customer=header.cleaned_data.get("customer"),
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
-                    sales_type=header.cleaned_data["sales_type"])
-            except InventoryError as e:
+                    sales_type=header.cleaned_data["sales_type"],
+                    sales_order=sales_order)
+            except (InventoryError, SalesOrderError) as e:
                 messages.error(request, f"修改失败：{e}")
             else:
                 messages.success(request, f"销售出库已修改：{doc.doc_no}")
@@ -220,7 +255,8 @@ def outbound_edit(request, pk):
     else:
         header = OutboundHeaderForm(company=company, initial={
             "doc_date": doc.doc_date, "sales_type": doc.sales_type,
-            "customer": doc.customer_id, "remark": doc.remark})
+            "customer": doc.customer_id, "remark": doc.remark,
+            "sales_order": doc.sales_order_id})
         from decimal import Decimal
         line_init = [{
             "product": ln.product_id, "quantity": ln.quantity, "tax_rate": ln.tax_rate,

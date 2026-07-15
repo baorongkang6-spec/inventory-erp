@@ -1076,10 +1076,24 @@ def create_other_cashflow(*, company, user, doc_date, bank_account, direction, a
     return journal
 
 
+def _is_manual_other_cashflow(journal) -> bool:
+    """可否视为「其他收支」手工行：显式 Other，或无来源挂接的非往来日记账（含 Excel 导入遗留）。"""
+    if journal.source_type == "Other":
+        return True
+    if journal.source_type or journal.source_id or journal.source_no:
+        return False
+    if journal.entry_type in (
+        BankJournal.EntryType.SETTLEMENT,
+        BankJournal.EntryType.NOTE_CASH,
+    ):
+        return False
+    return True
+
+
 @transaction.atomic
 def delete_other_cashflow(*, journal, user):
-    """删除手工登记的其他收支日记账（仅限 source_type=Other，往来/系统生成的不可删）。"""
-    if journal.source_type != "Other":
+    """删除手工登记的其他收支日记账（仅限其他收支手工行，往来/系统生成的不可删）。"""
+    if not _is_manual_other_cashflow(journal):
         raise SettlementError("仅可删除手工登记的其他收支；往来收付请到对应单据作废")
     company, summary = journal.company, str(journal)
     AuditLog.record(
@@ -1090,7 +1104,7 @@ def delete_other_cashflow(*, journal, user):
 
 
 def other_cashflow_block_reason(journal, today=None):
-    """其他收支可否修改/删除：仅手工登记(Other)、未对账。可改返回 None。
+    """其他收支可否修改/删除：手工行、未对账、未月结。可改返回 None。
 
     已放开原「仅当月」限制（2026-07-14），与收/付款一致；仍保留已对账护栏。
     `today` 参数保留仅为兼容既有调用。
@@ -1099,7 +1113,7 @@ def other_cashflow_block_reason(journal, today=None):
     reason = period_edit_block_reason(journal.company, journal.date)
     if reason:
         return reason
-    if journal.source_type != "Other":
+    if not _is_manual_other_cashflow(journal):
         return "仅手工登记的其他收支可修改/删除；往来收付请到对应单据操作"
     if journal.reconciled:
         return "该笔已银行对账，不可修改/删除"
@@ -1109,11 +1123,10 @@ def other_cashflow_block_reason(journal, today=None):
 @transaction.atomic
 def update_other_cashflow(*, journal, user, doc_date, bank_account, direction, amount,
                           entry_type, counterparty="", summary="", txn_no=""):
-    """修改手工登记的其他收支日记账（仅 source_type=Other、未对账）。"""
-    if journal.source_type != "Other":
-        raise SettlementError("仅可修改手工登记的其他收支；往来收付请到对应单据修改")
-    if journal.reconciled:
-        raise SettlementError("该笔已银行对账，不可修改")
+    """修改手工登记的其他收支日记账（手工行、未对账）。"""
+    reason = other_cashflow_block_reason(journal)
+    if reason:
+        raise SettlementError(reason)
     if amount is None or amount <= ZERO_MONEY:
         raise SettlementError("金额必须大于 0")
     if entry_type == BankJournal.EntryType.SETTLEMENT:
@@ -1126,8 +1139,11 @@ def update_other_cashflow(*, journal, user, doc_date, bank_account, direction, a
     journal.counterparty = counterparty
     journal.summary = summary
     journal.txn_no = txn_no
+    # 导入/遗留行统一归为 Other，便于后续识别
+    journal.source_type = "Other"
     journal.save(update_fields=["date", "bank_account", "direction", "amount",
-                                "entry_type", "counterparty", "summary", "txn_no"])
+                                "entry_type", "counterparty", "summary", "txn_no",
+                                "source_type"])
     AuditLog.record(
         actor=user, company=journal.company, action=AuditLog.Action.UPDATE, target=journal,
         summary=f"修改其他收支 {journal.get_entry_type_display()} "
@@ -1194,17 +1210,29 @@ def reconcile_bank_journal(*, company, user, account, parsed, filename=""):
 # ============================= M17 往来对冲 / 票据拆借 =============================
 
 @transaction.atomic
-def create_partner_offset(*, company, user, doc_date, customer, supplier,
-                          ar_lines, ap_lines, remark=""):
-    """往来对冲：应收发票与应付发票互抵（不经银行）。SPEC §7.5。
+def create_partner_offset(*, company, user, doc_date, partner,
+                          ar_lines, ap_lines, remark="",
+                          customer=None, supplier=None):
+    """往来对冲：应收发票与应付发票互抵（不经银行）。SPEC §7.5 / §21。
 
+    partner: 往来单位（推荐）。兼容旧调用：customer/supplier 若传入则须为同一单位或合并为 partner。
     ar_lines / ap_lines: [{"invoice": inv, "amount": Decimal}, ...]
-    两侧金额合计须相等；单票对冲额不超过其未核销额。
     """
     from .models import PartnerOffset, PartnerOffsetAPLine, PartnerOffsetARLine
 
-    if customer.company_id != company.id or supplier.company_id != company.id:
-        raise SettlementError("客户/供应商必须属于当前账套")
+    if partner is None:
+        if customer is not None and supplier is not None:
+            if customer.pk != supplier.pk:
+                raise SettlementError("对冲须为同一往来单位；请先合并客户/供应商主数据")
+            partner = customer
+        else:
+            raise SettlementError("请选择往来单位")
+    if partner.company_id != company.id:
+        raise SettlementError("往来单位必须属于当前账套")
+    if not partner.is_customer or not partner.is_supplier:
+        # 兼营角色建议齐全；若发票侧能勾到也可放过仅提示由角色不全造成空列表
+        pass
+
     ar_cleaned, ap_cleaned = [], []
     ar_total = ap_total = ZERO_MONEY
     for a in ar_lines or []:
@@ -1212,8 +1240,8 @@ def create_partner_offset(*, company, user, doc_date, customer, supplier,
         if amount <= 0:
             continue
         inv = SalesInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
-        if inv.company_id != company.id or inv.customer_id != customer.id:
-            raise SettlementError("销售发票与所选客户不一致")
+        if inv.company_id != company.id or inv.customer_id != partner.id:
+            raise SettlementError("销售发票与所选往来单位不一致")
         if inv.status != SalesInvoice.Status.REGISTERED:
             raise SettlementError(f"销售发票 {inv.doc_no} 已作废")
         if amount > inv.outstanding:
@@ -1225,8 +1253,8 @@ def create_partner_offset(*, company, user, doc_date, customer, supplier,
         if amount <= 0:
             continue
         inv = PurchaseInvoice.objects.select_for_update().get(pk=a["invoice"].pk)
-        if inv.company_id != company.id or inv.supplier_id != supplier.id:
-            raise SettlementError("采购发票与所选供应商不一致")
+        if inv.company_id != company.id or inv.supplier_id != partner.id:
+            raise SettlementError("采购发票与所选往来单位不一致")
         if inv.status != PurchaseInvoice.Status.REGISTERED:
             raise SettlementError(f"采购发票 {inv.doc_no} 已作废")
         if amount > inv.outstanding:
@@ -1241,7 +1269,7 @@ def create_partner_offset(*, company, user, doc_date, customer, supplier,
     doc = PartnerOffset.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(PartnerOffset, company, "DC", doc_date),
-        doc_date=doc_date, customer=customer, supplier=supplier,
+        doc_date=doc_date, partner=partner,
         amount=ar_total, remark=remark or "")
     for inv, amount in ar_cleaned:
         PartnerOffsetARLine.objects.create(offset=doc, invoice=inv, amount=amount)
@@ -1253,7 +1281,7 @@ def create_partner_offset(*, company, user, doc_date, customer, supplier,
         inv.save(update_fields=["settled_amount"])
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.OFFSET, target=doc,
-        summary=f"往来对冲 {doc.doc_no} 金额 {ar_total}（客户 {customer} / 供应商 {supplier}）")
+        summary=f"往来对冲 {doc.doc_no} 金额 {ar_total}（{partner}）")
     return doc
 
 

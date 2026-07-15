@@ -10,12 +10,17 @@ urlpatterns = [
     path("products/new/", views.ProductCreateView.as_view(), name="product_create"),
     path("products/<int:pk>/edit/", views.ProductUpdateView.as_view(), name="product_update"),
     path("products/<int:pk>/delete/", views.ProductDeleteView.as_view(), name="product_delete"),
-    # 客户
+    # 往来单位（SPEC §21）
+    path("partners/", views.PartnerListView.as_view(), name="partner_list"),
+    path("partners/new/", views.PartnerCreateView.as_view(), name="partner_create"),
+    path("partners/<int:pk>/edit/", views.PartnerUpdateView.as_view(), name="partner_update"),
+    path("partners/<int:pk>/delete/", views.PartnerDeleteView.as_view(), name="partner_delete"),
+    # 客户（兼容）
     path("customers/", views.CustomerListView.as_view(), name="customer_list"),
     path("customers/new/", views.CustomerCreateView.as_view(), name="customer_create"),
     path("customers/<int:pk>/edit/", views.CustomerUpdateView.as_view(), name="customer_update"),
     path("customers/<int:pk>/delete/", views.CustomerDeleteView.as_view(), name="customer_delete"),
-    # 供应商
+    # 供应商（兼容）
     path("suppliers/", views.SupplierListView.as_view(), name="supplier_list"),
     path("suppliers/new/", views.SupplierCreateView.as_view(), name="supplier_create"),
     path("suppliers/<int:pk>/edit/", views.SupplierUpdateView.as_view(), name="supplier_update"),

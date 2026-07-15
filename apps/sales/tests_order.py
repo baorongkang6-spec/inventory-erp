@@ -120,3 +120,81 @@ class SalesOrderFlowTests(TestCase):
         self.assertEqual(r2.status_code, 200)
         self.assertContains(r2, "生成出库")
         self.assertContains(r2, "生成发票")
+
+
+class SalesOrderBackfillTests(TestCase):
+    """M18-4：未完成出库补单回挂。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.p = Product.objects.create(company=cls.c1, code="P001", name="货A")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        post_inbound(cls.c1, cls.p, Decimal("100"), Decimal("10"), date=date(2026, 6, 1))
+        U = get_user_model()
+        cls.user = U.objects.create_user(username="sobf", password="x", can_view_all_companies=True)
+        for app, code in (
+            ("sales", "view_salesorder"), ("sales", "add_salesorder"),
+            ("sales", "view_salesoutbound"), ("sales", "add_salesoutbound"),
+            ("finance", "add_salesinvoice"), ("finance", "view_salesinvoice"),
+        ):
+            cls.user.user_permissions.add(
+                Permission.objects.get(content_type__app_label=app, codename=code))
+
+    def test_backfill_outbound_links_without_changing_amounts(self):
+        from apps.inventory.models import StockBalance
+        from apps.sales.order_services import backfill_sales_order, sales_backfill_candidates
+        from apps.sales.services import create_and_post_outbound
+
+        bal_before = StockBalance.objects.get(company=self.c1, product=self.p)
+        qty_before, cost_before = bal_before.quantity, bal_before.avg_price
+
+        ob = create_and_post_outbound(
+            company=self.c1, user=self.user, doc_date=date(2026, 7, 2),
+            customer=self.cust,
+            lines=[{"product": self.p, "quantity": Decimal("5"),
+                    "amount_untaxed": Decimal("500"), "tax_rate": Decimal("0.13")}])
+        self.assertIsNone(ob.sales_order_id)
+        taxed_before = ob.total_taxed
+
+        cand = sales_backfill_candidates(self.c1)
+        self.assertEqual(len(cand), 1)
+        self.assertEqual(cand[0]["ob_count"], 1)
+
+        order = backfill_sales_order(
+            company=self.c1, user=self.user, customer=self.cust,
+            outbound_ids=[ob.pk], invoice_ids=[])
+        ob.refresh_from_db()
+        self.assertEqual(ob.sales_order_id, order.pk)
+        self.assertEqual(ob.lines.get().order_line_id, order.lines.get().pk)
+        self.assertEqual(ob.total_taxed, taxed_before)
+        self.assertEqual(order.total_quantity, Decimal("5.000"))
+        self.assertEqual(order.ship_status, SalesOrder.Progress.FULL)
+        self.assertEqual(order.invoice_status, SalesOrder.Progress.NONE)
+
+        bal = StockBalance.objects.get(company=self.c1, product=self.p)
+        self.assertEqual(bal.quantity, qty_before - Decimal("5.000"))
+        # 补单后库存数量仍是出库后状态，平均成本不变
+        self.assertEqual(bal.avg_price, cost_before)
+
+        # 再次补同一出库应失败
+        with self.assertRaises(SalesOrderError):
+            backfill_sales_order(
+                company=self.c1, user=self.user, customer=self.cust,
+                outbound_ids=[ob.pk], invoice_ids=[])
+
+    def test_backfill_pages(self):
+        from apps.sales.services import create_and_post_outbound
+        create_and_post_outbound(
+            company=self.c1, user=self.user, doc_date=date(2026, 7, 2),
+            customer=self.cust,
+            lines=[{"product": self.p, "quantity": Decimal("2"),
+                    "amount_untaxed": Decimal("200"), "tax_rate": Decimal("0")}])
+        self.client.force_login(self.user)
+        r = self.client.get("/sales/orders/backfill/", SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "客户甲")
+        r2 = self.client.get(f"/sales/orders/backfill/{self.cust.pk}/", SERVER_NAME="localhost")
+        self.assertEqual(r2.status_code, 200)
+        r3 = self.client.get("/sales/orders/progress/", SERVER_NAME="localhost")
+        self.assertEqual(r3.status_code, 200)

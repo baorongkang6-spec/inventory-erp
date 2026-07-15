@@ -111,6 +111,11 @@ def inbound_create(request):
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
+    from .models import PurchaseOrder
+    from .order_services import (
+        PurchaseOrderError, bind_inbound_lines_to_order, open_receive_initial_lines,
+    )
+
     if request.method == "POST":
         header = InboundHeaderForm(request.POST, company=company)
         formset = InboundLineFormSet(request.POST, company=company)
@@ -118,12 +123,17 @@ def inbound_create(request):
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [
                 {"product": cd["product"], "quantity": cd["quantity"],
-                 "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"), "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed")}
+                 "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"),
+                 "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"),
+                 "amount_taxed": cd.get("amount_taxed")}
                 for cd in formset.valid_lines
             ]
             expenses = [{"category": e["category"], "amount": e["amount"]}
                         for e in expenses_fs.expense_lines]
+            purchase_order = header.cleaned_data.get("purchase_order")
             try:
+                if purchase_order:
+                    lines = bind_inbound_lines_to_order(purchase_order, lines)
                 doc = create_and_post_inbound(
                     company=company, user=request.user,
                     doc_date=header.cleaned_data["doc_date"],
@@ -131,15 +141,32 @@ def inbound_create(request):
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
                     purchase_type=header.cleaned_data["purchase_type"],
+                    purchase_order=purchase_order,
                 )
-            except InventoryError as e:
+            except (InventoryError, PurchaseOrderError) as e:
                 messages.error(request, f"过账失败：{e}")
             else:
                 messages.success(request, f"采购入库已过账：{doc.doc_no}")
                 return redirect("inbound_detail", pk=doc.pk)
     else:
-        header = InboundHeaderForm(company=company, initial={"doc_date": timezone.localdate()})
-        formset = InboundLineFormSet(company=company)
+        order_pk = request.GET.get("order")
+        order = None
+        if order_pk:
+            order = PurchaseOrder.objects.filter(
+                pk=order_pk, company=company, status=PurchaseOrder.Status.OPEN).first()
+        initial = {"doc_date": timezone.localdate()}
+        line_init = None
+        if order:
+            initial["purchase_order"] = order.pk
+            initial["supplier"] = order.supplier_id
+            line_init = open_receive_initial_lines(order)
+            if not line_init:
+                messages.warning(request, f"订单 {order.doc_no} 已无待收货数量")
+        header = InboundHeaderForm(company=company, initial=initial)
+        formset = (InboundLineFormSet(company=company, initial=line_init)
+                   if line_init else InboundLineFormSet(company=company))
+        if line_init:
+            formset.extra = max(0, 3 - len(line_init))
         expenses_fs = ExpenseFormSet(prefix="exp", company=company)
 
     return render(request, "purchasing/inbound_form.html",
@@ -159,8 +186,9 @@ def _inbound_is_manager(user):
 def inbound_edit(request, pk):
     """修改采购入库单（冲正重过账，保留单号）。本人+管理员、本月、未被下游引用方可改。"""
     from .services import inbound_edit_block_reason, update_and_repost_inbound
+    from .order_services import PurchaseOrderError, bind_inbound_lines_to_order
     company = _active_company(request)
-    doc = get_object_or_404(PurchaseInbound.objects.select_related("supplier"),
+    doc = get_object_or_404(PurchaseInbound.objects.select_related("supplier", "purchase_order"),
                             pk=pk, company=company)
     reason = inbound_edit_block_reason(doc, request.user, timezone.localdate(),
                                        _inbound_is_manager(request.user))
@@ -174,18 +202,25 @@ def inbound_edit(request, pk):
         expenses_fs = ExpenseFormSet(request.POST, prefix="exp", company=company)
         if header.is_valid() and formset.is_valid() and expenses_fs.is_valid():
             lines = [{"product": cd["product"], "quantity": cd["quantity"],
-                      "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"), "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"), "amount_taxed": cd.get("amount_taxed")}
+                      "tax_rate": cd["tax_rate"], "tax_inclusive_price": cd.get("tax_inclusive_price"),
+                      "amount_untaxed": cd.get("amount_untaxed"), "tax_amount": cd.get("tax_amount"),
+                      "amount_taxed": cd.get("amount_taxed")}
                      for cd in formset.valid_lines]
             expenses = [{"category": e["category"], "amount": e["amount"]}
                         for e in expenses_fs.expense_lines]
+            purchase_order = header.cleaned_data.get("purchase_order")
             try:
+                if purchase_order:
+                    lines = bind_inbound_lines_to_order(
+                        purchase_order, lines, exclude_inbound=doc)
                 update_and_repost_inbound(
                     doc, user=request.user, doc_date=header.cleaned_data["doc_date"],
                     supplier=header.cleaned_data.get("supplier"),
                     remark=header.cleaned_data.get("remark", ""),
                     lines=lines, expenses=expenses,
-                    purchase_type=header.cleaned_data["purchase_type"])
-            except InventoryError as e:
+                    purchase_type=header.cleaned_data["purchase_type"],
+                    purchase_order=purchase_order)
+            except (InventoryError, PurchaseOrderError) as e:
                 messages.error(request, f"修改失败：{e}")
             else:
                 messages.success(request, f"采购入库已修改：{doc.doc_no}")
@@ -193,7 +228,8 @@ def inbound_edit(request, pk):
     else:
         header = InboundHeaderForm(company=company, initial={
             "doc_date": doc.doc_date, "purchase_type": doc.purchase_type,
-            "supplier": doc.supplier_id, "remark": doc.remark})
+            "supplier": doc.supplier_id, "remark": doc.remark,
+            "purchase_order": doc.purchase_order_id})
         from decimal import Decimal
         line_init = [{
             "product": ln.product_id, "quantity": ln.quantity, "tax_rate": ln.tax_rate,

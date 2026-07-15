@@ -9,7 +9,7 @@ from django.db import transaction
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY, round_money, round_qty
-from apps.inventory.services import InventoryError, post_outbound, reverse_move
+from apps.inventory.services import InventoryError, post_inbound, post_outbound, reverse_move
 
 from .models import SalesOutbound, SalesOutboundLine
 
@@ -20,12 +20,12 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
                              sales_type=SalesOutbound.SalesType.SALE,
                              borrow_counterparty="",
                              sales_order=None) -> SalesOutbound:
-    """创建销售出库单并逐行过账减少库存（结转移动加权成本）。
+    """创建销售出库单并过账。
 
-    lines: [{"product": Product, "quantity": Decimal, 可选 order_line}, ...]
-    expenses: 其他费用（销售出库的费用一律作期间费用，不改库存成本，SPEC §6.2）。
-    sales_order: 可选来源销售订单（M18）。
+    普通销售/借出/归还：减少库存（移动加权结转成本）。
+    销售退回：增加库存（按行不含税金额作入库成本）。
     """
+    is_sale_return = sales_type == SalesOutbound.SalesType.SALE_RETURN
     doc = SalesOutbound.objects.create(
         company=company,
         created_by=user,
@@ -38,19 +38,24 @@ def create_and_post_outbound(*, company, user, doc_date, lines,
     )
     total_qty, total_cost = _apply_outbound_lines(
         doc, user, doc_date, lines, expenses, sales_type, customer, borrow_counterparty)
+    verb = "退回入" if is_sale_return else "出"
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
-        summary=f"销售出库 {doc.doc_no} 出 {total_qty} 件 成本 {total_cost}",
+        summary=f"销售出库({doc.get_sales_type_display()}) {doc.doc_no} {verb} {total_qty} 件 成本 {total_cost}",
     )
     # 关联交易自动联动（M4，SPEC §5）：客户指向系统内关联公司则镜像生成对方采购入库
     _mirror_to_related_company(doc, user)
+    if sales_order is not None:
+        from .order_services import refresh_order_status
+        refresh_order_status(sales_order)
     return doc
 
 
 def _apply_outbound_lines(doc, user, doc_date, lines, expenses, sales_type,
                           customer, borrow_counterparty):
-    """把明细行过账到已存在的出库单 doc 上（创建/修改共用）。返回 (总数量, 结转成本合计)。"""
+    """把明细行过账到已存在的出库单 doc 上（创建/修改共用）。返回 (总数量, 结转/入库成本合计)。"""
     company = doc.company
+    is_sale_return = sales_type == SalesOutbound.SalesType.SALE_RETURN
     total_qty = ZERO_QTY
     total_cost = total_untaxed = total_tax = total_taxed = ZERO_MONEY
     from apps.purchasing.services import _line_amounts
@@ -63,10 +68,18 @@ def _apply_outbound_lines(doc, user, doc_date, lines, expenses, sales_type,
             ln = {**ln, "unit_price": ln.get("sale_unit_price")}
         untaxed, tax, taxed = _line_amounts(quantity, rate, ln)
         sale_price = round_money(untaxed / quantity) if quantity else ZERO_MONEY
-        move = post_outbound(
-            company, ln["product"], quantity, date=doc_date,
-            source_type="SalesOutbound", source_id=doc.pk, source_no=doc.doc_no,
-        )
+        if is_sale_return:
+            # 销售退回：库存↑，成本按不含税金额入账
+            move = post_inbound(
+                company, ln["product"], quantity, ZERO_MONEY, amount=untaxed,
+                date=doc_date,
+                source_type="SalesOutbound", source_id=doc.pk, source_no=doc.doc_no,
+            )
+        else:
+            move = post_outbound(
+                company, ln["product"], quantity, date=doc_date,
+                source_type="SalesOutbound", source_id=doc.pk, source_no=doc.doc_no,
+            )
         SalesOutboundLine.objects.create(
             outbound=doc, product=ln["product"], quantity=quantity,
             sale_unit_price=sale_price, tax_rate=rate,
@@ -107,7 +120,7 @@ def _apply_outbound_lines(doc, user, doc_date, lines, expenses, sales_type,
 @transaction.atomic
 def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, remark="",
                                expenses=None, sales_type=SalesOutbound.SalesType.SALE,
-                               borrow_counterparty=""):
+                               borrow_counterparty="", sales_order=None):
     """修改销售出库单：冲正原过账 → 在同一张单上按新明细重过账（保留单号）。
 
     有关联镜像的出库单不可改（请作废重录以联动）。调用前应已校验可改性。
@@ -116,6 +129,8 @@ def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, rem
         raise InventoryError("已作废单据不可修改")
     if doc.mirror_inbound_id:
         raise InventoryError("本单已生成关联镜像入库，请作废重录以联动")
+
+    old_order = doc.sales_order
 
     for line in doc.lines.select_related("stock_move"):
         if line.stock_move_id:
@@ -132,7 +147,8 @@ def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, rem
     doc.customer = customer
     doc.sales_type = sales_type
     doc.remark = remark
-    doc.save(update_fields=["doc_date", "customer", "sales_type", "remark"])
+    doc.sales_order = sales_order
+    doc.save(update_fields=["doc_date", "customer", "sales_type", "remark", "sales_order"])
 
     total_qty, total_cost = _apply_outbound_lines(
         doc, user, doc_date, lines, expenses, sales_type, customer, borrow_counterparty)
@@ -140,6 +156,12 @@ def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, rem
         actor=user, company=doc.company, action=AuditLog.Action.UPDATE, target=doc,
         summary=f"修改销售出库 {doc.doc_no}（冲正重过账，出 {total_qty} 件 成本 {total_cost}）",
     )
+    from .order_services import refresh_order_status
+    if old_order_id := getattr(old_order, "pk", None):
+        if not sales_order or sales_order.pk != old_order_id:
+            refresh_order_status(old_order)
+    if sales_order is not None:
+        refresh_order_status(sales_order)
     return doc
 
 
@@ -211,11 +233,12 @@ def _mirror_to_related_company(outbound, user):
     if company_b is None or not company_b.is_active:
         return
 
-    # 销售→对方外购入库；借出/归还→对方借调入库（SPEC §5）
+    # 销售→对方外购入库；销售退回→对方采购退回；借出/归还→对方借调入库（SPEC §5）
     borrow_kind = outbound.sales_type in (
         SalesOutbound.SalesType.LEND, SalesOutbound.SalesType.RETURN)
+    sale_return = outbound.sales_type == SalesOutbound.SalesType.SALE_RETURN
     # 计价口径（SPEC §5.1，2026-06-26）：
-    #  · 销售：B 按 A 的「不含税售额」入库（B 按售价买进；含税/税额一并镜像），无售价则回退成本；
+    #  · 销售/销售退回：B 按 A 的「不含税售额」；无售价则回退成本；
     #  · 借调：按 A 的移动加权结转成本平移（不涉税、无加价）。
     lines = []
     for ln in outbound.lines.select_related("product"):
@@ -228,15 +251,20 @@ def _mirror_to_related_company(outbound, user):
             })
         else:
             lines.append({"product": prod, "quantity": ln.quantity, "unit_price": ln.unit_cost})
-    # 外购镜像带上"代表源公司"的供应商；借调类走 borrow_counterparty，不设供应商
+    # 外购/退回镜像带上"代表源公司"的供应商；借调类走 borrow_counterparty，不设供应商
     supplier = None if borrow_kind else _ensure_supplier_for_company(company_b, outbound.company)
     from apps.purchasing.models import PurchaseInbound
+    if borrow_kind:
+        ptype = PurchaseInbound.PurchaseType.BORROW
+    elif sale_return:
+        ptype = PurchaseInbound.PurchaseType.PURCHASE_RETURN
+    else:
+        ptype = PurchaseInbound.PurchaseType.EXTERNAL
     inbound = create_and_post_inbound(
         company=company_b, user=user, doc_date=outbound.doc_date, lines=lines,
         supplier=supplier,
         remark=f"关联自动生成：源 {outbound.company.code} {outbound.doc_no}",
-        purchase_type=(PurchaseInbound.PurchaseType.BORROW if borrow_kind
-                       else PurchaseInbound.PurchaseType.EXTERNAL),
+        purchase_type=ptype,
         borrow_counterparty=str(outbound.company) if borrow_kind else "",
     )
     inbound.source_outbound = outbound

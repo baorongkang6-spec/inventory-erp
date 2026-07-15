@@ -16,6 +16,7 @@ class SalesOutbound(CompanyScopedModel):
         SALE = "sale", "销售"
         LEND = "lend", "借出"      # M6 借调出库（借出给对方）
         RETURN = "return", "归还"  # M6 借调归还（归还借入的货）
+        SALE_RETURN = "sale_return", "销售退回"  # 客户退货入库（库存↑）
 
     class Status(models.TextChoices):
         POSTED = "posted", "已过账"

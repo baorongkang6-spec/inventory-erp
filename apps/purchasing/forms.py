@@ -9,7 +9,7 @@ from apps.core.forms import BootstrapForm
 from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Product, Supplier
 
-from .models import PurchaseInbound
+from .models import PurchaseInbound, PurchaseOrder
 
 
 class InboundHeaderForm(BootstrapForm):
@@ -17,6 +17,10 @@ class InboundHeaderForm(BootstrapForm):
     purchase_type = forms.ChoiceField(label="采购方式", choices=PurchaseInbound.PurchaseType.choices)
     supplier = forms.ModelChoiceField(
         label="供应商/出借方", queryset=Supplier.objects.none(), required=False, empty_label="（外购/未指定）"
+    )
+    purchase_order = forms.ModelChoiceField(
+        label="采购订单", queryset=PurchaseOrder.objects.none(), required=False,
+        empty_label="（不关联订单）",
     )
     remark = forms.CharField(label="备注", required=False, max_length=255)
 
@@ -26,6 +30,31 @@ class InboundHeaderForm(BootstrapForm):
             self.fields["supplier"].queryset = Supplier.objects.filter(
                 company=company, is_active=True
             )
+            pks = list(PurchaseOrder.objects.filter(
+                company=company, status=PurchaseOrder.Status.OPEN
+            ).values_list("pk", flat=True))
+            cur = self.initial.get("purchase_order")
+            if cur is not None:
+                pk = cur.pk if isinstance(cur, PurchaseOrder) else int(cur)
+                if pk not in pks:
+                    pks.append(pk)
+            self.fields["purchase_order"].queryset = (
+                PurchaseOrder.objects.filter(company=company, pk__in=pks)
+                .select_related("supplier").order_by("-doc_date", "-id")
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        order = cleaned.get("purchase_order")
+        supplier = cleaned.get("supplier")
+        purchase_type = cleaned.get("purchase_type")
+        if purchase_type == PurchaseInbound.PurchaseType.PURCHASE_RETURN and order:
+            self.add_error("purchase_order", "采购退回不关联采购订单（不计入订单收货进度）")
+        if order and supplier and order.supplier_id != supplier.pk:
+            self.add_error("supplier", f"须与订单供应商一致（{order.supplier}）")
+        if order and not supplier:
+            cleaned["supplier"] = order.supplier
+        return cleaned
 
 
 class InboundLineForm(BootstrapForm):

@@ -6,7 +6,7 @@ from apps.core.forms import BootstrapForm
 from apps.core.money import DEFAULT_TAX_RATE
 from apps.masterdata.models import Customer, Product
 
-from .models import SalesOutbound
+from .models import SalesOrder, SalesOutbound
 
 
 class OutboundHeaderForm(BootstrapForm):
@@ -14,6 +14,10 @@ class OutboundHeaderForm(BootstrapForm):
     sales_type = forms.ChoiceField(label="销售方式", choices=SalesOutbound.SalesType.choices)
     customer = forms.ModelChoiceField(
         label="客户/归还对象", queryset=Customer.objects.none(), required=False, empty_label="（未指定）"
+    )
+    sales_order = forms.ModelChoiceField(
+        label="销售订单", queryset=SalesOrder.objects.none(), required=False,
+        empty_label="（不关联订单）",
     )
     remark = forms.CharField(label="备注", required=False, max_length=255)
 
@@ -23,6 +27,32 @@ class OutboundHeaderForm(BootstrapForm):
             self.fields["customer"].queryset = Customer.objects.filter(
                 company=company, is_active=True
             )
+            pks = list(SalesOrder.objects.filter(
+                company=company, status=SalesOrder.Status.OPEN
+            ).values_list("pk", flat=True))
+            # 编辑时保留已挂订单（即使不是 OPEN）
+            cur = self.initial.get("sales_order")
+            if cur is not None:
+                pk = cur.pk if isinstance(cur, SalesOrder) else int(cur)
+                if pk not in pks:
+                    pks.append(pk)
+            self.fields["sales_order"].queryset = (
+                SalesOrder.objects.filter(company=company, pk__in=pks)
+                .select_related("customer").order_by("-doc_date", "-id")
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        order = cleaned.get("sales_order")
+        customer = cleaned.get("customer")
+        sales_type = cleaned.get("sales_type")
+        if sales_type == SalesOutbound.SalesType.SALE_RETURN and order:
+            self.add_error("sales_order", "销售退回不关联销售订单（不计入订单发货进度）")
+        if order and customer and order.customer_id != customer.pk:
+            self.add_error("customer", f"须与订单客户一致（{order.customer}）")
+        if order and not customer:
+            cleaned["customer"] = order.customer
+        return cleaned
 
 
 class OutboundLineForm(BootstrapForm):

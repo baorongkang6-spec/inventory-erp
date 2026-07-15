@@ -7,7 +7,7 @@ from django.db import transaction
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY, round_money, round_qty
-from apps.inventory.services import InventoryError, post_inbound, reverse_move
+from apps.inventory.services import InventoryError, post_inbound, post_outbound, reverse_move
 
 from .models import PurchaseInbound, PurchaseInboundLine
 
@@ -18,11 +18,11 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
                             purchase_type=PurchaseInbound.PurchaseType.EXTERNAL,
                             borrow_counterparty="",
                             purchase_order=None) -> PurchaseInbound:
-    """创建采购入库单并逐行过账增加库存。
+    """创建采购入库单并过账。
 
-    lines: [{"product": Product, "quantity": Decimal, "unit_price": Decimal, 可选 order_line}, ...]
-    purchase_order: 可选来源采购订单（M18）。
+    外购/借调：增加库存。采购退回：按移动加权减少库存。
     """
+    is_return = purchase_type == PurchaseInbound.PurchaseType.PURCHASE_RETURN
     doc = PurchaseInbound.objects.create(
         company=company,
         created_by=user,
@@ -35,10 +35,14 @@ def create_and_post_inbound(*, company, user, doc_date, lines,
     )
     total_qty, total_amount = _apply_inbound_lines(
         doc, user, doc_date, lines, expenses, purchase_type, supplier, borrow_counterparty)
+    verb = "退回出" if is_return else "入"
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=doc,
-        summary=f"采购入库 {doc.doc_no} 入 {total_qty} 件 金额 {total_amount}",
+        summary=f"采购入库({doc.get_purchase_type_display()}) {doc.doc_no} {verb} {total_qty} 件 金额 {total_amount}",
     )
+    if purchase_order is not None:
+        from .order_services import refresh_order_status
+        refresh_order_status(purchase_order)
     return doc
 
 
@@ -67,8 +71,9 @@ def _line_amounts(qty, rate, ln):
 
 def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
                          supplier, borrow_counterparty):
-    """把明细行过账到已存在的入库单 doc 上（创建/修改共用）。返回 (总数量, 入库成本合计)。"""
+    """把明细行过账到已存在的入库单 doc 上（创建/修改共用）。返回 (总数量, 成本合计)。"""
     company = doc.company
+    is_return = purchase_type == PurchaseInbound.PurchaseType.PURCHASE_RETURN
     norm = []
     for ln in lines:
         qty = round_qty(ln["quantity"])
@@ -80,11 +85,12 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
     base = [x["untaxed"] for x in norm]
     base_total = sum(base, ZERO_MONEY)
 
-    # 计入成本的费用合计 → 按行基础金额比例分摊
+    # 计入成本的费用合计 → 按行基础金额比例分摊（采购退回不摊入存货）
     cost_fee = ZERO_MONEY
-    for e in (expenses or []):
-        if e["category"].include_in_cost:
-            cost_fee += round_money(e["amount"])
+    if not is_return:
+        for e in (expenses or []):
+            if e["category"].include_in_cost:
+                cost_fee += round_money(e["amount"])
     alloc = [ZERO_MONEY] * len(norm)
     if cost_fee and base_total > 0:
         running = ZERO_MONEY
@@ -100,11 +106,18 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
     total_amount = total_untaxed = total_tax = total_taxed = ZERO_MONEY
     for x, b, fee in zip(norm, base, alloc):
         line_amount = round_money(b + fee)  # 入库成本（不含税 + 计入成本的费用分摊）
-        move = post_inbound(
-            company, x["product"], x["quantity"], ZERO_MONEY, amount=line_amount,
-            date=doc_date,
-            source_type="PurchaseInbound", source_id=doc.pk, source_no=doc.doc_no,
-        )
+        if is_return:
+            # 采购退回：库存↓，按移动加权结转成本
+            move = post_outbound(
+                company, x["product"], x["quantity"], date=doc_date,
+                source_type="PurchaseInbound", source_id=doc.pk, source_no=doc.doc_no,
+            )
+        else:
+            move = post_inbound(
+                company, x["product"], x["quantity"], ZERO_MONEY, amount=line_amount,
+                date=doc_date,
+                source_type="PurchaseInbound", source_id=doc.pk, source_no=doc.doc_no,
+            )
         PurchaseInboundLine.objects.create(
             inbound=doc, product=x["product"], quantity=x["quantity"],
             unit_price=move.unit_price, tax_rate=x["tax_rate"],
@@ -118,7 +131,7 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
         total_tax = round_money(total_tax + x["tax"])
         total_taxed = round_money(total_taxed + x["taxed"])
 
-    # 记录其他费用（含计入成本与期间费用）
+    # 记录其他费用（含计入成本与期间费用）；退回时全部作期间费用
     _record_expenses(company, user, doc, doc_date, expenses, kind="purchase")
 
     # 借调入库：挂借调往来（类其他应付，不涉税，SPEC §4.1）
@@ -144,7 +157,7 @@ def _apply_inbound_lines(doc, user, doc_date, lines, expenses, purchase_type,
 @transaction.atomic
 def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, remark="",
                               expenses=None, purchase_type=PurchaseInbound.PurchaseType.EXTERNAL,
-                              borrow_counterparty=""):
+                              borrow_counterparty="", purchase_order=None):
     """修改采购入库单：冲正原过账 → 按新明细在同一张单上重新过账（保留单号）。
 
     调用前应已校验可改性（见 inbound_edit_block_reason）。镜像生成单不可改。
@@ -153,6 +166,8 @@ def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, rema
         raise InventoryError("已作废单据不可修改")
     if doc.source_outbound_id:
         raise InventoryError("关联镜像生成的入库单不可直接修改，请改源销售出库单")
+
+    old_order = doc.purchase_order
 
     # 冲正原过账
     for line in doc.lines.select_related("stock_move"):
@@ -170,10 +185,17 @@ def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, rema
     doc.supplier = supplier
     doc.purchase_type = purchase_type
     doc.remark = remark
-    doc.save(update_fields=["doc_date", "supplier", "purchase_type", "remark"])
+    doc.purchase_order = purchase_order
+    doc.save(update_fields=["doc_date", "supplier", "purchase_type", "remark", "purchase_order"])
 
     total_qty, total_amount = _apply_inbound_lines(
         doc, user, doc_date, lines, expenses, purchase_type, supplier, borrow_counterparty)
+    from .order_services import refresh_order_status
+    if old_order_id := getattr(old_order, "pk", None):
+        if not purchase_order or purchase_order.pk != old_order_id:
+            refresh_order_status(old_order)
+    if purchase_order is not None:
+        refresh_order_status(purchase_order)
     AuditLog.record(
         actor=user, company=doc.company, action=AuditLog.Action.UPDATE, target=doc,
         summary=f"修改采购入库 {doc.doc_no}（冲正重过账，入 {total_qty} 件 金额 {total_amount}）",

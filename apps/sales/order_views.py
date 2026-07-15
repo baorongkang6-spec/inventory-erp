@@ -17,8 +17,11 @@ from apps.inventory.services import InventoryError
 
 from .forms import OrderHeaderForm, OrderInvoiceForm, OrderLineFormSet, OrderShipForm
 from .models import SalesOrder, SalesOutboundLine
+from apps.masterdata.models import Customer
+
 from .order_services import (
     SalesOrderError,
+    backfill_sales_order,
     create_invoice_from_order,
     create_outbound_from_order,
     create_sales_order,
@@ -26,6 +29,8 @@ from .order_services import (
     qty_open_invoice,
     qty_open_ship,
     refresh_order_status,
+    sales_backfill_candidates,
+    sales_order_progress_rows,
     update_sales_order,
     void_sales_order,
 )
@@ -294,3 +299,60 @@ def order_void(request, pk):
     except SalesOrderError as e:
         messages.error(request, "; ".join(e.messages) if hasattr(e, "messages") else str(e))
     return redirect("order_detail", pk=pk)
+
+
+@login_required
+@permission_required("sales.add_salesorder", raise_exception=True)
+def order_backfill_list(request):
+    """未完成业务补单：按客户列出可回挂候选。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "请先选择账套")
+        return redirect("home")
+    rows = sales_backfill_candidates(company)
+    return render(request, "sales/order_backfill_list.html", {
+        "active_company": company, "rows": rows,
+    })
+
+
+@login_required
+@permission_required("sales.add_salesorder", raise_exception=True)
+def order_backfill_customer(request, customer_id):
+    """选定客户后勾选出库/发票并补建订单回挂。"""
+    company = resolve_company(request)
+    customer = get_object_or_404(Customer, pk=customer_id, company=company)
+    candidates = {r["customer"].pk: r for r in sales_backfill_candidates(company)}
+    row = candidates.get(customer.pk)
+    if not row:
+        messages.info(request, "该客户暂无待补单据")
+        return redirect("order_backfill_list")
+    if request.method == "POST":
+        ob_ids = request.POST.getlist("outbound_ids")
+        inv_ids = request.POST.getlist("invoice_ids")
+        try:
+            order = backfill_sales_order(
+                company=company, user=request.user, customer=customer,
+                outbound_ids=ob_ids, invoice_ids=inv_ids,
+                remark=request.POST.get("remark") or "",
+            )
+            messages.success(request, f"已补单 {order.doc_no}（仅回挂关联，未改入账金额）")
+            return redirect("order_detail", pk=order.pk)
+        except SalesOrderError as e:
+            messages.error(request, "; ".join(e.messages) if hasattr(e, "messages") else str(e))
+    return render(request, "sales/order_backfill_form.html", {
+        "active_company": company, "customer": customer, "row": row,
+    })
+
+
+@login_required
+@permission_required("sales.view_salesorder", raise_exception=True)
+def order_progress(request):
+    """执行中销售订单进度简表。"""
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if company is None:
+        messages.error(request, "请先选择账套")
+        return redirect("home")
+    rows = sales_order_progress_rows(company)
+    return render(request, "sales/order_progress.html", {
+        "active_company": company, "rows": rows,
+    })

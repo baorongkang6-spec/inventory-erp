@@ -30,8 +30,9 @@
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">基础资料</a>
           <ul class="dropdown-menu">
             {% if menu.products %}<li><a class="dropdown-item" href="{% url 'product_list' %}">商品</a></li>{% endif %}
-            {% if menu.customers %}<li><a class="dropdown-item" href="{% url 'customer_list' %}">客户</a></li>{% endif %}
-            {% if menu.suppliers %}<li><a class="dropdown-item" href="{% url 'supplier_list' %}">供应商</a></li>{% endif %}
+            {% if menu.customers or menu.suppliers %}<li><a class="dropdown-item" href="{% url 'partner_list' %}">往来单位</a></li>{% endif %}
+            {% if menu.customers %}<li><a class="dropdown-item text-muted" href="{% url 'customer_list' %}">客户（筛选）</a></li>{% endif %}
+            {% if menu.suppliers %}<li><a class="dropdown-item text-muted" href="{% url 'supplier_list' %}">供应商（筛选）</a></li>{% endif %}
             {% if perms.masterdata.view_expensecategory %}<li><a class="dropdown-item" href="{% url 'expensecategory_list' %}">费用类别</a></li>{% endif %}
             {% if perms.finance.view_bankaccount %}<li><a class="dropdown-item" href="{% url 'bankaccount_list' %}">银行账户</a></li>{% endif %}
             {% if user.is_superuser or perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'invoice_quota' %}">开具发票额度录入</a></li>{% endif %}
@@ -46,6 +47,7 @@
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">采购</a>
           <ul class="dropdown-menu">
             {% if perms.purchasing.view_purchaseorder %}<li><a class="dropdown-item" href="{% url 'purchase_order_list' %}">采购订单</a></li>{% endif %}
+            {% if perms.purchasing.add_purchaseorder %}<li><a class="dropdown-item" href="{% url 'purchase_order_backfill_list' %}">采购补单回挂</a></li>{% endif %}
             {% if perms.purchasing.view_purchaseinbound %}<li><a class="dropdown-item" href="{% url 'inbound_list' %}">采购入库</a></li>{% endif %}
             {% if perms.finance.view_purchaseinvoice %}<li><a class="dropdown-item" href="{% url 'purchase_invoice_list' %}">采购发票</a></li>{% endif %}
             {% if perms.finance.view_payment %}<li><a class="dropdown-item" href="{% url 'payment_list' %}">付款</a></li>{% endif %}
@@ -59,6 +61,7 @@
           <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">销售</a>
           <ul class="dropdown-menu">
             {% if perms.sales.view_salesorder %}<li><a class="dropdown-item" href="{% url 'order_list' %}">销售订单</a></li>{% endif %}
+            {% if perms.sales.add_salesorder %}<li><a class="dropdown-item" href="{% url 'order_backfill_list' %}">销售补单回挂</a></li>{% endif %}
             {% if perms.sales.view_salesoutbound %}<li><a class="dropdown-item" href="{% url 'outbound_list' %}">销售出库</a></li>{% endif %}
             {% if perms.finance.view_salesinvoice %}<li><a class="dropdown-item" href="{% url 'sales_invoice_list' %}">销售发票</a></li>{% endif %}
             {% if perms.finance.view_receipt %}<li><a class="dropdown-item" href="{% url 'receipt_list' %}">收款</a></li>{% endif %}
