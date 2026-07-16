@@ -12,6 +12,8 @@ urlpatterns = [
     path("products/<int:pk>/delete/", views.ProductDeleteView.as_view(), name="product_delete"),
     # 往来单位（SPEC §21）
     path("partners/", views.PartnerListView.as_view(), name="partner_list"),
+    path("partners/import/", views.partner_import, name="partner_import"),
+    path("partners/template/", views.partner_template, name="partner_template"),
     path("partners/new/", views.PartnerCreateView.as_view(), name="partner_create"),
     path("partners/<int:pk>/edit/", views.PartnerUpdateView.as_view(), name="partner_update"),
     path("partners/<int:pk>/delete/", views.PartnerDeleteView.as_view(), name="partner_delete"),

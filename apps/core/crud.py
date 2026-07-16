@@ -25,6 +25,7 @@ class ScopedListView(FilteredListMixin, CompanyScopedMixin, ListView):
     create_url_name = ""
     update_url_name = ""
     delete_url_name = ""
+    import_url_name = ""  # 可选：列表旁「导入」按钮
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -50,6 +51,7 @@ class ScopedListView(FilteredListMixin, CompanyScopedMixin, ListView):
             "headers": [h for h, _ in self.columns],
             "rows": rows,
             "create_url": reverse_lazy(self.create_url_name),
+            "import_url": (reverse_lazy(self.import_url_name) if self.import_url_name else ""),
             "can_add": user.has_perm(f"{meta.app_label}.add_{meta.model_name}"),
             "can_change": user.has_perm(f"{meta.app_label}.change_{meta.model_name}"),
             "can_delete": user.has_perm(f"{meta.app_label}.delete_{meta.model_name}"),

@@ -62,6 +62,7 @@ class PartnerListView(ScopedListView):
     create_url_name = "partner_create"
     update_url_name = "partner_update"
     delete_url_name = "partner_delete"
+    import_url_name = "partner_import"
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -91,6 +92,62 @@ class PartnerDeleteView(ScopedDeleteView):
     model = BusinessPartner
     title = "往来单位"
     success_url = reverse_lazy("partner_list")
+
+
+# --- 往来单位 Excel 导入 -------------------------------------------------------
+from django.contrib import messages  # noqa: E402
+from django.contrib.auth.decorators import login_required, permission_required  # noqa: E402
+from django.http import HttpResponse  # noqa: E402
+from django.shortcuts import redirect, render  # noqa: E402
+
+from apps.core.scope import get_active_company, get_visible_companies  # noqa: E402
+
+
+@login_required
+@permission_required("masterdata.add_businesspartner", raise_exception=True)
+def partner_import(request):
+    """Excel 导入往来单位（按编码 upsert）。"""
+    from .excel import import_partners, parse_partners_xlsx
+
+    company = get_active_company(request, list(get_visible_companies(request.user)))
+    if request.method == "POST":
+        upload = request.FILES.get("file")
+        if not company:
+            messages.error(request, "没有可用的当前账套")
+        elif not upload:
+            messages.error(request, "请上传 Excel 文件（.xlsx）")
+        else:
+            try:
+                rows, parse_errors = parse_partners_xlsx(upload)
+            except Exception as e:
+                messages.error(request, f"文件解析失败：{e}")
+            else:
+                created, updated, import_errors = import_partners(
+                    company=company, user=request.user, rows=rows)
+                errors = parse_errors + import_errors
+                msg = f"导入完成：新增 {created} 条，更新 {updated} 条"
+                if errors:
+                    msg += f"；{len(errors)} 行有问题"
+                messages.success(request, msg)
+                for e in errors[:15]:
+                    messages.warning(request, e)
+                return redirect("partner_list")
+    return render(request, "masterdata/partner_import.html", {"company": company})
+
+
+@login_required
+@permission_required("masterdata.add_businesspartner", raise_exception=True)
+def partner_template(request):
+    """下载往来单位导入模板。"""
+    from .excel import build_partner_template
+
+    data = build_partner_template()
+    resp = HttpResponse(
+        data,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    resp["Content-Disposition"] = 'attachment; filename="往来单位导入模板.xlsx"'
+    return resp
 
 
 # --- 客户（代理兼容入口，列表实为 is_customer）--------------------------------

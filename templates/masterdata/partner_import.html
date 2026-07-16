@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}导入往来单位 · 库存 ERP{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <h4 class="mb-3">导入往来单位（Excel）
+      <small class="text-muted fs-6 ms-2">{{ active_company }}</small>
+    </h4>
+    <div class="card">
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">Excel 文件（.xlsx）</label>
+            <input type="file" name="file" accept=".xlsx" class="form-control" required>
+          </div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button type="submit" class="btn btn-primary">导入</button>
+            <a href="{% url 'partner_template' %}" class="btn btn-outline-success">下载模板</a>
+            <a href="{% url 'partner_list' %}" class="btn btn-outline-secondary">返回列表</a>
+          </div>
+        </form>
+        <hr>
+        <p class="text-muted small mb-1">列格式（首行表头）：</p>
+        <p class="small mb-2"><code>编码 | 名称 | 客户 | 供应商 | 联系人 | 电话 | 税号 | 地址 | 对应关联企业 | 启用 | 备注</code></p>
+        <ul class="text-muted small mb-0">
+          <li>编码建议 <b>W + 四位数字</b>（如 W0001），同一账套内唯一；同编码已存在则<strong>更新</strong>。</li>
+          <li>客户 / 供应商 / 启用：填「是」或「否」（启用留空视为是）。至少一侧角色为「是」。</li>
+          <li>对应关联企业：填 <code>C1</code>/<code>C2</code>/<code>C3</code> 或公司简称；外部单位留空。不可填本公司。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
