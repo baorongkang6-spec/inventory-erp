@@ -101,8 +101,19 @@ def _rows(file):
 
 
 def _dec(v):
+    """把 Excel 单元格值转换为 Decimal。
+
+    兼容：
+    - 数字单元格（int/float/Decimal）
+    - 文本数字（含千分位逗号，如 366,292.03）
+    """
     try:
-        return Decimal(str(v))
+        if v in (None, ""):
+            return None
+        s = str(v).strip()
+        # Excel/人工常见：千分位分隔符，先去掉再转
+        s = s.replace(",", "")
+        return Decimal(s)
     except (InvalidOperation, ValueError, TypeError):
         return None
 

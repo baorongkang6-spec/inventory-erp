@@ -7,6 +7,7 @@ from django.db import transaction
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY, round_money, round_qty
+from apps.inventory.rebalance import rebalance_products
 from apps.inventory.services import InventoryError, post_inbound, post_outbound, reverse_move
 
 from .models import PurchaseInbound, PurchaseInboundLine
@@ -169,11 +170,19 @@ def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, rema
 
     old_order = doc.purchase_order
 
-    # 冲正原过账
-    for line in doc.lines.select_related("stock_move"):
-        if line.stock_move_id:
-            reverse_move(line.stock_move, date=doc.doc_date, source_type="PurchaseInboundEdit",
-                         source_id=doc.pk, source_no=f"改前{doc.doc_no}")
+    affected_products = set()
+    # 冲正并删除原过账流水（台账不留「改前」记录）
+    for line in list(doc.lines.select_related("stock_move")):
+        mv = line.stock_move
+        if not mv:
+            continue
+        affected_products.add(mv.product_id)
+        rev = reverse_move(mv, date=doc.doc_date, source_type="PurchaseInboundEdit",
+                           source_id=doc.pk, source_no=f"改前{doc.doc_no}")
+        line.stock_move = None
+        line.save(update_fields=["stock_move"])
+        rev.delete()
+        mv.delete()
     doc.lines.all().delete()
     from apps.finance.models import BorrowTransaction, ExpenseEntry
     ExpenseEntry.objects.filter(company=doc.company, source_type="PurchaseInbound",
@@ -190,6 +199,10 @@ def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, rema
 
     total_qty, total_amount = _apply_inbound_lines(
         doc, user, doc_date, lines, expenses, purchase_type, supplier, borrow_counterparty)
+    for line in doc.lines.select_related("stock_move"):
+        if line.stock_move_id:
+            affected_products.add(line.stock_move.product_id)
+    rebalance_products(doc.company, affected_products)
     from .order_services import refresh_order_status
     if old_order_id := getattr(old_order, "pk", None):
         if not purchase_order or purchase_order.pk != old_order_id:

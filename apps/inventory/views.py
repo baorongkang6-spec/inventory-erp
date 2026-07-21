@@ -14,6 +14,7 @@ from apps.core.scope import resolve_company
 from apps.masterdata.models import Product
 
 from .models import StockBalance, StockMove
+from .rebalance import normalize_balance_qty_amount
 
 ZERO = Decimal("0.00")
 ZERO_QTY = Decimal("0.000")
@@ -162,6 +163,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                     sign = 1 if m.direction == StockMove.Direction.IN else -1
                     open_qty += sign * m.quantity
                     open_amount += sign * m.amount
+                open_qty, open_amount = normalize_balance_qty_amount(open_qty, open_amount)
             period = base
             if date_from:
                 period = period.filter(date__gte=date_from)
@@ -172,6 +174,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                 is_in = m.direction == StockMove.Direction.IN
                 bal_qty += m.quantity if is_in else -m.quantity
                 bal_amount += m.amount if is_in else -m.amount
+                bal_qty, bal_amount = normalize_balance_qty_amount(bal_qty, bal_amount)
                 rows.append({
                     "move": m,
                     "in_qty": m.quantity if is_in else None,

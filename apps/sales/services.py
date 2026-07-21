@@ -9,6 +9,7 @@ from django.db import transaction
 from apps.core.docnum import next_doc_no
 from apps.core.models import AuditLog
 from apps.core.money import DEFAULT_TAX_RATE, ZERO_MONEY, ZERO_QTY, round_money, round_qty
+from apps.inventory.rebalance import rebalance_products
 from apps.inventory.services import InventoryError, post_inbound, post_outbound, reverse_move
 
 from .models import SalesOutbound, SalesOutboundLine
@@ -132,10 +133,18 @@ def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, rem
 
     old_order = doc.sales_order
 
-    for line in doc.lines.select_related("stock_move"):
-        if line.stock_move_id:
-            reverse_move(line.stock_move, date=doc.doc_date, source_type="SalesOutboundEdit",
-                         source_id=doc.pk, source_no=f"改前{doc.doc_no}")
+    affected_products = set()
+    for line in list(doc.lines.select_related("stock_move")):
+        mv = line.stock_move
+        if not mv:
+            continue
+        affected_products.add(mv.product_id)
+        rev = reverse_move(mv, date=doc.doc_date, source_type="SalesOutboundEdit",
+                           source_id=doc.pk, source_no=f"改前{doc.doc_no}")
+        line.stock_move = None
+        line.save(update_fields=["stock_move"])
+        rev.delete()
+        mv.delete()
     doc.lines.all().delete()
     from apps.finance.models import BorrowTransaction, ExpenseEntry
     ExpenseEntry.objects.filter(company=doc.company, source_type="SalesOutbound",
@@ -152,6 +161,10 @@ def update_and_repost_outbound(doc, *, user, doc_date, lines, customer=None, rem
 
     total_qty, total_cost = _apply_outbound_lines(
         doc, user, doc_date, lines, expenses, sales_type, customer, borrow_counterparty)
+    for line in doc.lines.select_related("stock_move"):
+        if line.stock_move_id:
+            affected_products.add(line.stock_move.product_id)
+    rebalance_products(doc.company, affected_products)
     AuditLog.record(
         actor=user, company=doc.company, action=AuditLog.Action.UPDATE, target=doc,
         summary=f"修改销售出库 {doc.doc_no}（冲正重过账，出 {total_qty} 件 成本 {total_cost}）",

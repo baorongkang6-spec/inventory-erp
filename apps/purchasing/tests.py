@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.test import TestCase
 
 from apps.core.models import Company
-from apps.inventory.models import StockBalance
+from apps.inventory.models import StockBalance, StockMove
 from apps.masterdata.models import Product
 from apps.purchasing.models import PurchaseInbound
 from apps.purchasing.services import create_and_post_inbound
@@ -106,6 +106,19 @@ class InboundEditTests(TestCase):
         bal = StockBalance.objects.get(company=self.c1, product=self.p)
         self.assertEqual(bal.quantity, Decimal("20.000"))
         self.assertEqual(bal.amount, Decimal("120.00"))
+        self.assertFalse(StockMove.objects.filter(source_no__startswith="改前").exists())
+
+    def test_edit_twice_leaves_single_move_set(self):
+        from apps.purchasing.services import create_and_post_inbound, update_and_repost_inbound
+        doc = create_and_post_inbound(company=self.c1, user=self.u, doc_date=self._today(),
+            lines=[{"product": self.p, "quantity": Decimal("10"), "unit_price": Decimal("5")}])
+        update_and_repost_inbound(doc, user=self.u, doc_date=self._today(),
+            lines=[{"product": self.p, "quantity": Decimal("15"), "unit_price": Decimal("6")}])
+        update_and_repost_inbound(doc, user=self.u, doc_date=self._today(),
+            lines=[{"product": self.p, "quantity": Decimal("20"), "unit_price": Decimal("6")}])
+        self.assertEqual(StockMove.objects.filter(
+            company=self.c1, product=self.p, source_id=str(doc.pk)).count(), 1)
+        self.assertFalse(StockMove.objects.filter(source_no__startswith="改前").exists())
 
     def test_block_reasons(self):
         from datetime import date

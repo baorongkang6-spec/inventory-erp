@@ -256,14 +256,18 @@ def stock_products_balance(company, dfrom, dto):
                 d["out_qty"] += m.quantity
     rows = []
     for product, d in sorted(data.items(), key=lambda kv: kv[0].code):
+        ending_qty = d["open_qty"] + d["in_qty"] - d["out_qty"]
+        ending = d["opening"] + d["income"] - d["outgo"]
+        if ending_qty == 0:
+            ending = Z
         rows.append({
             "product": product,
             "opening": d["opening"], "income": d["income"], "outgo": d["outgo"],
-            "ending": d["opening"] + d["income"] - d["outgo"],
+            "ending": ending,
             "opening_qty": d["open_qty"],
             "income_qty": d["in_qty"],
             "outgo_qty": d["out_qty"],
-            "ending_qty": d["open_qty"] + d["in_qty"] - d["out_qty"],
+            "ending_qty": ending_qty,
         })
     return rows
 

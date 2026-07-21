@@ -217,6 +217,8 @@
 - **M19-2/3 + 启用日 7/1 空库（2026-07-15）**：`BusinessPartner` 实表；`Customer`/`Supplier` 代理；业务 FK 与对冲 `partner` 已切；默认 `ERP_OPENING_DATE=2026-07-01`。本地已空库 `migrate` + `seed_init`。生产按「备份→换空库→migrate→seed→重导期初」。迁移含 `masterdata.0005–0006`、`finance.0025–0027`、`sales.0009–0010`、`purchasing.0008–0009` 及退回类型 `sales.0008`/`purchasing.0007`。
 - **往来单位编码拍板 + 报表默认夹启用日（2026-07-15）**：编码 `W`+四位、角色勾选、关联企业单选（各账套挂对方）。`period.py`：上月早于启用日时总览/报表默认「启用日~今天」。`update.bat` 先停服务再 migrate。操作手册 v3 已同步并重生成 docx/pdf。
 - **往来单位 Excel 导入（2026-07-16）**：列表「导入」+ 模板下载；按编码 upsert；列含客户/供应商/关联企业(C1/C2/C3)。`apps/masterdata/excel.py`。
+- **商品编码约定确认（2026-07-16）**：维持账套内唯一；同品种三家用同码（约定）。不改全局唯一约束。手册 §1.3.0 / SPEC §1.3。
+- **修改单据不留「改前」流水（2026-07-21）**：采购/销售入库出库修改时，冲正后**物理删除**原流水与冲正流水（台账只保留最新一笔）；`rebalance.py` 重算后续结存快照。历史数据可跑 `uv run python manage.py cleanup_edit_reversals [--company C3] [--dry-run]`。台账/余额表数量归零时金额一并清零（修 C01 类残值）。
 - **销售成本计算单打印（2026-07-14）**：销售出库详情「打印」旁加「销售成本计算单」按钮（需 `inventory.view_amount`）；新页 `outbound_cost_print` 按本单列示销售数量、不含税/含税金额、结转成本，便于按单结转成本核对。无迁移。
 - **M17 财务管理（2026-07-14）**：菜单「财务管理」→ 往来对冲 / 票据拆借。SPEC §7.5–§7.6。往来对冲：`PartnerOffset` 互抵 AR/AP 发票 `settled_amount`；票据拆借：应收票跨公司转移 + `IntercoBalance` 其他应收/其他应付·关联方。应付票据拆借尚未做。
 - 本项目无固定 backlog，处于**用户驱动按需迭代**。下次大概率是用户截图提新需求/报 bug。
