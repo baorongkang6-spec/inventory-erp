@@ -216,8 +216,34 @@ def update_and_repost_inbound(doc, *, user, doc_date, lines, supplier=None, rema
     return doc
 
 
+def _inbound_reverse_block_reason(doc):
+    """预检：反冲本入库各行是否会导致负库存（数量或金额不足）。可反冲返回 None。"""
+    from collections import defaultdict
+    from apps.inventory.models import StockBalance
+
+    need = defaultdict(lambda: {"qty": ZERO_QTY, "amt": ZERO_MONEY, "product": None})
+    for line in doc.lines.select_related("stock_move", "product"):
+        mv = line.stock_move
+        if not mv:
+            continue
+        b = need[mv.product_id]
+        b["product"] = mv.product
+        b["qty"] = round_qty(b["qty"] + mv.quantity)
+        b["amt"] = round_money(b["amt"] + mv.amount)
+    for product_id, n in need.items():
+        bal = StockBalance.objects.filter(company=doc.company, product_id=product_id).first()
+        have_qty = bal.quantity if bal else ZERO_QTY
+        have_amt = bal.amount if bal else ZERO_MONEY
+        if n["qty"] > have_qty or n["amt"] > have_amt:
+            return (
+                f"{n['product']} 已被后续出库消耗（结存数量 {have_qty}、金额 {have_amt}，"
+                f"反冲需 {n['qty']} / {n['amt']}）。请先作废引用本批货的出库单后再修改/作废本入库单。"
+            )
+    return None
+
+
 def inbound_edit_block_reason(doc, user, today, is_manager=False):
-    """返回不可修改的原因字符串；可改则返回 None。规则：本人+管理员、未被下游引用、本月内。"""
+    """返回不可修改的原因字符串；可改则返回 None。规则：本人+管理员、未被下游引用、本月内、反冲不致负库存。"""
     from apps.core.period import period_edit_block_reason
     from apps.finance.models import PurchaseInvoiceLine
     reason = period_edit_block_reason(doc.company, doc.doc_date)
@@ -233,8 +259,7 @@ def inbound_edit_block_reason(doc, user, today, is_manager=False):
         return "跨月单据不可修改（请作废重录或在当月处理）"
     if PurchaseInvoiceLine.objects.filter(source_inbound_line__inbound=doc).exists():
         return "已被采购发票引用，不可修改（请先处理发票或作废重录）"
-    # 允许负库存：不再因"已被后续出库消耗"阻止修改（反冲可令结存为负）
-    return None
+    return _inbound_reverse_block_reason(doc)
 
 
 def _record_expenses(company, user, doc, doc_date, expenses, kind):

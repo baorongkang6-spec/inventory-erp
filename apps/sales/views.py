@@ -134,6 +134,22 @@ def outbound_void(request, pk):
     return redirect("outbound_detail", pk=doc.pk)
 
 
+def _warn_zero_cost_outbound(request, doc):
+    """出库时库存为 0 会按均价 0 结转；提示用户先入库再改单重过账。"""
+    if doc.sales_type == SalesOutbound.SalesType.SALE_RETURN:
+        return
+    bad = [ln.product.code for ln in doc.lines.all()
+           if ln.quantity and not ln.amount]
+    if bad:
+        messages.warning(
+            request,
+            "以下商品结转成本为 0（出库时库存数量为 0 或无结存金额）："
+            + "、".join(bad)
+            + "。请先补录对应入库，再对本出库单点「修改」保存以重算成本；"
+            "否则后续出库会把整批成本压在后面的单据上。",
+        )
+
+
 @login_required
 @permission_required("sales.add_salesoutbound", raise_exception=True)
 def outbound_create(request):
@@ -178,6 +194,7 @@ def outbound_create(request):
                 messages.error(request, f"过账失败，整单未保存：{e}")
             else:
                 messages.success(request, f"销售出库已过账：{doc.doc_no}")
+                _warn_zero_cost_outbound(request, doc)
                 return redirect("outbound_detail", pk=doc.pk)
     else:
         order_pk = request.GET.get("order")
@@ -251,6 +268,7 @@ def outbound_edit(request, pk):
                 messages.error(request, f"修改失败：{e}")
             else:
                 messages.success(request, f"销售出库已修改：{doc.doc_no}")
+                _warn_zero_cost_outbound(request, doc)
                 return redirect("outbound_detail", pk=doc.pk)
     else:
         header = OutboundHeaderForm(company=company, initial={

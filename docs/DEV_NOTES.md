@@ -131,12 +131,11 @@
 - **分组**：应付/应收按 (公司, 往来对象) 分组（`_outstanding_balance_report` 通用化 payable/receivable）；借调按 (公司, 对手单位) 聚合；票据按公司排序平铺。导出仅单公司时才把 company 传 `xlsx_response`（影响编制单位）。
 - **未动**：M9 从总览下钻的 `payable_partners_report`/`receivable_partners_report`/`receivable_notes_report` 仍是单公司下钻（带 company_id + 返回链接），与跨公司总览配套，不混入多选。
 
-## 十六、允许负库存 / 负应收应付（控制放开）
+## 十六、允许负库存 / 负应收应付（控制放开）→ 负库存已收回（2026-07-24）
 
-- **负库存**：`post_outbound` 去掉"库存不足"拦截，结存数量/金额可为负；库存=0 仍出库时用最近均价(通常 0)作成本基准、避免除零，待入库自然修正。`reverse_move` 反冲入库不再校验下溢。删掉采购入库修改的"已被消耗不可改"预检(`_inbound_reverse_block_reason`)。`InsufficientStockError` 类保留（已无处抛出，sales/views 的 except 成无害死代码）。
+- ~~**负库存**：`post_outbound` 去掉"库存不足"拦截…~~ **已收回**：重新禁止负库存——`post_outbound` / `reverse_move`（反冲入库）不足则抛 `InsufficientStockError`；恢复入库修改预检 `_inbound_reverse_block_reason`。SPEC §4 已写明。负应收/应付（发票红字、核销可超额）**仍放开**，与负库存无关。
 - **负应收/应付**：①发票行可填负数(红字/退货)——finance 两个发票行表单去掉 `amount_untaxed`/`quantity` 的 `min_value=0`，clean 改为"金额不能为 0、可为负"。②核销可超过发票未核销额——`allocate_payment`/`allocate_receipt`/票据冲销去掉"单张发票不得超额"校验，使发票 outstanding 可为负(预收/预付)；**保留**"核销合计 ≤ 付款/收款额、≤ 票据未用额"这两条完整性控制。
-- **注意**：只放开了 finance **发票**行的负数；采购入库/销售出库(实物单)的金额仍 `min_value=0`（负库存靠数量出超实现，不是靠负金额）。
-- 受影响测试已改为"允许"语义（inventory/sales/finance/tests_interco）。
+- **注意**：采购入库/销售出库(实物单)的金额仍 `min_value=0`；出库不得超结存数量。
 
 ## 十五、菜单版应付/应收余额表改为余额式 + 明细账下钻
 
@@ -221,6 +220,8 @@
 - **修改单据不留「改前」流水（2026-07-21）**：采购/销售入库出库修改时，冲正后**物理删除**原流水与冲正流水（台账只保留最新一笔）；`rebalance.py` 重算后续结存快照。历史数据可跑 `uv run python manage.py cleanup_edit_reversals [--company C3] [--dry-run]`。台账/余额表数量归零时金额一并清零（修 C01 类残值）。
 - **作废冲正台账显示为负数（2026-07-24）**：商品流水台账对 `*Void`/「作废…」流水按原业务方向以**收入负数 / 发出负数**展示（摘要「作废冲正」），结存累加仍按真实方向；Excel 导出同口径。
 - **余额表与台账收入口径对齐 + 台账合计行（2026-07-24）**：`stock_products_balance`/总览库存行与台账共用 `ledger.period_flow_cols`（作废计收入/发出红字）；明细账底部加收入/发出合计。
+- **先出后入零成本提示 + 台账结存按日期重算（2026-07-24）**：出库时库存为 0 会结转成本 0；保存后警告。台账结存列改为按业务日期滚动计算（不再用过账瞬间快照，避免「先出后入」时入库行结存看起来错位）。
+- **禁止负库存（2026-07-24）**：收回「允许负库存」——出库/采购退回不足、反冲入库下溢均抛 `InsufficientStockError`；入库修改恢复消耗预检。SPEC §4 / 手册 FAQ 已同步。
 - **销售成本计算单打印（2026-07-14）**：销售出库详情「打印」旁加「销售成本计算单」按钮（需 `inventory.view_amount`）；新页 `outbound_cost_print` 按本单列示销售数量、不含税/含税金额、结转成本，便于按单结转成本核对。无迁移。
 - **M17 财务管理（2026-07-14）**：菜单「财务管理」→ 往来对冲 / 票据拆借。SPEC §7.5–§7.6。往来对冲：`PartnerOffset` 互抵 AR/AP 发票 `settled_amount`；票据拆借：应收票跨公司转移 + `IntercoBalance` 其他应收/其他应付·关联方。应付票据拆借尚未做。
 - 本项目无固定 backlog，处于**用户驱动按需迭代**。下次大概率是用户截图提新需求/报 bug。

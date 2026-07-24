@@ -35,19 +35,33 @@ class EditCleanupTests(TestCase):
         self.assertEqual(bal.quantity, Decimal("0.000"))
         self.assertEqual(bal.amount, Decimal("0.00"))
 
-    def test_subsequent_moves_rebalanced_after_edit(self):
+    def test_edit_inbound_after_outbound_blocked(self):
+        """货已被后续出库消耗时，禁止修改入库（避免负库存）。"""
         from django.contrib.auth import get_user_model
-        from apps.purchasing.services import create_and_post_inbound, update_and_repost_inbound
         from django.utils import timezone
+        from apps.inventory.services import InsufficientStockError
+        from apps.purchasing.services import create_and_post_inbound, update_and_repost_inbound
         today = timezone.localdate()
         u = get_user_model().objects.create_user(username="op", password="x")
         doc = create_and_post_inbound(company=self.c1, user=u, doc_date=today,
             lines=[{"product": self.p, "quantity": Decimal("100"), "unit_price": Decimal("10")}])
         post_outbound(self.c1, self.p, Decimal("30"), date=today)
+        with self.assertRaises(InsufficientStockError):
+            update_and_repost_inbound(doc, user=u, doc_date=today,
+                lines=[{"product": self.p, "quantity": Decimal("120"), "unit_price": Decimal("10")}])
+
+    def test_edit_then_outbound_leaves_no_gaiqian(self):
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from apps.purchasing.services import create_and_post_inbound, update_and_repost_inbound
+        today = timezone.localdate()
+        u = get_user_model().objects.create_user(username="op2", password="x")
+        doc = create_and_post_inbound(company=self.c1, user=u, doc_date=today,
+            lines=[{"product": self.p, "quantity": Decimal("100"), "unit_price": Decimal("10")}])
         update_and_repost_inbound(doc, user=u, doc_date=today,
             lines=[{"product": self.p, "quantity": Decimal("120"), "unit_price": Decimal("10")}])
+        post_outbound(self.c1, self.p, Decimal("30"), date=today)
         moves = list(StockMove.objects.filter(company=self.c1, product=self.p).order_by("created_at", "id"))
-        self.assertEqual(len(moves), 2)  # 新入库 + 后续出库，无改前
+        self.assertEqual(len(moves), 2)  # 新入库 + 出库，无改前
         self.assertFalse(any(m.source_no.startswith("改前") for m in moves))
-        last = moves[-1]
-        self.assertEqual(last.balance_quantity, Decimal("90.000"))
+        self.assertEqual(moves[-1].balance_quantity, Decimal("90.000"))

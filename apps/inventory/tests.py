@@ -120,20 +120,22 @@ class MovingAverageTests(TestCase):
         self.assertEqual(b.quantity, D("0.000"))
         self.assertEqual(b.amount, D("0.00"))
 
-    def test_allow_negative_inventory(self):
-        # 允许负库存：出库可超过结存，数量/金额变负，按当前均价结转成本
-        post_inbound(self.c1, self.p, D("10"), D("5"))   # 10@5 = 50
-        post_outbound(self.c1, self.p, D("11"))          # 成本 11*5=55
+    def test_reject_negative_inventory(self):
+        from apps.inventory.services import InsufficientStockError
+        post_inbound(self.c1, self.p, D("10"), D("5"))
+        with self.assertRaises(InsufficientStockError):
+            post_outbound(self.c1, self.p, D("11"))
         b = self.bal()
-        self.assertEqual(b.quantity, D("-1.000"))
-        self.assertEqual(b.amount, D("-5.00"))
+        self.assertEqual(b.quantity, D("10.000"))
+        self.assertEqual(b.amount, D("50.00"))
 
-    def test_outbound_from_empty_allowed(self):
-        # 零库存出库 → 负库存，无成本基准成本按 0
-        post_outbound(self.c1, self.p, D("1"))
-        b = self.bal()
-        self.assertEqual(b.quantity, D("-1.000"))
-        self.assertEqual(b.amount, D("0.00"))
+    def test_outbound_from_empty_rejected(self):
+        from apps.inventory.services import InsufficientStockError
+        with self.assertRaises(InsufficientStockError):
+            post_outbound(self.c1, self.p, D("1"))
+        self.assertFalse(
+            StockMove.objects.filter(company=self.c1, product=self.p).exists()
+        )
 
     def test_fractional_quantity(self):
         post_inbound(self.c1, self.p, D("1.5"), D("10"))

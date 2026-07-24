@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.views.generic import ListView, TemplateView
 
 from apps.core.mixins import CompanyScopedMixin
+from apps.core.money import round_money
 from apps.core.period import get_report_dates
 from apps.core.scope import resolve_company
 from apps.masterdata.models import Product
@@ -177,12 +178,15 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                 bal_amount += m.amount if is_in else -m.amount
                 bal_qty, bal_amount = normalize_balance_qty_amount(bal_qty, bal_amount)
                 in_qty, in_amount, out_qty, out_amount, summary = ledger_display_cols(m)
+                bal_price = (
+                    round_money(bal_amount / bal_qty) if bal_qty else ZERO
+                )
                 rows.append({
                     "move": m,
                     "in_qty": in_qty, "in_amount": in_amount,
                     "out_qty": out_qty, "out_amount": out_amount,
                     "summary": summary,
-                    "bal_qty": bal_qty, "bal_amount": bal_amount,
+                    "bal_qty": bal_qty, "bal_amount": bal_amount, "bal_price": bal_price,
                     "ref_url": doc_url(m.source_type, m.source_id),
                 })
             close_qty, close_amount = bal_qty, bal_amount
@@ -220,7 +224,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                 m = r["move"]
                 rows.append([m.date, m.source_no, r["summary"],
                              r["in_qty"], r["in_amount"], r["out_qty"], r["out_amount"],
-                             m.balance_quantity, m.balance_price, m.balance_amount])
+                             r["bal_qty"], r["bal_price"], r["bal_amount"]])
             rows.append(["合计", "", "", d["sum_in_qty"], d["sum_in_amount"],
                          d["sum_out_qty"], d["sum_out_amount"], "", "", ""])
             rows.append(["期末结存", "", "", "", "", "", "", d["close_qty"], "", d["close_amount"]])
@@ -230,7 +234,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
             for r in d["rows"]:
                 m = r["move"]
                 rows.append([m.date, m.source_no, r["summary"],
-                             r["in_qty"], r["out_qty"], m.balance_quantity])
+                             r["in_qty"], r["out_qty"], r["bal_qty"]])
             rows.append(["合计", "", "", d["sum_in_qty"], d["sum_out_qty"], ""])
             rows.append(["期末结存", "", "", "", "", d["close_qty"]])
         return xlsx_response(f"商品流水台账-{product.code} {product.name}", headers, rows,
