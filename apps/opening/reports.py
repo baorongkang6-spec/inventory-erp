@@ -68,14 +68,14 @@ def company_overview(company, dfrom, dto):
     b["ending"] += bank_open0
     bank = b
 
-    # 库存商品（金额）：期初流水(source_type=Opening)恒计期初，其余按 date
-    moves = StockMove.objects.filter(company=company)
-    biz = moves.exclude(source_type="Opening")
-    stock = _period(biz.filter(direction=StockMove.Direction.IN),
-                    biz.filter(direction=StockMove.Direction.OUT), "date", "date", dfrom, dto)
-    open_moves = moves.filter(source_type="Opening")
-    _add_opening(stock, _s(open_moves.filter(direction=StockMove.Direction.IN))
-                 - _s(open_moves.filter(direction=StockMove.Direction.OUT)))
+    # 库存商品（金额）：与库存商品余额表同口径（含作废冲正按原侧红字）
+    stock_rows = stock_products_balance(company, dfrom, dto)
+    stock = _row(
+        sum((r["opening"] for r in stock_rows), Z),
+        sum((r["income"] for r in stock_rows), Z),
+        sum((r["outgo"] for r in stock_rows), Z),
+        sum((r["ending"] for r in stock_rows), Z),
+    )
 
     # 发出商品（成本）：增=本期销售出库结转成本；减=本期开票对应出库成本
     goods_shipped = goods_shipped_period(company, dfrom, dto)
@@ -236,7 +236,10 @@ def stock_products_balance(company, dfrom, dto):
     """某公司各库存商品在 [dfrom, dto] 的 期初/本期收入/本期发出/期末（金额+数量，带 product 对象）。
 
     金额维度同总览（移动加权金额），同时给出数量便于下钻。当期无发生 期初=期末。
+    作废冲正与台账一致：按原业务方向以收入/发出红字计入（非对面方向正数）。
     """
+    from apps.inventory.ledger import period_flow_cols
+
     ZQ = Decimal("0.000")
     moves = StockMove.objects.filter(company=company).select_related("product")
     data = {}
@@ -248,12 +251,11 @@ def stock_products_balance(company, dfrom, dto):
             d["opening"] += m.amount if is_in else -m.amount
             d["open_qty"] += m.quantity if is_in else -m.quantity
         elif m.date <= dto:
-            if is_in:
-                d["income"] += m.amount
-                d["in_qty"] += m.quantity
-            else:
-                d["outgo"] += m.amount
-                d["out_qty"] += m.quantity
+            in_q, in_a, out_q, out_a = period_flow_cols(m)
+            d["income"] += in_a
+            d["in_qty"] += in_q
+            d["outgo"] += out_a
+            d["out_qty"] += out_q
     rows = []
     for product, d in sorted(data.items(), key=lambda kv: kv[0].code):
         ending_qty = d["open_qty"] + d["in_qty"] - d["out_qty"]

@@ -217,6 +217,7 @@ class StockDrilldownTests(TestCase):
         from django.contrib.auth import get_user_model
         from django.contrib.auth.models import Permission
         from django.utils import timezone
+        from apps.opening.reports import stock_products_balance
         from apps.purchasing.services import create_and_post_inbound, void_purchase_inbound
 
         today = timezone.localdate()
@@ -241,6 +242,17 @@ class StockDrilldownTests(TestCase):
         self.assertEqual(vr["in_amount"], D("-50.00"))
         self.assertIsNone(vr["out_qty"])
         self.assertEqual(r.context["close_qty"], D("0.000"))
+        # 台账合计 = 收入净额 0（10−10）
+        self.assertEqual(r.context["sum_in_qty"], D("0.000"))
+        self.assertEqual(r.context["sum_in_amount"], D("0.00"))
+        self.assertEqual(r.context["sum_out_qty"], D("0.000"))
+        # 余额表与台账同口径
+        bal = stock_products_balance(self.c1, today, today)
+        row = next(x for x in bal if x["product"].pk == p2.pk)
+        self.assertEqual(row["income_qty"], D("0.000"))
+        self.assertEqual(row["income"], D("0.00"))
+        self.assertEqual(row["outgo_qty"], D("0.000"))
+        self.assertEqual(row["ending_qty"], D("0.000"))
 
 
 class StockMoveDateTests(TestCase):

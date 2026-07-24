@@ -74,6 +74,14 @@
       </tbody>
       <tfoot class="table-light">
         <tr>
+          <th class="text-start" colspan="3">合计</th>
+          <th{% if sum_in_qty < 0 %} class="text-danger"{% endif %}>{{ sum_in_qty }}</th>
+          {% if can_view_amount %}<th{% if sum_in_amount < 0 %} class="text-danger"{% endif %}>{{ sum_in_amount }}</th>{% endif %}
+          <th{% if sum_out_qty < 0 %} class="text-danger"{% endif %}>{{ sum_out_qty }}</th>
+          {% if can_view_amount %}<th{% if sum_out_amount < 0 %} class="text-danger"{% endif %}>{{ sum_out_amount }}</th>{% endif %}
+          <th></th>{% if can_view_amount %}<th></th><th></th>{% endif %}
+        </tr>
+        <tr>
           <th class="text-start" colspan="{% if can_view_amount %}7{% else %}5{% endif %}">期末结存</th>
           <th>{{ close_qty }}</th>{% if can_view_amount %}<th></th><th>{{ close_amount }}</th>{% endif %}
         </tr>
