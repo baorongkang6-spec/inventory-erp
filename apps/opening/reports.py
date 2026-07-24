@@ -428,6 +428,7 @@ def ap_accrual_partners_balance(company, dfrom, dto):
     """应付账款-暂估按供应商（不含税）：增=本期外部采购入库；减=本期收票对应入库不含税。
 
     借调入库不纳入。期末与「已入库未收票」截止日余额同口径。
+    收票侧：仅已登记、非期初、源入库未作废的外部采购关联行。
     """
     from apps.finance.models import PurchaseInvoice, PurchaseInvoiceLine
     from apps.purchasing.models import PurchaseInbound, PurchaseInboundLine
@@ -454,7 +455,9 @@ def ap_accrual_partners_balance(company, dfrom, dto):
                  .filter(invoice__company=company,
                          invoice__status=PurchaseInvoice.Status.REGISTERED,
                          invoice__is_opening=False,
-                         source_inbound_line__isnull=False)
+                         source_inbound_line__isnull=False,
+                         source_inbound_line__inbound__purchase_type=PurchaseInbound.PurchaseType.EXTERNAL)
+                 .exclude(source_inbound_line__inbound__status=PurchaseInbound.Status.VOID)
                  .select_related("source_inbound_line", "source_inbound_line__inbound",
                                  "source_inbound_line__inbound__supplier", "invoice"))
     for il in inv_lines:
@@ -1098,12 +1101,13 @@ def shipped_uninvoiced(companies, dfrom=None, dto=None):
 
 
 def received_uninvoiced(companies, dfrom=None, dto=None):
-    """已入库未收到发票明细：采购入库行中「入库数量 − 已收票数量 ≠ 0」的行。
+    """已入库未收到发票明细：采购入库行中「未收票暂估金额 ≠ 0」的行。
 
     作为「应付账款-暂估」(不含税) 的依据。仅外部采购入库；借调不纳入。
-    已收票数量 = 关联该入库行的采购发票行数量之和(不含作废)；
-    若给定 dto，仅统计收票日 ≤ dto 的发票（便于「截止某日」暂估余额）。
-    金额取未收票部分(按入库行不含税单价×未收票数量)。核对月末暂估时建议 from 留空、to=月末。
+    已收票：关联该入库行、已登记、非期初、收票日 ≤ dto（若给定）的发票数量之和。
+    与总览暂估口径一致（期初发票不算收票冲减）。
+    金额取未收票部分(入库行不含税 − 按数量比例归属的已收票不含税)。
+    核对总览期末暂估：起始日期留空、截止日期=总览期末日。
     """
     from django.db.models import Sum
 
@@ -1124,8 +1128,10 @@ def received_uninvoiced(companies, dfrom=None, dto=None):
     if dto:
         qs = qs.filter(inbound__doc_date__lte=dto)
 
-    inv_qs = (PurchaseInvoiceLine.objects.filter(source_inbound_line__in=qs)
-              .exclude(invoice__status=PurchaseInvoice.Status.VOID))
+    inv_qs = (PurchaseInvoiceLine.objects
+              .filter(source_inbound_line__in=qs,
+                      invoice__status=PurchaseInvoice.Status.REGISTERED,
+                      invoice__is_opening=False))
     if dto:
         inv_qs = inv_qs.filter(invoice__doc_date__lte=dto)
     invoiced = {r["source_inbound_line"]: round_qty(r["q"] or ZQ) for r in
@@ -1135,17 +1141,17 @@ def received_uninvoiced(companies, dfrom=None, dto=None):
     for ln in qs.order_by("inbound__company__code", "inbound__supplier__code",
                           "inbound__doc_no", "id"):
         billed = invoiced.get(ln.pk, ZQ)
-        remain = ln.quantity - billed
-        if remain == 0:
+        remain_qty = round_qty(ln.quantity - billed)
+        billed_amt = _attr_cost(ln, billed, "amount_untaxed")
+        remain_amt = round_money((ln.amount_untaxed or Z) - billed_amt)
+        if remain_qty == 0 and remain_amt == 0:
             continue
-        unit_u = (ln.amount_untaxed / ln.quantity) if ln.quantity else Z
-        ru = round_money(remain * unit_u)
-        rt = round_money(ru * (one + ln.tax_rate))
+        rt = round_money(remain_amt * (one + ln.tax_rate)) if remain_amt else Z
         rows.append({
             "company": ln.inbound.company, "supplier": ln.inbound.supplier,
             "inbound": ln.inbound, "product": ln.product,
-            "in_qty": ln.quantity, "billed_qty": billed, "remain_qty": remain,
-            "untaxed": ru, "taxed": rt,
+            "in_qty": ln.quantity, "billed_qty": billed, "remain_qty": remain_qty,
+            "untaxed": remain_amt, "taxed": rt,
         })
     return rows
 

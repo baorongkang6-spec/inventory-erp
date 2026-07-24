@@ -196,6 +196,37 @@ class GoodsShippedApAccrualOverviewTests(TestCase):
         self.assertEqual(t["ap_accrual"][0]["ending"], Decimal("1000.00"))
         self.assertEqual(t["goods_shipped"][0]["ending"], Decimal("400.00"))
 
+    def test_received_uninvoiced_matches_overview_asof(self):
+        """截止日未收票明细合计 = 总览应付暂估期末（起始日留空）。"""
+        from datetime import date
+        from apps.opening.reports import company_overview, received_uninvoiced
+        dto = date(2026, 6, 30)
+        ov = company_overview(self.c1, date(2026, 6, 1), dto)["ap_accrual"]
+        rows = received_uninvoiced([self.c1], dfrom=None, dto=dto)
+        self.assertEqual(sum((r["untaxed"] for r in rows), Decimal("0.00")), ov["ending"])
+
+    def test_opening_invoice_does_not_clear_accrual_detail(self):
+        """期初发票即使挂了入库行，也不冲减暂估（与总览一致）。"""
+        from datetime import date
+        from apps.finance.models import PurchaseInvoice, PurchaseInvoiceLine
+        from apps.opening.reports import company_overview, received_uninvoiced
+        ib = self.c1.purchaseinbound_set.order_by("id").first()
+        ln = ib.lines.first()
+        inv = PurchaseInvoice.objects.create(
+            company=self.c1, supplier=self.sup, doc_date=date(2026, 5, 1),
+            is_opening=True, amount_untaxed=Decimal("1000"), amount_taxed=Decimal("1000"),
+            tax_amount=Decimal("0"), status=PurchaseInvoice.Status.REGISTERED)
+        PurchaseInvoiceLine.objects.create(
+            invoice=inv, product=self.p, description="", quantity=Decimal("100"),
+            amount_untaxed=Decimal("1000"), tax_rate=Decimal("0"),
+            tax_amount=Decimal("0"), amount_taxed=Decimal("1000"),
+            source_inbound_line=ln)
+        dto = date(2026, 6, 30)
+        ov = company_overview(self.c1, date(2026, 6, 1), dto)["ap_accrual"]
+        rows = received_uninvoiced([self.c1], dfrom=None, dto=dto)
+        self.assertEqual(ov["ending"], Decimal("1000.00"))
+        self.assertEqual(sum((r["untaxed"] for r in rows), Decimal("0.00")), Decimal("1000.00"))
+
     def test_goods_shipped_detail_matches_overview(self):
         """发出商品明细表合计 = 总览发出商品四列；含未开票出库收入。"""
         from datetime import date
