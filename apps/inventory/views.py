@@ -27,6 +27,32 @@ def _parse_date(s):
         return None
 
 
+def _is_void_reversal(move) -> bool:
+    """作废产生的冲正流水（入库作废→OUT，出库作废→IN）。"""
+    st = move.source_type or ""
+    sn = move.source_no or ""
+    return st.endswith("Void") or sn.startswith("作废")
+
+
+def _ledger_display_cols(move):
+    """台账收入/发出列：作废冲正按原业务方向以负数显示。
+
+    - 作废入库（冲正为 OUT）→ 收入 −数量/−金额
+    - 作废出库（冲正为 IN）→ 发出 −数量/−金额
+    结存仍按真实方向累加，本函数只影响展示列。
+    """
+    qty, amt = move.quantity, move.amount
+    is_in = move.direction == StockMove.Direction.IN
+    if _is_void_reversal(move):
+        # 冲正方向与原业务相反：展示归到原侧并取负
+        if is_in:
+            return None, None, -qty, -amt, "作废冲正"
+        return -qty, -amt, None, None, "作废冲正"
+    if is_in:
+        return qty, amt, None, None, move.get_direction_display()
+    return None, None, qty, amt, move.get_direction_display()
+
+
 class StockReportView(CompanyScopedMixin, ListView):
     """库存数量金额表：账套各商品结存（支持 ?company= 下钻）。"""
 
@@ -175,12 +201,12 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
                 bal_qty += m.quantity if is_in else -m.quantity
                 bal_amount += m.amount if is_in else -m.amount
                 bal_qty, bal_amount = normalize_balance_qty_amount(bal_qty, bal_amount)
+                in_qty, in_amount, out_qty, out_amount, summary = _ledger_display_cols(m)
                 rows.append({
                     "move": m,
-                    "in_qty": m.quantity if is_in else None,
-                    "in_amount": m.amount if is_in else None,
-                    "out_qty": None if is_in else m.quantity,
-                    "out_amount": None if is_in else m.amount,
+                    "in_qty": in_qty, "in_amount": in_amount,
+                    "out_qty": out_qty, "out_amount": out_amount,
+                    "summary": summary,
                     "bal_qty": bal_qty, "bal_amount": bal_amount,
                     "ref_url": doc_url(m.source_type, m.source_id),
                 })
@@ -209,7 +235,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
             rows = [["期初结存", "", "", "", "", "", "", d["open_qty"], "", d["open_amount"]]]
             for r in d["rows"]:
                 m = r["move"]
-                rows.append([m.date, m.source_no, m.get_direction_display(),
+                rows.append([m.date, m.source_no, r["summary"],
                              r["in_qty"], r["in_amount"], r["out_qty"], r["out_amount"],
                              m.balance_quantity, m.balance_price, m.balance_amount])
             rows.append(["期末结存", "", "", "", "", "", "", d["close_qty"], "", d["close_amount"]])
@@ -218,7 +244,7 @@ class StockLedgerView(CompanyScopedMixin, TemplateView):
             rows = [["期初结存", "", "", "", "", d["open_qty"]]]
             for r in d["rows"]:
                 m = r["move"]
-                rows.append([m.date, m.source_no, m.get_direction_display(),
+                rows.append([m.date, m.source_no, r["summary"],
                              r["in_qty"], r["out_qty"], m.balance_quantity])
             rows.append(["期末结存", "", "", "", "", d["close_qty"]])
         return xlsx_response(f"商品流水台账-{product.code} {product.name}", headers, rows,

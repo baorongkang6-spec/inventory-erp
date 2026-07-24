@@ -60,9 +60,11 @@
             {% if r.ref_url %}<a href="{{ r.ref_url }}">{{ r.move.source_no }}</a>
             {% else %}{{ r.move.source_no|default:"—" }}{% endif %}
           </td>
-          <td class="text-start">{{ r.move.get_direction_display }}</td>
-          <td>{{ r.in_qty|default:"" }}</td>{% if can_view_amount %}<td>{{ r.in_amount|default:"" }}</td>{% endif %}
-          <td>{{ r.out_qty|default:"" }}</td>{% if can_view_amount %}<td>{{ r.out_amount|default:"" }}</td>{% endif %}
+          <td class="text-start">{{ r.summary }}</td>
+          <td{% if r.in_qty is not None and r.in_qty < 0 %} class="text-danger"{% endif %}>{{ r.in_qty|default:"" }}</td>
+          {% if can_view_amount %}<td{% if r.in_amount is not None and r.in_amount < 0 %} class="text-danger"{% endif %}>{{ r.in_amount|default:"" }}</td>{% endif %}
+          <td{% if r.out_qty is not None and r.out_qty < 0 %} class="text-danger"{% endif %}>{{ r.out_qty|default:"" }}</td>
+          {% if can_view_amount %}<td{% if r.out_amount is not None and r.out_amount < 0 %} class="text-danger"{% endif %}>{{ r.out_amount|default:"" }}</td>{% endif %}
           <td>{{ r.move.balance_quantity }}</td>
           {% if can_view_amount %}<td>{{ r.move.balance_price }}</td><td>{{ r.move.balance_amount }}</td>{% endif %}
         </tr>

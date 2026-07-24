@@ -212,6 +212,36 @@ class StockDrilldownTests(TestCase):
         self.assertEqual(r2.context["open_qty"], r2.context["close_qty"])
         self.assertEqual(r2.context["close_qty"], D("120.000"))
 
+    def test_void_reversal_shown_as_negative_income(self):
+        """作废入库冲正在台账显示为收入负数，而非发出正数。"""
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from django.utils import timezone
+        from apps.purchasing.services import create_and_post_inbound, void_purchase_inbound
+
+        today = timezone.localdate()
+        p2 = Product.objects.create(company=self.c1, code="P2", name="货B")
+        U = get_user_model()
+        u = U.objects.create_user(username="voider", password="x", can_view_all_companies=True)
+        for code in ("view_stockbalance", "view_amount"):
+            u.user_permissions.add(Permission.objects.get(
+                content_type__app_label="inventory", codename=code))
+        doc = create_and_post_inbound(
+            company=self.c1, user=u, doc_date=today,
+            lines=[{"product": p2, "quantity": D("10"), "unit_price": D("5")}])
+        void_purchase_inbound(doc, u)
+        self.client.force_login(u)
+        r = self.client.get(
+            f"/inventory/ledger/?product={p2.pk}&from={today.isoformat()}&to={today.isoformat()}",
+            SERVER_NAME="localhost")
+        void_rows = [row for row in r.context["rows"] if row["summary"] == "作废冲正"]
+        self.assertEqual(len(void_rows), 1)
+        vr = void_rows[0]
+        self.assertEqual(vr["in_qty"], D("-10.000"))
+        self.assertEqual(vr["in_amount"], D("-50.00"))
+        self.assertIsNone(vr["out_qty"])
+        self.assertEqual(r.context["close_qty"], D("0.000"))
+
 
 class StockMoveDateTests(TestCase):
     @classmethod
