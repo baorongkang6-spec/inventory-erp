@@ -215,6 +215,11 @@ class Payment(CompanyScopedModel):
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="付款银行账户")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True, blank=True,
                                  verbose_name="收款供应商")
+    # 预付跟踪：可选挂采购订单；核销对象仍是采购发票（SPEC §20.1）
+    purchase_order = models.ForeignKey(
+        "purchasing.PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="payments", verbose_name="关联采购订单",
+    )
     amount = models.DecimalField("付款金额", max_digits=18, decimal_places=2)
     settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     summary = models.CharField("摘要", max_length=255, blank=True)
@@ -366,6 +371,11 @@ class Receipt(CompanyScopedModel):
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, verbose_name="收款银行账户")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True,
                                  verbose_name="付款客户")
+    # 预收跟踪：可选挂销售订单；核销对象仍是销售发票（SPEC §20.1）
+    sales_order = models.ForeignKey(
+        "sales.SalesOrder", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="receipts", verbose_name="关联销售订单",
+    )
     amount = models.DecimalField("收款金额", max_digits=18, decimal_places=2)
     settled_amount = models.DecimalField("已核销金额", max_digits=18, decimal_places=2, default=ZERO_MONEY)
     summary = models.CharField("摘要", max_length=255, blank=True)
@@ -516,11 +526,17 @@ class NoteSettlement(models.Model):
     note_kind = models.CharField("票据类型", max_length=10, choices=NoteKind.choices)
     note_id = models.PositiveIntegerField("票据ID")
     note_no = models.CharField("票据单号", max_length=32, blank=True)
-    invoice_kind = models.CharField("发票类型", max_length=10, choices=InvoiceKind.choices)
-    invoice_id = models.PositiveIntegerField("发票ID")
+    invoice_kind = models.CharField("发票类型", max_length=10, choices=InvoiceKind.choices,
+                                    blank=True, default="")
+    invoice_id = models.PositiveIntegerField("发票ID", null=True, blank=True)
     invoice_no = models.CharField("发票单号", max_length=32, blank=True)
     amount = models.DecimalField("冲销金额", max_digits=18, decimal_places=2)
     is_endorsement = models.BooleanField("背书抵付", default=False)
+    # 背书预付/跟踪：可挂采购订单；无票预付时 invoice_id 为空
+    purchase_order = models.ForeignKey(
+        "purchasing.PurchaseOrder", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="note_settlements", verbose_name="关联采购订单",
+    )
     # 业务日期（会计口径）：默认取票据 draw_date；报表按此归期。
     date = models.DateField("冲销日期", null=True, blank=True)
     created_at = models.DateTimeField("冲销时间", auto_now_add=True)

@@ -77,15 +77,66 @@ def _amount_invoiced(order_line: SalesOrderLine) -> Decimal:
 
 
 def _amount_received(order: SalesOrder) -> Decimal:
-    """订单关联发票已核销含税合计。"""
-    from apps.finance.models import SalesInvoice
+    """已收口径：供 refresh_order_status 使用。"""
+    return order_receipt_summary(order)["amount_received"]
+
+
+def annotate_order_prereceipt(qs):
+    """标注 prepaid_unallocated：挂单收款尚未核销合计。"""
+    from django.db.models import DecimalField, F, Q, Sum, Value
+    from django.db.models.functions import Coalesce
+
+    from apps.finance.models import Receipt
+
+    return qs.annotate(
+        prepaid_unallocated=Coalesce(
+            Sum(
+                F("receipts__amount") - F("receipts__settled_amount"),
+                filter=Q(receipts__status=Receipt.Status.POSTED),
+            ),
+            Value(Decimal("0.00")),
+            output_field=DecimalField(max_digits=18, decimal_places=2),
+        )
+    )
+
+
+def order_receipt_summary(order: SalesOrder) -> dict:
+    """订单收款汇总：发票已核销 + 挂单预收未核销。"""
+    from apps.finance.models import Receipt
+
     ids = (SalesInvoiceLine.objects
            .filter(order_line__order=order)
            .exclude(invoice__status=SalesInvoice.Status.VOID)
            .values_list("invoice_id", flat=True).distinct())
-    v = (SalesInvoice.objects.filter(pk__in=ids)
-         .aggregate(v=Sum("settled_amount"))["v"])
-    return round_money(v or ZERO_MONEY)
+    header_ids = (SalesInvoice.objects
+                  .filter(sales_order=order)
+                  .exclude(status=SalesInvoice.Status.VOID)
+                  .values_list("pk", flat=True))
+    all_ids = set(ids) | set(header_ids)
+    settled = (SalesInvoice.objects.filter(pk__in=all_ids)
+               .aggregate(v=Sum("settled_amount"))["v"]) or ZERO_MONEY
+    settled = round_money(settled)
+
+    receipts = list(
+        Receipt.objects.filter(sales_order=order, status=Receipt.Status.POSTED)
+        .select_related("bank_account")
+        .order_by("-doc_date", "-id"))
+    prepaid = ZERO_MONEY
+    for rec in receipts:
+        unused = rec.amount - rec.settled_amount
+        if unused > 0:
+            prepaid += unused
+    prepaid = round_money(prepaid)
+    received = round_money(settled + prepaid)
+    contract = round_money(order.total_taxed or ZERO_MONEY)
+    return {
+        "amount_contract": contract,
+        "amount_settled": settled,
+        "amount_prepaid": prepaid,
+        "amount_received": received,
+        "amount_unreceived": round_money(contract - received),
+        "receipts": receipts,
+    }
 
 
 @transaction.atomic
@@ -463,19 +514,25 @@ def sales_backfill_candidates(company):
 
 
 def sales_order_progress_rows(company):
-    """执行中订单进度（待发/待开数量合计）。"""
+    """执行中订单进度（待发/待开数量 + 收款金额）。"""
     rows = []
     qs = (SalesOrder.objects.filter(company=company, status=SalesOrder.Status.OPEN)
-          .select_related("customer").prefetch_related("lines"))
+          .select_related("customer").prefetch_related("lines", "receipts"))
     for order in qs:
         open_ship = open_inv = ZERO_QTY
         for ln in order.lines.all():
             open_ship = round_qty(open_ship + qty_open_ship(ln))
             open_inv = round_qty(open_inv + qty_open_invoice(ln))
+        rec = order_receipt_summary(order)
         rows.append({
             "order": order,
             "qty_open_ship": open_ship,
             "qty_open_invoice": open_inv,
+            "amount_contract": rec["amount_contract"],
+            "amount_received": rec["amount_received"],
+            "amount_prepaid": rec["amount_prepaid"],
+            "amount_settled": rec["amount_settled"],
+            "amount_unreceived": rec["amount_unreceived"],
         })
     return rows
 

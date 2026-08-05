@@ -11,7 +11,12 @@
       <thead class="table-light">
         <tr><th>订单号</th><th>日期</th><th>客户</th>
             <th>发货</th><th>开票</th><th>收款</th>
-            <th class="text-end">待发数量</th><th class="text-end">待开数量</th></tr>
+            <th class="text-end">合同含税</th>
+            <th class="text-end">已收</th>
+            <th class="text-end">预收未核销</th>
+            <th class="text-end">未收</th>
+            <th class="text-end">待发数量</th><th class="text-end">待开数量</th>
+            <th></th></tr>
       </thead>
       <tbody>
         {% for r in rows %}
@@ -22,14 +27,26 @@
           <td>{{ r.order.get_ship_status_display }}</td>
           <td>{{ r.order.get_invoice_status_display }}</td>
           <td>{{ r.order.get_receipt_status_display }}</td>
+          <td class="text-end">{{ r.amount_contract }}</td>
+          <td class="text-end">{{ r.amount_received }}</td>
+          <td class="text-end">{% if r.amount_prepaid %}<strong class="text-warning">{{ r.amount_prepaid }}</strong>{% else %}{{ r.amount_prepaid }}{% endif %}</td>
+          <td class="text-end">{{ r.amount_unreceived }}</td>
           <td class="text-end">{{ r.qty_open_ship }}</td>
           <td class="text-end">{{ r.qty_open_invoice }}</td>
+          <td class="text-nowrap">
+            {% if perms.finance.add_receipt %}
+            <a href="{% url 'receipt_create' %}?order={{ r.order.pk }}" class="btn btn-outline-primary btn-sm py-0">收款</a>
+            {% endif %}
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8" class="text-center text-muted py-4">暂无执行中订单</td></tr>
+        <tr><td colspan="13" class="text-center text-muted py-4">暂无执行中订单</td></tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
+  <div class="card-footer text-muted small">
+    已收 = 已核销到本订单发票的金额 + 挂本订单尚未核销的预收；预收未核销高亮表示钱已收、票未开或未勾对。
   </div>
 </div>
 {% endblock %}

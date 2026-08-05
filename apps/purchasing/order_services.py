@@ -66,14 +66,82 @@ def line_progress(order_line: PurchaseOrderLine) -> dict:
     }
 
 
-def _amount_paid(order: PurchaseOrder) -> Decimal:
+def annotate_order_prepaid(qs):
+    """为订单 QuerySet 标注 prepaid_unallocated（银行预付未核销 + 票据背书无票预付）。"""
+    from django.db.models import DecimalField, F, OuterRef, Q, Subquery, Sum, Value
+    from django.db.models.functions import Coalesce
+
+    from apps.finance.models import NoteSettlement, Payment
+
+    bank = Coalesce(
+        Sum(
+            F("payments__amount") - F("payments__settled_amount"),
+            filter=Q(payments__status=Payment.Status.POSTED),
+        ),
+        Value(Decimal("0.00")),
+        output_field=DecimalField(max_digits=18, decimal_places=2),
+    )
+    note_sq = (NoteSettlement.objects.filter(
+        purchase_order_id=OuterRef("pk"), is_endorsement=True, invoice_id__isnull=True)
+        .values("purchase_order_id")
+        .annotate(s=Sum("amount"))
+        .values("s")[:1])
+    note = Coalesce(
+        Subquery(note_sq, output_field=DecimalField(max_digits=18, decimal_places=2)),
+        Value(Decimal("0.00")),
+    )
+    return qs.annotate(prepaid_unallocated=bank + note)
+
+
+def order_payment_summary(order: PurchaseOrder) -> dict:
+    """订单付款汇总（P2/P4）：发票已核销 + 银行预付未核销 + 票据背书无票预付。"""
+    from apps.finance.models import NoteSettlement, Payment
+
     ids = (PurchaseInvoiceLine.objects
            .filter(order_line__order=order)
            .exclude(invoice__status=PurchaseInvoice.Status.VOID)
            .values_list("invoice_id", flat=True).distinct())
-    v = (PurchaseInvoice.objects.filter(pk__in=ids)
-         .aggregate(v=Sum("settled_amount"))["v"])
-    return round_money(v or ZERO_MONEY)
+    header_ids = (PurchaseInvoice.objects
+                  .filter(purchase_order=order)
+                  .exclude(status=PurchaseInvoice.Status.VOID)
+                  .values_list("pk", flat=True))
+    all_ids = set(ids) | set(header_ids)
+    settled = (PurchaseInvoice.objects.filter(pk__in=all_ids)
+               .aggregate(v=Sum("settled_amount"))["v"]) or ZERO_MONEY
+    settled = round_money(settled)
+
+    payments = list(
+        Payment.objects.filter(purchase_order=order, status=Payment.Status.POSTED)
+        .select_related("bank_account")
+        .order_by("-doc_date", "-id"))
+    prepaid = ZERO_MONEY
+    for pay in payments:
+        unused = pay.amount - pay.settled_amount
+        if unused > 0:
+            prepaid += unused
+    note_prepaids = list(
+        NoteSettlement.objects.filter(
+            purchase_order=order, is_endorsement=True, invoice_id__isnull=True)
+        .order_by("-date", "-id"))
+    for ns in note_prepaids:
+        prepaid += ns.amount
+    prepaid = round_money(prepaid)
+    paid = round_money(settled + prepaid)
+    contract = round_money(order.total_taxed or ZERO_MONEY)
+    return {
+        "amount_contract": contract,
+        "amount_settled": settled,
+        "amount_prepaid": prepaid,
+        "amount_paid": paid,
+        "amount_unpaid": round_money(contract - paid),
+        "payments": payments,
+        "note_prepaids": note_prepaids,
+    }
+
+
+def _amount_paid(order: PurchaseOrder) -> Decimal:
+    """已付口径：供 refresh_order_status 使用。"""
+    return order_payment_summary(order)["amount_paid"]
 
 
 @transaction.atomic
@@ -420,16 +488,22 @@ def purchase_backfill_candidates(company):
 def purchase_order_progress_rows(company):
     rows = []
     qs = (PurchaseOrder.objects.filter(company=company, status=PurchaseOrder.Status.OPEN)
-          .select_related("supplier").prefetch_related("lines"))
+          .select_related("supplier").prefetch_related("lines", "payments"))
     for order in qs:
         open_recv = open_inv = ZERO_QTY
         for ln in order.lines.all():
             open_recv = round_qty(open_recv + qty_open_receive(ln))
             open_inv = round_qty(open_inv + qty_open_invoice(ln))
+        pay = order_payment_summary(order)
         rows.append({
             "order": order,
             "qty_open_receive": open_recv,
             "qty_open_invoice": open_inv,
+            "amount_contract": pay["amount_contract"],
+            "amount_paid": pay["amount_paid"],
+            "amount_prepaid": pay["amount_prepaid"],
+            "amount_settled": pay["amount_settled"],
+            "amount_unpaid": pay["amount_unpaid"],
         })
     return rows
 

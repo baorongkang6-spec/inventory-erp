@@ -462,7 +462,8 @@ class PaymentDetailView(CompanyScopedMixin, DetailView):
     context_object_name = "pay"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("supplier", "bank_account", "bank_journal")
+        return super().get_queryset().select_related(
+            "supplier", "bank_account", "bank_journal", "purchase_order")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -516,10 +517,24 @@ def payment_create(request):
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
+    from apps.purchasing.models import PurchaseOrder
+
     # 背书可冲抵的采购发票（应付未结）
     inv_candidates = [i for i in PurchaseInvoice.objects.filter(
         company=company, status=PurchaseInvoice.Status.REGISTERED)
         .select_related("supplier").order_by("doc_date", "id") if i.outstanding > 0]
+    order_candidates = list(
+        PurchaseOrder.objects.filter(company=company)
+        .exclude(status=PurchaseOrder.Status.VOID)
+        .select_related("supplier").order_by("-doc_date", "-id"))
+
+    initial = {"doc_date": timezone.localdate()}
+    order_id = request.GET.get("order")
+    if order_id:
+        pre = next((o for o in order_candidates if str(o.pk) == str(order_id)), None)
+        if pre is not None:
+            initial["purchase_order"] = pre.pk
+            initial["supplier"] = pre.supplier_id
 
     if request.method == "POST":
         form = PaymentForm(request.POST, company=company)
@@ -530,22 +545,31 @@ def payment_create(request):
                 if ok:
                     return ok
             else:
-                pay = create_payment(
-                    company=company, user=request.user, doc_date=cd["doc_date"],
-                    bank_account=cd["bank_account"], supplier=cd["supplier"],
-                    amount=cd["amount"], summary=cd.get("summary", ""),
-                )
-                messages.success(request, f"付款已登记，并生成银行日记账：{pay.doc_no}")
-                return redirect("payment_detail", pk=pay.pk)
+                try:
+                    pay = create_payment(
+                        company=company, user=request.user, doc_date=cd["doc_date"],
+                        bank_account=cd["bank_account"], supplier=cd["supplier"],
+                        amount=cd["amount"], summary=cd.get("summary", ""),
+                        purchase_order=cd.get("purchase_order"),
+                    )
+                except ValueError as e:
+                    messages.error(request, f"登记失败：{e}")
+                else:
+                    tip = f"付款已登记，并生成银行日记账：{pay.doc_no}"
+                    if pay.purchase_order_id:
+                        tip += f"（预付挂订单 {pay.purchase_order.doc_no}）"
+                    messages.success(request, tip)
+                    return redirect("payment_detail", pk=pay.pk)
     else:
-        form = PaymentForm(company=company, initial={"doc_date": timezone.localdate()})
+        form = PaymentForm(company=company, initial=initial)
 
     return render(request, "finance/payment_form.html",
-                  {"form": form, "title": "付款登记", "inv_candidates": inv_candidates})
+                  {"form": form, "title": "付款登记", "inv_candidates": inv_candidates,
+                   "order_candidates": order_candidates})
 
 
 def _resolve_endorsement(request, company, cd, inv_candidates):
-    """校验背书：找在手票据、金额≤可用余额、勾选采购发票且合计=金额。
+    """校验背书：找在手票据、金额≤可用余额；冲发票或无票挂采购订单预付。
 
     成功返回 (note, allocations, amount)；失败已 messages.error 并返回 (None, None, None)。
     """
@@ -564,9 +588,12 @@ def _resolve_endorsement(request, company, cd, inv_candidates):
     if err:
         messages.error(request, err)
         return None, None, None
+    order = cd.get("purchase_order")
     if not allocations:
-        messages.error(request, "背书付款需勾选至少一张要冲抵的采购发票")
-        return None, None, None
+        if order is None:
+            messages.error(request, "背书付款需勾选采购发票，或选择采购订单做无票预付")
+            return None, None, None
+        return note, [], amount
     total = round_money(sum(a["amount"] for a in allocations))
     if total != amount:
         messages.error(request, f"勾选发票冲销合计 {total} 应等于付款金额 {amount}")
@@ -575,16 +602,27 @@ def _resolve_endorsement(request, company, cd, inv_candidates):
 
 
 def _handle_payment_by_note(request, company, cd, inv_candidates):
-    """付款方式=应收票据(背书)：找在手票据→按勾选采购发票背书抵应付。成功返回 redirect。"""
+    """付款方式=应收票据(背书)：找在手票据→按勾选采购发票背书抵应付（可挂订单）。成功返回 redirect。"""
     note, allocations, amount = _resolve_endorsement(request, company, cd, inv_candidates)
     if note is None:
         return None
     try:
-        endorse_receivable_against_purchase(note=note, allocations=allocations, user=request.user)
+        kwargs = dict(note=note, allocations=allocations, user=request.user,
+                      purchase_order=cd.get("purchase_order"))
+        if not allocations:
+            kwargs["prepaid_amount"] = amount
+        endorse_receivable_against_purchase(**kwargs)
     except SettlementError as e:
         messages.error(request, f"背书失败：{e}")
         return None
-    messages.success(request, f"已用应收票据 {note.doc_no} 背书付款 {amount}，抵付 {len(allocations)} 张采购发票")
+    tip = f"已用应收票据 {note.doc_no} 背书付款 {amount}"
+    if allocations:
+        tip += f"，抵付 {len(allocations)} 张采购发票"
+    else:
+        tip += f"，无票预付挂订单 {cd['purchase_order'].doc_no}"
+    if cd.get("purchase_order") and allocations:
+        tip += f"（订单 {cd['purchase_order'].doc_no}）"
+    messages.success(request, tip)
     return redirect("note_receivable_list")
 
 
@@ -607,6 +645,11 @@ def payment_edit(request, pk):
     inv_candidates = [i for i in PurchaseInvoice.objects.filter(
         company=company, status=PurchaseInvoice.Status.REGISTERED)
         .select_related("supplier").order_by("doc_date", "id") if i.outstanding > 0]
+    from apps.purchasing.models import PurchaseOrder
+    order_candidates = list(
+        PurchaseOrder.objects.filter(company=company)
+        .exclude(status=PurchaseOrder.Status.VOID)
+        .select_related("supplier").order_by("-doc_date", "-id"))
 
     if request.method == "POST":
         form = PaymentForm(request.POST, company=company)
@@ -621,21 +664,28 @@ def payment_edit(request, pk):
                         with transaction.atomic():
                             old_no = pay.doc_no
                             delete_payment(pay, user=request.user)
-                            endorse_receivable_against_purchase(
-                                note=note, allocations=allocations, user=request.user)
+                            kw = dict(note=note, allocations=allocations, user=request.user,
+                                      purchase_order=cd.get("purchase_order"))
+                            if not allocations:
+                                kw["prepaid_amount"] = amount
+                            endorse_receivable_against_purchase(**kw)
                     except (SettlementError, ValueError) as e:
                         messages.error(request, f"转为票据背书失败：{e}")
                     else:
-                        messages.success(
-                            request,
-                            f"原银行付款 {old_no} 已删除，改为应收票据 {note.doc_no} "
-                            f"背书付款 {amount}，抵付 {len(allocations)} 张采购发票")
+                        tip = (f"原银行付款 {old_no} 已删除，改为应收票据 {note.doc_no} "
+                               f"背书付款 {amount}")
+                        if allocations:
+                            tip += f"，抵付 {len(allocations)} 张采购发票"
+                        elif cd.get("purchase_order"):
+                            tip += f"，无票预付挂订单 {cd['purchase_order'].doc_no}"
+                        messages.success(request, tip)
                         return redirect("note_receivable_list")
             else:
                 try:
                     update_payment(pay, user=request.user, doc_date=cd["doc_date"],
                                    bank_account=cd["bank_account"], supplier=cd["supplier"],
-                                   amount=cd["amount"], summary=cd.get("summary", ""))
+                                   amount=cd["amount"], summary=cd.get("summary", ""),
+                                   purchase_order=cd.get("purchase_order"))
                 except (SettlementError, ValueError) as e:
                     messages.error(request, f"修改失败：{e}")
                 else:
@@ -644,11 +694,12 @@ def payment_edit(request, pk):
     else:
         form = PaymentForm(company=company, initial={
             "doc_date": pay.doc_date, "method": f"bank:{pay.bank_account_id}",
-            "supplier": pay.supplier_id, "amount": pay.amount, "summary": pay.summary})
+            "supplier": pay.supplier_id, "purchase_order": pay.purchase_order_id,
+            "amount": pay.amount, "summary": pay.summary})
 
     return render(request, "finance/payment_form.html",
                   {"form": form, "title": f"修改付款 {pay.doc_no}",
-                   "inv_candidates": inv_candidates})
+                   "inv_candidates": inv_candidates, "order_candidates": order_candidates})
 
 
 @login_required
@@ -979,7 +1030,8 @@ class ReceiptDetailView(CompanyScopedMixin, DetailView):
     context_object_name = "rec"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("customer", "bank_account", "bank_journal")
+        return super().get_queryset().select_related(
+            "customer", "bank_account", "bank_journal", "sales_order")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -995,10 +1047,23 @@ def receipt_create(request):
         messages.error(request, "无可用公司账套")
         return redirect("home")
 
-    # 收票可冲抵的销售发票（应收未结）
+    from apps.sales.models import SalesOrder
+
     inv_candidates = [i for i in SalesInvoice.objects.filter(
         company=company, status=SalesInvoice.Status.REGISTERED)
         .select_related("customer").order_by("doc_date", "id") if i.outstanding > 0]
+    order_candidates = list(
+        SalesOrder.objects.filter(company=company)
+        .exclude(status=SalesOrder.Status.VOID)
+        .select_related("customer").order_by("-doc_date", "-id"))
+
+    initial = {"doc_date": timezone.localdate()}
+    order_id = request.GET.get("order")
+    if order_id:
+        pre = next((o for o in order_candidates if str(o.pk) == str(order_id)), None)
+        if pre is not None:
+            initial["sales_order"] = pre.pk
+            initial["customer"] = pre.customer_id
 
     if request.method == "POST":
         form = ReceiptForm(request.POST, company=company)
@@ -1009,18 +1074,27 @@ def receipt_create(request):
                 if ok:
                     return ok
             else:
-                rec = create_receipt(
-                    company=company, user=request.user, doc_date=cd["doc_date"],
-                    bank_account=cd["bank_account"], customer=cd["customer"],
-                    amount=cd["amount"], summary=cd.get("summary", ""),
-                )
-                messages.success(request, f"收款已登记，并生成银行日记账：{rec.doc_no}")
-                return redirect("receipt_detail", pk=rec.pk)
+                try:
+                    rec = create_receipt(
+                        company=company, user=request.user, doc_date=cd["doc_date"],
+                        bank_account=cd["bank_account"], customer=cd["customer"],
+                        amount=cd["amount"], summary=cd.get("summary", ""),
+                        sales_order=cd.get("sales_order"),
+                    )
+                except ValueError as e:
+                    messages.error(request, f"登记失败：{e}")
+                else:
+                    tip = f"收款已登记，并生成银行日记账：{rec.doc_no}"
+                    if rec.sales_order_id:
+                        tip += f"（预收挂订单 {rec.sales_order.doc_no}）"
+                    messages.success(request, tip)
+                    return redirect("receipt_detail", pk=rec.pk)
     else:
-        form = ReceiptForm(company=company, initial={"doc_date": timezone.localdate()})
+        form = ReceiptForm(company=company, initial=initial)
 
     return render(request, "finance/receipt_form.html",
-                  {"form": form, "title": "收款登记", "inv_candidates": inv_candidates})
+                  {"form": form, "title": "收款登记", "inv_candidates": inv_candidates,
+                   "order_candidates": order_candidates})
 
 
 def _resolve_note_receipt(request, company, cd, inv_candidates):
@@ -1083,6 +1157,11 @@ def receipt_edit(request, pk):
     inv_candidates = [i for i in SalesInvoice.objects.filter(
         company=company, status=SalesInvoice.Status.REGISTERED)
         .select_related("customer").order_by("doc_date", "id") if i.outstanding > 0]
+    from apps.sales.models import SalesOrder
+    order_candidates = list(
+        SalesOrder.objects.filter(company=company)
+        .exclude(status=SalesOrder.Status.VOID)
+        .select_related("customer").order_by("-doc_date", "-id"))
 
     if request.method == "POST":
         form = ReceiptForm(request.POST, company=company)
@@ -1113,7 +1192,8 @@ def receipt_edit(request, pk):
                 try:
                     update_receipt(rec, user=request.user, doc_date=cd["doc_date"],
                                    bank_account=cd["bank_account"], customer=cd["customer"],
-                                   amount=cd["amount"], summary=cd.get("summary", ""))
+                                   amount=cd["amount"], summary=cd.get("summary", ""),
+                                   sales_order=cd.get("sales_order"))
                 except (SettlementError, ValueError) as e:
                     messages.error(request, f"修改失败：{e}")
                 else:
@@ -1122,11 +1202,12 @@ def receipt_edit(request, pk):
     else:
         form = ReceiptForm(company=company, initial={
             "doc_date": rec.doc_date, "method": f"bank:{rec.bank_account_id}",
-            "customer": rec.customer_id, "amount": rec.amount, "summary": rec.summary})
+            "customer": rec.customer_id, "sales_order": rec.sales_order_id,
+            "amount": rec.amount, "summary": rec.summary})
 
     return render(request, "finance/receipt_form.html",
                   {"form": form, "title": f"修改收款 {rec.doc_no}",
-                   "inv_candidates": inv_candidates})
+                   "inv_candidates": inv_candidates, "order_candidates": order_candidates})
 
 
 @login_required

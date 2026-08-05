@@ -94,18 +94,40 @@ def create_purchase_invoice(*, company, user, doc_date, supplier, lines,
     return inv
 
 
+def _validate_payment_order(*, company, supplier, purchase_order):
+    """预付挂单校验：订单须属本公司、未作废，且供应商一致。"""
+    if purchase_order is None:
+        return None
+    if purchase_order.company_id != company.pk:
+        raise ValueError("采购订单不属于当前账套")
+    from apps.purchasing.models import PurchaseOrder
+    if purchase_order.status == PurchaseOrder.Status.VOID:
+        raise ValueError("已作废的采购订单不可挂预付")
+    if supplier is None:
+        raise ValueError("挂采购订单时，收款供应商必填")
+    if purchase_order.supplier_id != supplier.pk:
+        raise ValueError("采购订单供应商与付款供应商不一致")
+    return purchase_order
+
+
 @transaction.atomic
-def create_payment(*, company, user, doc_date, bank_account, supplier, amount, summary="") -> Payment:
-    """付款登记：保存付款单并自动生成一条银行存款日记账（支出）。SPEC §7.1。"""
+def create_payment(*, company, user, doc_date, bank_account, supplier, amount, summary="",
+                   purchase_order=None) -> Payment:
+    """付款登记：保存付款单并自动生成一条银行存款日记账（支出）。SPEC §7.1。
+
+    purchase_order 可选：无票预付时挂订单做业务跟踪；核销对象仍是采购发票。
+    """
     amount = round_money(amount)
     if amount <= 0:
         raise ValueError("付款金额必须大于 0")
+    purchase_order = _validate_payment_order(
+        company=company, supplier=supplier, purchase_order=purchase_order)
 
     pay = Payment.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(Payment, company, "FK", doc_date),
         doc_date=doc_date, bank_account=bank_account, supplier=supplier,
-        amount=amount, summary=summary,
+        purchase_order=purchase_order, amount=amount, summary=summary,
     )
     journal = BankJournal.objects.create(
         company=company, created_by=user, bank_account=bank_account, date=doc_date,
@@ -120,9 +142,14 @@ def create_payment(*, company, user, doc_date, bank_account, supplier, amount, s
     pay.bank_journal = journal
     pay.save(update_fields=["bank_journal"])
 
+    if purchase_order is not None:
+        from apps.purchasing.order_services import refresh_order_status
+        refresh_order_status(purchase_order)
+
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=pay,
-        summary=f"付款 {pay.doc_no} 付 {supplier or '其他'} {amount}（{bank_account}）",
+        summary=f"付款 {pay.doc_no} 付 {supplier or '其他'} {amount}（{bank_account}）"
+                + (f" 挂订单 {purchase_order.doc_no}" if purchase_order else ""),
     )
     return pay
 
@@ -161,6 +188,20 @@ def allocate_payment(*, payment, allocations, user=None):
 
     payment.settled_amount += total
     payment.save(update_fields=["settled_amount"])
+
+    from apps.purchasing.order_services import refresh_order_status
+    orders_to_refresh = set()
+    if payment.purchase_order_id:
+        orders_to_refresh.add(payment.purchase_order_id)
+    for invoice, _amount in cleaned:
+        if invoice.purchase_order_id:
+            orders_to_refresh.add(invoice.purchase_order_id)
+        for ol in invoice.lines.filter(order_line__isnull=False).select_related("order_line__order"):
+            orders_to_refresh.add(ol.order_line.order_id)
+    if orders_to_refresh:
+        from apps.purchasing.models import PurchaseOrder
+        for oid in orders_to_refresh:
+            refresh_order_status(PurchaseOrder.objects.get(pk=oid))
 
     AuditLog.record(
         actor=user, company=payment.company, action=AuditLog.Action.OFFSET, target=payment,
@@ -384,17 +425,20 @@ def create_sales_invoice(*, company, user, doc_date, customer, lines,
 
 
 @transaction.atomic
-def create_receipt(*, company, user, doc_date, bank_account, customer, amount, summary="") -> Receipt:
+def create_receipt(*, company, user, doc_date, bank_account, customer, amount, summary="",
+                   sales_order=None) -> Receipt:
     """收款登记：保存收款单并自动生成一条银行存款日记账（收入）。镜像 create_payment。"""
     amount = round_money(amount)
     if amount <= 0:
         raise ValueError("收款金额必须大于 0")
+    sales_order = _validate_receipt_order(
+        company=company, customer=customer, sales_order=sales_order)
 
     rec = Receipt.objects.create(
         company=company, created_by=user,
         doc_no=next_doc_no(Receipt, company, "SK", doc_date),
         doc_date=doc_date, bank_account=bank_account, customer=customer,
-        amount=amount, summary=summary,
+        sales_order=sales_order, amount=amount, summary=summary,
     )
     journal = BankJournal.objects.create(
         company=company, created_by=user, bank_account=bank_account, date=doc_date,
@@ -408,11 +452,31 @@ def create_receipt(*, company, user, doc_date, bank_account, customer, amount, s
     rec.bank_journal = journal
     rec.save(update_fields=["bank_journal"])
 
+    if sales_order is not None:
+        from apps.sales.order_services import refresh_order_status
+        refresh_order_status(sales_order)
+
     AuditLog.record(
         actor=user, company=company, action=AuditLog.Action.CREATE, target=rec,
-        summary=f"收款 {rec.doc_no} 收 {customer or '其他'} {amount}（{bank_account}）",
+        summary=f"收款 {rec.doc_no} 收 {customer or '其他'} {amount}（{bank_account}）"
+                + (f" 挂订单 {sales_order.doc_no}" if sales_order else ""),
     )
     return rec
+
+
+def _validate_receipt_order(*, company, customer, sales_order):
+    if sales_order is None:
+        return None
+    if sales_order.company_id != company.pk:
+        raise ValueError("销售订单不属于当前账套")
+    from apps.sales.models import SalesOrder
+    if sales_order.status == SalesOrder.Status.VOID:
+        raise ValueError("已作废的销售订单不可挂预收")
+    if customer is None:
+        raise ValueError("挂销售订单时，付款客户必填")
+    if sales_order.customer_id != customer.pk:
+        raise ValueError("销售订单客户与收款客户不一致")
+    return sales_order
 
 
 @transaction.atomic
@@ -445,6 +509,19 @@ def allocate_receipt(*, receipt, allocations, user=None):
 
     receipt.settled_amount += total
     receipt.save(update_fields=["settled_amount"])
+
+    from apps.sales.order_services import refresh_order_status
+    from apps.sales.models import SalesOrder
+    orders_to_refresh = set()
+    if receipt.sales_order_id:
+        orders_to_refresh.add(receipt.sales_order_id)
+    for invoice, _amount in cleaned:
+        if invoice.sales_order_id:
+            orders_to_refresh.add(invoice.sales_order_id)
+        for ol in invoice.lines.filter(order_line__isnull=False).select_related("order_line__order"):
+            orders_to_refresh.add(ol.order_line.order_id)
+    for oid in orders_to_refresh:
+        refresh_order_status(SalesOrder.objects.get(pk=oid))
 
     AuditLog.record(
         actor=user, company=receipt.company, action=AuditLog.Action.OFFSET, target=receipt,
@@ -482,19 +559,25 @@ def payment_edit_block_reason(pay, today):
 
 
 @transaction.atomic
-def update_receipt(rec, *, user, doc_date, bank_account, customer, amount, summary=""):
+def update_receipt(rec, *, user, doc_date, bank_account, customer, amount, summary="",
+                   sales_order=None):
     """修改收款（仅银行方式、未核销）：同步更新对应银行日记账。"""
     if rec.settled_amount > 0:
         raise SettlementError("已核销的收款不可修改，请先撤销核销")
     amount = round_money(amount)
     if amount <= 0:
         raise ValueError("收款金额必须大于 0")
+    sales_order = _validate_receipt_order(
+        company=rec.company, customer=customer, sales_order=sales_order)
+    old_order = rec.sales_order
     rec.doc_date = doc_date
     rec.bank_account = bank_account
     rec.customer = customer
+    rec.sales_order = sales_order
     rec.amount = amount
     rec.summary = summary
-    rec.save(update_fields=["doc_date", "bank_account", "customer", "amount", "summary"])
+    rec.save(update_fields=["doc_date", "bank_account", "customer", "sales_order",
+                            "amount", "summary"])
     j = rec.bank_journal
     if j is not None:
         j.date = doc_date
@@ -506,6 +589,11 @@ def update_receipt(rec, *, user, doc_date, bank_account, customer, amount, summa
         j.summary = summary or f"收款 {rec.doc_no}"
         j.save(update_fields=["date", "bank_account", "amount", "entry_type",
                               "counterparty", "summary"])
+    from apps.sales.order_services import refresh_order_status
+    if old_order is not None and (sales_order is None or old_order.pk != getattr(sales_order, "pk", None)):
+        refresh_order_status(old_order)
+    if sales_order is not None:
+        refresh_order_status(sales_order)
     AuditLog.record(actor=user, company=rec.company, action=AuditLog.Action.UPDATE, target=rec,
                     summary=f"修改收款 {rec.doc_no} 收 {customer or '其他'} {amount}（{bank_account}）")
     return rec
@@ -517,6 +605,7 @@ def delete_receipt(rec, *, user):
     if rec.settled_amount > 0:
         raise SettlementError("已核销的收款不可删除，请先撤销核销")
     company, doc_no = rec.company, rec.doc_no
+    order = rec.sales_order
     j = rec.bank_journal
     AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=rec,
                     summary=f"删除收款 {doc_no} {rec.amount}")
@@ -525,22 +614,31 @@ def delete_receipt(rec, *, user):
     rec.delete()
     if j is not None:
         j.delete()
+    if order is not None:
+        from apps.sales.order_services import refresh_order_status
+        refresh_order_status(order)
 
 
 @transaction.atomic
-def update_payment(pay, *, user, doc_date, bank_account, supplier, amount, summary=""):
+def update_payment(pay, *, user, doc_date, bank_account, supplier, amount, summary="",
+                   purchase_order=None):
     """修改付款（仅银行方式、未核销）：同步更新对应银行日记账。"""
     if pay.settled_amount > 0:
         raise SettlementError("已核销的付款不可修改，请先撤销核销")
     amount = round_money(amount)
     if amount <= 0:
         raise ValueError("付款金额必须大于 0")
+    purchase_order = _validate_payment_order(
+        company=pay.company, supplier=supplier, purchase_order=purchase_order)
+    old_order = pay.purchase_order
     pay.doc_date = doc_date
     pay.bank_account = bank_account
     pay.supplier = supplier
+    pay.purchase_order = purchase_order
     pay.amount = amount
     pay.summary = summary
-    pay.save(update_fields=["doc_date", "bank_account", "supplier", "amount", "summary"])
+    pay.save(update_fields=["doc_date", "bank_account", "supplier", "purchase_order",
+                            "amount", "summary"])
     j = pay.bank_journal
     if j is not None:
         j.date = doc_date
@@ -552,6 +650,11 @@ def update_payment(pay, *, user, doc_date, bank_account, supplier, amount, summa
         j.summary = summary or f"付款 {pay.doc_no}"
         j.save(update_fields=["date", "bank_account", "amount", "entry_type",
                               "counterparty", "summary"])
+    from apps.purchasing.order_services import refresh_order_status
+    if old_order is not None and (purchase_order is None or old_order.pk != getattr(purchase_order, "pk", None)):
+        refresh_order_status(old_order)
+    if purchase_order is not None:
+        refresh_order_status(purchase_order)
     AuditLog.record(actor=user, company=pay.company, action=AuditLog.Action.UPDATE, target=pay,
                     summary=f"修改付款 {pay.doc_no} 付 {supplier or '其他'} {amount}（{bank_account}）")
     return pay
@@ -563,6 +666,7 @@ def delete_payment(pay, *, user):
     if pay.settled_amount > 0:
         raise SettlementError("已核销的付款不可删除，请先撤销核销")
     company, doc_no = pay.company, pay.doc_no
+    order = pay.purchase_order
     j = pay.bank_journal
     AuditLog.record(actor=user, company=company, action=AuditLog.Action.DELETE, target=pay,
                     summary=f"删除付款 {doc_no} {pay.amount}")
@@ -571,6 +675,9 @@ def delete_payment(pay, *, user):
     pay.delete()
     if j is not None:
         j.delete()
+    if order is not None:
+        from apps.purchasing.order_services import refresh_order_status
+        refresh_order_status(order)
 
 
 # ============================= 票据（M3）=====================================
@@ -704,7 +811,7 @@ def note_has_usage(note) -> bool:
 
 
 def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
-                is_endorsement, user):
+                is_endorsement, user, purchase_order=None, prepaid_amount=None):
     """票据冲销通用核心：把票据冲抵若干发票未核销额。
 
     口径（关键）：
@@ -712,6 +819,8 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
       抵客户应收账款（借应收票据/贷应收账款），**不消耗票面**——票仍持有可背书/托收。
       仅减发票未核销额；上限=票面−已抵应收额。
     - **背书抵应付 / 应付票据抵应付**（票据「出去」）：**消耗票面**，减未用额、到 0 定终态。
+    - **背书无票预付**：allocations 为空且 purchase_order + prepaid_amount → 记一笔无发票
+      的 NoteSettlement（挂订单），仍消耗票面；到票后请撤销该预付冲销再背书冲发票。
     校验：金额>0、不超相应额度、任一违反整体回滚。
     """
     NoteModel = type(note)
@@ -722,18 +831,49 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
     if consumes and note.unused <= 0:
         raise SettlementError(f"票据 {note.doc_no} 已无未用额，不可再使用")
 
+    if purchase_order is not None:
+        from apps.purchasing.models import PurchaseOrder
+        if purchase_order.company_id != note.company_id:
+            raise SettlementError("采购订单与票据公司不一致")
+        if purchase_order.status == PurchaseOrder.Status.VOID:
+            raise SettlementError("已作废的采购订单不可挂背书")
+
     total = ZERO_MONEY
     cleaned = []
-    for a in allocations:
+    for a in allocations or []:
         amount = round_money(a["amount"])
         if amount <= 0:
             continue
         inv = invoice_model.objects.select_for_update().get(pk=a["invoice"].pk)
         if inv.company_id != note.company_id:
             raise SettlementError("票据与发票公司不一致")
-        # 允许冲销超过发票未核销额（使发票余额为负）
         total += amount
         cleaned.append((inv, amount))
+
+    # 无票背书预付：仅背书 + 挂采购订单
+    if not cleaned and is_endorsement and purchase_order is not None and prepaid_amount is not None:
+        total = round_money(prepaid_amount)
+        if total <= 0:
+            raise SettlementError("预付金额必须大于 0")
+        if total > note.unused:
+            raise SettlementError(f"预付金额 {total} 超过票据未用额 {note.unused}")
+        settle_date = getattr(note, "draw_date", None)
+        NoteSettlement.objects.create(
+            company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
+            invoice_kind="", invoice_id=None, invoice_no="",
+            amount=total, is_endorsement=True, purchase_order=purchase_order, date=settle_date,
+        )
+        note.settled_amount += total
+        if note.unused == 0:
+            note.status = NoteReceivable.Status.ENDORSED
+        note.save(update_fields=["settled_amount", "status"])
+        from apps.purchasing.order_services import refresh_order_status
+        refresh_order_status(purchase_order)
+        AuditLog.record(
+            actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
+            summary=f"票据背书预付 {note.doc_no} {total} 挂订单 {purchase_order.doc_no}",
+        )
+        return note
 
     if not cleaned:
         raise SettlementError("请填写有效的冲销金额")
@@ -745,25 +885,28 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         if total > room:
             raise SettlementError(f"核销应收合计 {total} 超过票据可抵应收额 {room}")
 
-    # 业务日期：无独立冲销日期录入，取票据出票日作会计口径归期（稳定、不随操作时钟漂移）。
     settle_date = getattr(note, "draw_date", None)
     for inv, amount in cleaned:
         NoteSettlement.objects.create(
             company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
             invoice_kind=invoice_kind, invoice_id=inv.pk, invoice_no=inv.doc_no,
-            amount=amount, is_endorsement=is_endorsement, date=settle_date,
+            amount=amount, is_endorsement=is_endorsement,
+            purchase_order=purchase_order if is_endorsement else None, date=settle_date,
         )
         inv.settled_amount += amount
         inv.save(update_fields=["settled_amount"])
 
     if consumes:
         note.settled_amount += total
-        # 票面全部用出 → 定终态（应收=已背书，应付=已结算）；未用完保持在手/已开出
         if note.unused == 0:
             note.status = (NoteReceivable.Status.ENDORSED
                            if note_kind == NoteSettlement.NoteKind.RECEIVABLE
                            else NoteModel.Status.SETTLED)
         note.save(update_fields=["settled_amount", "status"])
+
+    if is_endorsement and purchase_order is not None:
+        from apps.purchasing.order_services import refresh_order_status
+        refresh_order_status(purchase_order)
 
     if is_endorsement:
         act = "背书抵应付"
@@ -773,7 +916,8 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         act = "核销应收账款"
     AuditLog.record(
         actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
-        summary=f"票据{act} {note.doc_no} {total}（{len(cleaned)} 张发票）",
+        summary=f"票据{act} {note.doc_no} {total}（{len(cleaned)} 张发票）"
+                + (f" 挂订单 {purchase_order.doc_no}" if purchase_order else ""),
     )
     return note
 
@@ -789,12 +933,17 @@ def settle_receivable_against_sales(*, note, allocations, user=None):
 
 
 @transaction.atomic
-def endorse_receivable_against_purchase(*, note, allocations, user=None):
-    """应收票据 → 背书转让给供应商抵付应付账款（冲采购发票）。"""
+def endorse_receivable_against_purchase(*, note, allocations, user=None,
+                                        purchase_order=None, prepaid_amount=None):
+    """应收票据 → 背书转让给供应商抵付应付账款（冲采购发票）；可挂采购订单。
+
+    allocations 为空且提供 purchase_order + prepaid_amount 时记无票预付背书。
+    """
     return _apply_note(
         note=note, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
         invoice_model=PurchaseInvoice, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
         allocations=allocations, is_endorsement=True, user=user,
+        purchase_order=purchase_order, prepaid_amount=prepaid_amount,
     )
 
 
@@ -838,9 +987,11 @@ def reverse_note_settlement(*, settlement, user):
     NoteModel = (NoteReceivable if s.note_kind == NoteSettlement.NoteKind.RECEIVABLE
                  else NotePayable)
     note = NoteModel.objects.select_for_update().get(pk=s.note_id)
-    invoice_model = (SalesInvoice if s.invoice_kind == NoteSettlement.InvoiceKind.SALES
-                     else PurchaseInvoice)
-    inv = invoice_model.objects.select_for_update().filter(pk=s.invoice_id).first()
+    inv = None
+    if s.invoice_id and s.invoice_kind == NoteSettlement.InvoiceKind.SALES:
+        inv = SalesInvoice.objects.select_for_update().filter(pk=s.invoice_id).first()
+    elif s.invoice_id and s.invoice_kind == NoteSettlement.InvoiceKind.PURCHASE:
+        inv = PurchaseInvoice.objects.select_for_update().filter(pk=s.invoice_id).first()
     if inv is not None:
         inv.settled_amount -= s.amount
         inv.save(update_fields=["settled_amount"])
@@ -852,11 +1003,16 @@ def reverse_note_settlement(*, settlement, user):
         note.status = (NoteReceivable.Status.ON_HAND if isinstance(note, NoteReceivable)
                        else NotePayable.Status.ISSUED)
         note.save(update_fields=["settled_amount", "status"])
+    order = s.purchase_order
     AuditLog.record(
         actor=user, company=note.company, action=AuditLog.Action.OFFSET, target=note,
         summary=(f"撤销票据{'背书抵付' if s.is_endorsement else '核销应收'} "
-                 f"{note.doc_no} 退回 {s.amount}（发票 {s.invoice_no}）"))
+                 f"{note.doc_no} 退回 {s.amount}"
+                 + (f"（发票 {s.invoice_no}）" if s.invoice_no else "（预付挂单）")))
     s.delete()
+    if order is not None:
+        from apps.purchasing.order_services import refresh_order_status
+        refresh_order_status(order)
     return note
 
 

@@ -24,6 +24,21 @@
           {% for e in form.supplier.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
         </div>
 
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.purchase_order.id_for_label }}">关联采购订单</label>
+          <select name="purchase_order" id="{{ form.purchase_order.id_for_label }}" class="form-select">
+            <option value="">（可选，预付挂采购订单）</option>
+            {% for o in order_candidates %}
+            <option value="{{ o.pk }}" data-party="{{ o.supplier_id }}"
+              {% if form.purchase_order.value|stringformat:"s" == o.pk|stringformat:"s" %}selected{% endif %}>
+              {{ o.doc_no }} · {{ o.supplier }} · {{ o.doc_date }}
+            </option>
+            {% endfor %}
+          </select>
+          {% for e in form.purchase_order.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          <div class="form-text">银行预付或背书均可挂；背书无票时必选订单；核销仍对采购发票</div>
+        </div>
+
         {# 票据专属：票号 + 自动带出 #}
         <div class="col-md-4 note-only">
           <label class="form-label" for="{{ form.note_no.id_for_label }}">{{ form.note_no.label }}</label>
@@ -78,8 +93,8 @@
         <a href="{% url 'payment_list' %}" class="btn btn-outline-secondary">取消</a>
       </div>
       <p class="text-muted small mt-2">
-        银行账户：登记后生成银行存款日记账（支出），之后到核销界面与采购发票勾对。<br>
-        应收票据（背书）：用手上一张在手应收票据背书抵付应付（<strong>不</strong>生成银行日记账）；输票号自动带出余额，付款金额≤余额可部分背书，须勾选采购发票且冲抵合计=付款金额。
+        银行账户：登记后生成银行存款日记账（支出）；可不挂发票（先付款后收票），并可选择关联采购订单跟踪预付。到票后到付款详情「核销应付」。<br>
+        应收票据（背书）：用手上一张在手应收票据背书抵付应付（<strong>不</strong>生成银行日记账）；输票号自动带出余额，付款金额≤余额可部分背书。可勾选采购发票（合计=付款金额）并挂订单；无票时须选采购订单做背书预付（到票后请先撤销该预付冲销，再背书冲发票）。
       </p>
     </form>
   </div>
@@ -91,6 +106,7 @@
   var lookupUrl = form.getAttribute("data-lookup");
   var methodSel = form.querySelector('[name="method"]');
   var supplierSel = form.querySelector('[name="supplier"]');
+  var orderSel = form.querySelector('[name="purchase_order"]');
   var noteNo = form.querySelector('[name="note_no"]');
   var amtInput = form.querySelector('[name="amount"]');
   var noteBlocks = form.querySelectorAll(".note-only");
@@ -103,7 +119,18 @@
   function toggleMethod() {
     var note = isNote();
     noteBlocks.forEach(function (b) { b.style.display = note ? "" : "none"; });
+    filterOrders();
     if (note) filterRows();
+  }
+  function filterOrders() {
+    if (!orderSel) return;
+    var sid = supplierSel.value;
+    Array.prototype.forEach.call(orderSel.options, function (opt, idx) {
+      if (idx === 0) { opt.hidden = false; return; }
+      var show = !sid || opt.getAttribute("data-party") === sid;
+      opt.hidden = !show;
+      if (!show && opt.selected) orderSel.value = "";
+    });
   }
   function filterRows() {
     var sid = supplierSel.value;
@@ -121,7 +148,7 @@
       var i = r.querySelector(".alloc-in");
       s += i ? (parseFloat(i.value) || 0) : 0;
     });
-    sumEl.textContent = s.toFixed(2);
+    if (sumEl) sumEl.textContent = s.toFixed(2);
   }
   function lookup() {
     var v = (noteNo.value || "").trim();
@@ -143,7 +170,7 @@
       .catch(function () { info.textContent = ""; });
   }
   methodSel.addEventListener("change", toggleMethod);
-  supplierSel.addEventListener("change", filterRows);
+  supplierSel.addEventListener("change", function () { filterOrders(); filterRows(); });
   noteNo.addEventListener("change", lookup);
   noteNo.addEventListener("blur", lookup);
   form.querySelectorAll(".alloc-in").forEach(function (i) { i.addEventListener("input", sumAlloc); });

@@ -156,24 +156,34 @@ class PaymentForm(forms.ModelForm):
 
     class Meta:
         model = Payment
-        fields = ["doc_date", "supplier", "amount", "summary"]
+        fields = ["doc_date", "supplier", "purchase_order", "amount", "summary"]
         widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.company = company
         accounts = []
+        from apps.purchasing.models import PurchaseOrder
         if company is not None:
             accounts = list(BankAccount.objects.filter(company=company, is_active=True))
             self.fields["supplier"].queryset = Supplier.objects.filter(
                 company=company, is_active=True
             )
+            self.fields["purchase_order"].queryset = PurchaseOrder.objects.filter(
+                company=company,
+            ).exclude(status=PurchaseOrder.Status.VOID).select_related("supplier").order_by(
+                "-doc_date", "-id")
+        else:
+            self.fields["purchase_order"].queryset = PurchaseOrder.objects.none()
         self.fields["method"].choices = (
             [(f"bank:{a.pk}", f"银行账户 · {a.name}") for a in accounts]
             + [(self.METHOD_NOTE, "应收票据（背书）")]
         )
         self.fields["supplier"].required = False
         self.fields["supplier"].empty_label = "（其他付款，可不选）"
+        self.fields["purchase_order"].required = False
+        self.fields["purchase_order"].empty_label = "（可选，预付挂采购订单）"
+        self.fields["purchase_order"].help_text = "无票预付时可选；核销仍对采购发票"
         for name, field in self.fields.items():
             w = field.widget
             w.attrs.setdefault("class", "form-select" if isinstance(w, forms.Select) else "form-control")
@@ -187,6 +197,15 @@ class PaymentForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         method = cleaned.get("method") or ""
+        order = cleaned.get("purchase_order")
+        supplier = cleaned.get("supplier")
+        if order is not None:
+            if not supplier:
+                self.add_error("supplier", "挂采购订单时，收款供应商必填")
+            elif order.supplier_id != supplier.pk:
+                self.add_error("purchase_order", "所选订单的供应商与付款供应商不一致")
+            elif self.company is not None and order.company_id != self.company.pk:
+                self.add_error("purchase_order", "订单不属于当前账套")
         if method == self.METHOD_NOTE:
             cleaned["bank_account"] = None
             if not cleaned.get("supplier"):
@@ -316,24 +335,34 @@ class ReceiptForm(forms.ModelForm):
 
     class Meta:
         model = Receipt
-        fields = ["doc_date", "customer", "amount", "summary"]
+        fields = ["doc_date", "customer", "sales_order", "amount", "summary"]
         widgets = {"doc_date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.company = company
         accounts = []
+        from apps.sales.models import SalesOrder
         if company is not None:
             accounts = list(BankAccount.objects.filter(company=company, is_active=True))
             self.fields["customer"].queryset = Customer.objects.filter(
                 company=company, is_active=True
             )
+            self.fields["sales_order"].queryset = SalesOrder.objects.filter(
+                company=company,
+            ).exclude(status=SalesOrder.Status.VOID).select_related("customer").order_by(
+                "-doc_date", "-id")
+        else:
+            self.fields["sales_order"].queryset = SalesOrder.objects.none()
         self.fields["method"].choices = (
             [(f"bank:{a.pk}", f"银行账户 · {a.name}") for a in accounts]
             + [(self.METHOD_NOTE, "应收票据")]
         )
         self.fields["customer"].required = False
         self.fields["customer"].empty_label = "（其他收款，可不选）"
+        self.fields["sales_order"].required = False
+        self.fields["sales_order"].empty_label = "（可选，预收挂销售订单）"
+        self.fields["sales_order"].help_text = "无票预收时可选；核销仍对销售发票"
         for name, field in self.fields.items():
             w = field.widget
             if isinstance(w, forms.DateInput):
@@ -349,6 +378,15 @@ class ReceiptForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         method = cleaned.get("method") or ""
+        order = cleaned.get("sales_order")
+        customer = cleaned.get("customer")
+        if order is not None:
+            if not customer:
+                self.add_error("customer", "挂销售订单时，付款客户必填")
+            elif order.customer_id != customer.pk:
+                self.add_error("sales_order", "所选订单的客户与收款客户不一致")
+            elif self.company is not None and order.company_id != self.company.pk:
+                self.add_error("sales_order", "订单不属于当前账套")
         if method == self.METHOD_NOTE:
             cleaned["bank_account"] = None
             if not cleaned.get("customer"):
@@ -359,6 +397,8 @@ class ReceiptForm(forms.ModelForm):
                 self.add_error("draw_date", "请填写出票日期")
             if not cleaned.get("due_date"):
                 self.add_error("due_date", "请填写到期日期")
+            if order is not None:
+                self.add_error("sales_order", "收到票据登记暂不支持挂销售订单，请用银行收款登记预收")
         elif method.startswith("bank:"):
             try:
                 acc_id = int(method.split(":", 1)[1])

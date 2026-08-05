@@ -21,11 +21,13 @@ from apps.masterdata.models import Customer
 
 from .order_services import (
     SalesOrderError,
+    annotate_order_prereceipt,
     backfill_sales_order,
     create_invoice_from_order,
     create_outbound_from_order,
     create_sales_order,
     line_progress,
+    order_receipt_summary,
     qty_open_invoice,
     qty_open_ship,
     refresh_order_status,
@@ -45,14 +47,28 @@ class OrderListView(FilteredListMixin, CompanyScopedMixin, ListView):
         ("订单号", "doc_no"), ("日期", "doc_date"), ("客户", "customer__name"),
         ("数量", "total_quantity"), ("不含税", "total_untaxed"), ("含税", "total_taxed"),
         ("发货", "get_ship_status_display"), ("开票", "get_invoice_status_display"),
-        ("收款", "get_receipt_status_display"), ("状态", "get_status_display"),
+        ("收款", "get_receipt_status_display"),
+        ("预收未核销", "prepaid_unallocated"),
+        ("状态", "get_status_display"),
     ]
     model = SalesOrder
     template_name = "sales/order_list.html"
     context_object_name = "orders"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("customer")
+        qs = annotate_order_prereceipt(super().get_queryset().select_related("customer"))
+        if self.request.GET.get("prepaid") == "1":
+            qs = qs.filter(prepaid_unallocated__gt=0)
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        prepaid = self.request.GET.get("prepaid") == "1"
+        ctx["filter"]["prepaid"] = prepaid
+        params = self.request.GET.copy()
+        params["export"] = "xlsx"
+        ctx["filter"]["export_url"] = "?" + params.urlencode()
+        return ctx
 
 
 class OrderDetailView(CompanyScopedMixin, DetailView):
@@ -69,12 +85,15 @@ class OrderDetailView(CompanyScopedMixin, DetailView):
         for ln in order.lines.select_related("product"):
             rows.append({"line": ln, **line_progress(ln)})
         ctx["line_rows"] = rows
+        ctx["rec"] = order_receipt_summary(order)
         ctx["can_ship"] = (order.status == SalesOrder.Status.OPEN
                            and any(r["qty_open_ship"] > 0 for r in rows))
         ctx["can_invoice"] = (order.status == SalesOrder.Status.OPEN
                               and any(r["qty_open_invoice"] > 0 for r in rows))
+        ctx["can_receipt"] = order.status == SalesOrder.Status.OPEN
         has_exec = (order.outbounds.exclude(status="void").exists()
-                    or any(r["qty_invoiced"] > 0 for r in rows))
+                    or any(r["qty_invoiced"] > 0 for r in rows)
+                    or bool(ctx["rec"]["receipts"]))
         ctx["can_edit"] = order.status == SalesOrder.Status.OPEN and not has_exec
         ctx["can_void"] = order.status == SalesOrder.Status.OPEN and not has_exec
         return ctx

@@ -24,6 +24,21 @@
           {% for e in form.customer.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
         </div>
 
+        <div class="col-md-4 bank-only">
+          <label class="form-label" for="id_sales_order">关联销售订单</label>
+          <select name="sales_order" id="id_sales_order" class="form-select">
+            <option value="">（可选，预收挂销售订单）</option>
+            {% for o in order_candidates %}
+            <option value="{{ o.pk }}" data-party="{{ o.customer_id }}"
+              {% if form.sales_order.value|stringformat:"s" == o.pk|stringformat:"s" %}selected{% endif %}>
+              {{ o.doc_no }} · {{ o.customer }} · {{ o.doc_date }}
+            </option>
+            {% endfor %}
+          </select>
+          {% for e in form.sales_order.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          <div class="form-text">无票预收时可选；核销仍对销售发票</div>
+        </div>
+
         {# 票据专属字段 #}
         <div class="col-md-4 note-only">
           <label class="form-label" for="{{ form.note_no.id_for_label }}">{{ form.note_no.label }}</label>
@@ -83,8 +98,8 @@
         <a href="{% url 'receipt_list' %}" class="btn btn-outline-secondary">取消</a>
       </div>
       <p class="text-muted small mt-2">
-        银行账户：登记后生成银行存款日记账（收入），之后到核销界面与销售发票勾对。<br>
-        应收票据：收到客户票据 → 生成一张在手应收票据（<strong>不</strong>生成银行日记账），可在上方直接勾选要冲抵的销售发票；冲抵合计可小于票面（余额留在手）。
+        银行账户：登记后生成银行存款日记账（收入）；可不挂发票（先收款后开票），并可选择关联销售订单跟踪预收。到票后到收款详情「核销应收」。<br>
+        应收票据：收到客户票据 → 生成一张在手应收票据（<strong>不</strong>生成银行日记账），可在上方直接勾选要冲抵的销售发票；冲抵合计可小于票面（余额留在手）。收到票据暂不支持挂销售订单。
       </p>
     </form>
   </div>
@@ -95,8 +110,10 @@
   var form = document.getElementById("recform");
   var methodSel = form.querySelector('[name="method"]');
   var customerSel = form.querySelector('[name="customer"]');
+  var orderSel = form.querySelector('[name="sales_order"]');
   var amtInput = form.querySelector('[name="amount"]');
   var noteBlocks = form.querySelectorAll(".note-only");
+  var bankBlocks = form.querySelectorAll(".bank-only");
   var rows = form.querySelectorAll(".alloc-row");
   var sumEl = document.getElementById("alloc-sum");
   var amtLabel = form.querySelector(".amt-label");
@@ -105,8 +122,21 @@
   function toggleMethod() {
     var note = isNote();
     noteBlocks.forEach(function (b) { b.style.display = note ? "" : "none"; });
+    bankBlocks.forEach(function (b) { b.style.display = note ? "none" : ""; });
+    if (note && orderSel) orderSel.value = "";
     amtLabel.textContent = note ? "票面金额" : "收款金额";
+    filterOrders();
     if (note) filterRows();
+  }
+  function filterOrders() {
+    if (!orderSel) return;
+    var cid = customerSel.value;
+    Array.prototype.forEach.call(orderSel.options, function (opt, idx) {
+      if (idx === 0) { opt.hidden = false; return; }
+      var show = !cid || opt.getAttribute("data-party") === cid;
+      opt.hidden = !show;
+      if (!show && opt.selected) orderSel.value = "";
+    });
   }
   function filterRows() {
     var cid = customerSel.value;
@@ -124,10 +154,10 @@
       var i = r.querySelector(".alloc-in");
       s += i ? (parseFloat(i.value) || 0) : 0;
     });
-    sumEl.textContent = s.toFixed(2);
+    if (sumEl) sumEl.textContent = s.toFixed(2);
   }
   methodSel.addEventListener("change", toggleMethod);
-  customerSel.addEventListener("change", filterRows);
+  customerSel.addEventListener("change", function () { filterOrders(); filterRows(); });
   form.querySelectorAll(".alloc-in").forEach(function (i) { i.addEventListener("input", sumAlloc); });
   toggleMethod();
 })();

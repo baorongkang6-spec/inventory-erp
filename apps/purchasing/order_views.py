@@ -24,11 +24,13 @@ from .forms import (
 from .models import PurchaseInboundLine, PurchaseOrder
 from .order_services import (
     PurchaseOrderError,
+    annotate_order_prepaid,
     backfill_purchase_order,
     create_inbound_from_order,
     create_invoice_from_order,
     create_purchase_order,
     line_progress,
+    order_payment_summary,
     purchase_backfill_candidates,
     purchase_order_progress_rows,
     qty_open_invoice,
@@ -48,14 +50,28 @@ class PurchaseOrderListView(FilteredListMixin, CompanyScopedMixin, ListView):
         ("订单号", "doc_no"), ("日期", "doc_date"), ("供应商", "supplier__name"),
         ("数量", "total_quantity"), ("不含税", "total_untaxed"), ("含税", "total_taxed"),
         ("收货", "get_receive_status_display"), ("收票", "get_invoice_status_display"),
-        ("付款", "get_payment_status_display"), ("状态", "get_status_display"),
+        ("付款", "get_payment_status_display"),
+        ("预付未核销", "prepaid_unallocated"),
+        ("状态", "get_status_display"),
     ]
     model = PurchaseOrder
     template_name = "purchasing/order_list.html"
     context_object_name = "orders"
 
     def get_queryset(self):
-        return super().get_queryset().select_related("supplier")
+        qs = annotate_order_prepaid(super().get_queryset().select_related("supplier"))
+        if self.request.GET.get("prepaid") == "1":
+            qs = qs.filter(prepaid_unallocated__gt=0)
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        prepaid = self.request.GET.get("prepaid") == "1"
+        ctx["filter"]["prepaid"] = prepaid
+        params = self.request.GET.copy()
+        params["export"] = "xlsx"
+        ctx["filter"]["export_url"] = "?" + params.urlencode()
+        return ctx
 
 
 class PurchaseOrderDetailView(CompanyScopedMixin, DetailView):
@@ -72,12 +88,16 @@ class PurchaseOrderDetailView(CompanyScopedMixin, DetailView):
         for ln in order.lines.select_related("product"):
             rows.append({"line": ln, **line_progress(ln)})
         ctx["line_rows"] = rows
+        ctx["pay"] = order_payment_summary(order)
         ctx["can_receive"] = (order.status == PurchaseOrder.Status.OPEN
                               and any(r["qty_open_receive"] > 0 for r in rows))
         ctx["can_invoice"] = (order.status == PurchaseOrder.Status.OPEN
                               and any(r["qty_open_invoice"] > 0 for r in rows))
+        ctx["can_pay"] = order.status == PurchaseOrder.Status.OPEN
         has_exec = (order.inbounds.exclude(status="void").exists()
-                    or any(r["qty_invoiced"] > 0 for r in rows))
+                    or any(r["qty_invoiced"] > 0 for r in rows)
+                    or bool(ctx["pay"]["payments"])
+                    or bool(ctx["pay"].get("note_prepaids")))
         ctx["can_edit"] = order.status == PurchaseOrder.Status.OPEN and not has_exec
         ctx["can_void"] = order.status == PurchaseOrder.Status.OPEN and not has_exec
         return ctx

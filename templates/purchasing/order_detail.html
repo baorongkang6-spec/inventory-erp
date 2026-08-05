@@ -11,6 +11,9 @@
     {% if can_invoice and perms.finance.add_purchaseinvoice %}
     <a href="{% url 'purchase_order_invoice' order.pk %}" class="btn btn-success btn-sm">生成发票</a>
     {% endif %}
+    {% if can_pay and perms.finance.add_payment %}
+    <a href="{% url 'payment_create' %}?order={{ order.pk }}" class="btn btn-warning btn-sm">登记预付/付款</a>
+    {% endif %}
     {% if can_edit and perms.purchasing.change_purchaseorder %}
     <a href="{% url 'purchase_order_edit' order.pk %}" class="btn btn-outline-secondary btn-sm">修改</a>
     {% endif %}
@@ -32,6 +35,13 @@
     <div class="col-md-3"><span class="text-muted">收货：</span>{{ order.get_receive_status_display }}</div>
     <div class="col-md-3"><span class="text-muted">收票：</span>{{ order.get_invoice_status_display }}</div>
     <div class="col-md-3"><span class="text-muted">付款：</span>{{ order.get_payment_status_display }}</div>
+    <div class="col-md-3"><span class="text-muted">合同含税：</span>{{ pay.amount_contract }}</div>
+    <div class="col-md-3"><span class="text-muted">已付合计：</span><strong>{{ pay.amount_paid }}</strong></div>
+    <div class="col-md-3"><span class="text-muted">其中已核销发票：</span>{{ pay.amount_settled }}</div>
+    <div class="col-md-3"><span class="text-muted">其中预付未核销：</span>
+      {% if pay.amount_prepaid %}<strong class="text-warning">{{ pay.amount_prepaid }}</strong>{% else %}0.00{% endif %}
+    </div>
+    <div class="col-md-3"><span class="text-muted">未付：</span>{{ pay.amount_unpaid }}</div>
     <div class="col-md-9"><span class="text-muted">备注：</span>{{ order.remark|default:"—" }}</div>
   </div>
 </div>
@@ -92,7 +102,54 @@
     {% for inv in order.invoices.all %}
     <li class="list-group-item d-flex justify-content-between">
       <a href="{% url 'purchase_invoice_detail' inv.pk %}">{{ inv.doc_no }}</a>
-      <span>{{ inv.doc_date }} · {{ inv.get_status_display }} · 含税 {{ inv.amount_taxed }}</span>
+      <span>{{ inv.doc_date }} · {{ inv.get_status_display }} · 含税 {{ inv.amount_taxed }}
+        · 已核销 {{ inv.settled_amount }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if pay.payments %}
+<div class="card mb-3">
+  <div class="card-header">关联付款<small class="text-muted ms-2">挂本订单的银行付款（含预付）</small></div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>付款单号</th><th>日期</th><th>账户</th>
+            <th class="text-end">付款金额</th><th class="text-end">已核销</th>
+            <th class="text-end">未核销(预付)</th><th>摘要</th></tr>
+      </thead>
+      <tbody>
+        {% for p in pay.payments %}
+        <tr>
+          <td><a href="{% url 'payment_detail' p.pk %}">{{ p.doc_no }}</a></td>
+          <td>{{ p.doc_date }}</td>
+          <td>{{ p.bank_account }}</td>
+          <td class="text-end">{{ p.amount }}</td>
+          <td class="text-end">{{ p.settled_amount }}</td>
+          <td class="text-end">{% if p.unallocated %}<strong class="text-warning">{{ p.unallocated }}</strong>{% else %}0.00{% endif %}</td>
+          <td>{{ p.summary|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer text-muted small">
+    上方金额：已付合计 {{ pay.amount_paid }} = 发票已核销 {{ pay.amount_settled }} + 预付未核销 {{ pay.amount_prepaid }}。
+    本表只列「关联了本订单」的银行付款；若有付款未挂订单但核销了本订单发票，只计入「发票已核销」。
+  </div>
+</div>
+{% endif %}
+
+{% if pay.note_prepaids %}
+<div class="card mb-3">
+  <div class="card-header">票据背书预付<small class="text-muted ms-2">无票背书挂本订单；到票后请先撤销再背书冲发票</small></div>
+  <ul class="list-group list-group-flush">
+    {% for ns in pay.note_prepaids %}
+    <li class="list-group-item d-flex justify-content-between">
+      <span>票据 {{ ns.note_no }} · {{ ns.date|default:"—" }}</span>
+      <strong class="text-warning">{{ ns.amount }}</strong>
     </li>
     {% endfor %}
   </ul>
