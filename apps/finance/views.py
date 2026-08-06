@@ -362,8 +362,8 @@ def _export_cash_rows(name, rows, company, party_label):
 
 
 def _payment_rows(company):
-    """付款一览行：银行付款 + 应收票据背书抵应付（按票据归并）。"""
-    from .models import NoteSettlement
+    """付款一览行：银行付款 + 应收票据背书抵应付（每笔背书一行）。"""
+    from apps.opening.reports import _purchase_endorsement_settlements
     today = timezone.localdate()
     rows = []
     for p in (Payment.objects.filter(company=company)
@@ -378,32 +378,29 @@ def _payment_rows(company):
             "can_edit": payment_edit_block_reason(p, today) is None,
             "edit_url": reverse("payment_edit", args=[p.pk]),
             "delete_url": reverse("payment_delete", args=[p.pk])})
-    endos = list(NoteSettlement.objects.filter(
-        company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
-        is_endorsement=True, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE))
+    endos = list(_purchase_endorsement_settlements(company).select_related("purchase_order__supplier"))
     if endos:
         notes = {n.doc_no: n for n in NoteReceivable.objects.filter(
             company=company, doc_no__in={e.note_no for e in endos})}
-        sup_by_inv = {i.pk: (str(i.supplier) if i.supplier_id else "")
-                      for i in PurchaseInvoice.objects.filter(pk__in={e.invoice_id for e in endos})
+        inv_ids = {e.invoice_id for e in endos if e.invoice_id}
+        sup_by_inv = {i.pk: str(i.supplier)
+                      for i in PurchaseInvoice.objects.filter(pk__in=inv_ids)
                       .select_related("supplier")}
-        grp = {}
         for e in endos:
-            g = grp.setdefault(e.note_no, {"amount": Decimal("0.00"), "suppliers": set()})
-            g["amount"] += e.amount
-            s = sup_by_inv.get(e.invoice_id)
-            if s:
-                g["suppliers"].add(s)
-        for note_no, g in grp.items():
-            n = notes.get(note_no)
-            sup = sorted(g["suppliers"])
-            party = (sup[0] if len(sup) == 1
-                     else (f"{len(sup)} 个供应商" if sup else "—"))
+            n = notes.get(e.note_no)
+            if e.invoice_id:
+                party = sup_by_inv.get(e.invoice_id) or "—"
+                settled, unsettled, status = e.amount, Decimal("0.00"), "已背书"
+            elif e.purchase_order_id and e.purchase_order.supplier_id:
+                party = str(e.purchase_order.supplier)
+                settled, unsettled, status = Decimal("0.00"), e.amount, "预付未核销"
+            else:
+                party, settled, unsettled, status = "—", e.amount, Decimal("0.00"), "已背书"
             rows.append({
-                "doc_no": note_no, "date": n.draw_date if n else None,
+                "doc_no": e.note_no, "date": e.date or e.created_at.date(),
                 "method": "应收票据背书", "party": party,
-                "amount": g["amount"], "settled": g["amount"], "unsettled": Decimal("0.00"),
-                "status": n.get_status_display() if n else "已背书", "is_note": True,
+                "amount": e.amount, "settled": settled, "unsettled": unsettled,
+                "status": status, "is_note": True,
                 "detail_url": reverse("note_receivable_list"),
                 "can_edit": bool(n) and n.status != NoteReceivable.Status.VOID,
                 "edit_url": reverse("note_receivable_edit", args=[n.pk]) if n else "",

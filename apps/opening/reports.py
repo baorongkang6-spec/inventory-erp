@@ -27,6 +27,27 @@ from apps.finance.models import (
     SalesInvoice,
 )
 from apps.inventory.models import StockBalance, StockMove
+from apps.purchasing.models import PurchaseOrder
+
+
+def _purchase_note_settlement_supplier(ns, inv_supplier_map, order_supplier_map):
+    """背书抵应付归属供应商：有发票取发票供应商，无票取关联采购订单供应商。"""
+    if ns.invoice_id:
+        return inv_supplier_map.get(ns.invoice_id)
+    if ns.purchase_order_id:
+        return order_supplier_map.get(ns.purchase_order_id)
+    return None
+
+
+def _purchase_endorsement_settlements(company):
+    """应收票据背书抵应付（含无票预付；兼容旧数据 invoice_kind 为空）。"""
+    from django.db.models import Q
+    return NoteSettlement.objects.filter(
+        company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE, is_endorsement=True,
+    ).filter(
+        Q(invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
+        | Q(invoice_kind="", purchase_order__isnull=False)
+    )
 
 Z = Decimal("0.00")
 
@@ -557,7 +578,7 @@ def account_balance_table(companies, dfrom, dto):
             "supplier",
             PaymentAllocation.objects.filter(payment__company=company).select_related("invoice__supplier"),
             lambda a: a.invoice.supplier,
-            NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE),
+            _purchase_endorsement_settlements(company),
             PurchaseInvoice, dfrom, dto,
             ledger_name="payable_partner_ledger")
 
@@ -613,8 +634,17 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
         elif ad <= dto:
             d["outgo"] += a.amount
     inv_partner = {i.pk: getattr(i, partner_attr) for i in invoice_model.objects.filter(company=company)}
+    order_supplier = {}
+    if partner_attr == "supplier":
+        order_supplier = {
+            o.pk: o.supplier
+            for o in PurchaseOrder.objects.filter(company=company).select_related("supplier")
+        }
     for ns in note_settlements:
-        partner = inv_partner.get(ns.invoice_id)
+        if partner_attr == "supplier":
+            partner = _purchase_note_settlement_supplier(ns, inv_partner, order_supplier)
+        else:
+            partner = inv_partner.get(ns.invoice_id)
         if partner is None:
             continue
         d = data.setdefault(partner, _pset())
@@ -682,7 +712,7 @@ def payable_partners_balance(company, dfrom, dto):
         "supplier",
         PaymentAllocation.objects.filter(payment__company=company).select_related("invoice__supplier"),
         lambda a: a.invoice.supplier,
-        NoteSettlement.objects.filter(company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE),
+        _purchase_endorsement_settlements(company),
         PurchaseInvoice, dfrom, dto)
 
 
@@ -810,9 +840,10 @@ def partner_ledger(company, partner, kind, dfrom, dto):
         alloc_label, alloc_doc = "付款核销", lambda a: a.payment.doc_no
         alloc_url = lambda a: doc_url("Payment", a.payment_id)
         inv_url = lambda inv: doc_url("PurchaseInvoice", inv.pk)
-        notes = NoteSettlement.objects.filter(
-            company=company, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE)
+        notes = _purchase_endorsement_settlements(company)
         inv_ids = set(PurchaseInvoice.objects.filter(
+            company=company, supplier=partner).values_list("pk", flat=True))
+        order_ids = set(PurchaseOrder.objects.filter(
             company=company, supplier=partner).values_list("pk", flat=True))
         inv_label = "采购发票"
     else:
@@ -838,11 +869,21 @@ def partner_ledger(company, partner, kind, dfrom, dto):
         events.append({"date": a.date or a.created_at.date(), "kind": alloc_label,
                        "doc_no": alloc_doc(a),
                        "inc": Z, "dec": a.amount, "ref_url": alloc_url(a)})
-    for ns in notes.filter(invoice_id__in=inv_ids):
-        events.append({"date": ns.date or ns.created_at.date(), "kind": "票据抵付",
-                       "doc_no": ns.note_no,
-                       "inc": Z, "dec": ns.amount,
-                       "ref_url": invoice_url(ns.invoice_kind, ns.invoice_id)})
+    from django.db.models import Q
+    note_filter = Q(invoice_id__in=inv_ids)
+    if kind == "payable" and order_ids:
+        note_filter |= Q(purchase_order_id__in=order_ids, invoice_id__isnull=True)
+    for ns in notes.filter(note_filter).select_related("purchase_order"):
+        if ns.invoice_id:
+            events.append({"date": ns.date or ns.created_at.date(), "kind": "票据抵付",
+                           "doc_no": ns.invoice_no or ns.note_no,
+                           "inc": Z, "dec": ns.amount,
+                           "ref_url": invoice_url(ns.invoice_kind, ns.invoice_id)})
+        else:
+            events.append({"date": ns.date or ns.created_at.date(), "kind": "票据背书预付",
+                           "doc_no": ns.purchase_order.doc_no if ns.purchase_order_id else ns.note_no,
+                           "inc": Z, "dec": ns.amount,
+                           "ref_url": doc_url("PurchaseOrder", ns.purchase_order_id)})
     from apps.finance.models import PartnerOffset, PartnerOffsetAPLine, PartnerOffsetARLine
     from django.urls import reverse
     if kind == "payable":
@@ -1255,17 +1296,26 @@ def note_ledger(company, note, dfrom, dto):
     核销应收(冲应收账款)是票收进来抵应收、不消耗票面，不影响未用余额，故不在本表减项；
     其与发票的勾稽见对应发票「核销明细」。
     """
-    from apps.core.docrefs import invoice_url
+    from apps.core.docrefs import doc_url, invoice_url
     events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
                "inc": note.amount, "dec": Z, "ref_url": "", "is_opening": note.is_opening}]
-    for s in NoteSettlement.objects.filter(company=company, note_id=note.pk,
-                                           note_kind=NoteSettlement.NoteKind.RECEIVABLE,
-                                           is_endorsement=True):
+    for s in (NoteSettlement.objects.filter(company=company, note_id=note.pk,
+                                            note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+                                            is_endorsement=True)
+              .select_related("purchase_order")):
+        if s.invoice_id:
+            ref_url = invoice_url(s.invoice_kind, s.invoice_id)
+            doc_no = s.invoice_no
+            kind = "背书抵应付"
+        elif s.purchase_order_id:
+            ref_url = doc_url("PurchaseOrder", s.purchase_order_id)
+            doc_no = s.purchase_order.doc_no
+            kind = "背书预付"
+        else:
+            ref_url, doc_no, kind = "", s.invoice_no or "—", "背书抵应付"
         events.append({"date": s.date or s.created_at.date(),
-                       "kind": "背书抵应付",
-                       "doc_no": s.invoice_no, "inc": Z, "dec": s.amount,
-                       "ref_url": invoice_url(s.invoice_kind, s.invoice_id),
-                       "settlement_id": s.pk})
+                       "kind": kind, "doc_no": doc_no, "inc": Z, "dec": s.amount,
+                       "ref_url": ref_url, "settlement_id": s.pk})
     for d in NoteDisposal.objects.filter(note=note).select_related("bank_account"):
         events.append({"date": d.date, "kind": d.get_kind_display(),
                        "doc_no": str(d.bank_account), "inc": Z, "dec": d.amount,

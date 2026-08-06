@@ -860,7 +860,7 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         settle_date = getattr(note, "draw_date", None)
         NoteSettlement.objects.create(
             company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
-            invoice_kind="", invoice_id=None, invoice_no="",
+            invoice_kind=NoteSettlement.InvoiceKind.PURCHASE, invoice_id=None, invoice_no="",
             amount=total, is_endorsement=True, purchase_order=purchase_order, date=settle_date,
         )
         note.settled_amount += total

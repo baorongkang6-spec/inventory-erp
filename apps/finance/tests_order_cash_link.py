@@ -53,6 +53,46 @@ class NoteEndorsePrepaidOrderTests(TestCase):
         self.assertEqual(s["amount_prepaid"], Decimal("500.00"))
         self.assertEqual(len(s["note_prepaids"]), 1)
 
+    def test_prepaid_endorsement_in_payable_balance_and_payment_list(self):
+        from apps.finance.services import create_note_receivable
+        from apps.opening.reports import payable_partners_balance, partner_ledger
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        from django.test import Client
+        from django.urls import reverse
+
+        note2 = create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 8, 2),
+            amount=Decimal("500"), note_no="N002", due_date=date(2026, 12, 1),
+        )
+        endorse_receivable_against_purchase(
+            note=note2, allocations=[], user=None,
+            purchase_order=self.order, prepaid_amount=Decimal("500"),
+        )
+        rows = payable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
+        r = next(x for x in rows if x["partner"] == self.sup)
+        self.assertEqual(r["outgo"], Decimal("500.00"))
+        self.assertEqual(r["ending"], Decimal("-500.00"))
+        d = partner_ledger(self.c1, self.sup, "payable", date(2026, 8, 1), date(2026, 8, 31))
+        self.assertEqual(len(d["rows"]), 1)
+        self.assertEqual(d["rows"][0]["kind"], "票据背书预付")
+        self.assertEqual(d["rows"][0]["doc_no"], self.order.doc_no)
+
+        user = get_user_model().objects.create_user(
+            username="paylist", password="x", can_view_all_companies=True)
+        user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="finance", codename="view_payment"))
+        client = Client()
+        client.force_login(user)
+        session = client.session
+        session["active_company_id"] = self.c1.pk
+        session.save()
+        h = client.get(reverse("payment_list")).content.decode()
+        self.assertIn("应收票据背书", h)
+        self.assertIn("供应商甲", h)
+        self.assertIn("500.00", h)
+        self.assertIn("预付未核销", h)
+
 
 class ReceiptSalesOrderTests(TestCase):
     @classmethod
