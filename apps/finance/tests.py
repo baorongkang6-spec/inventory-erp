@@ -788,6 +788,29 @@ class NoteDrilldownTests(TestCase):
         self.assertEqual(d["ending"], Decimal("400.00"))
         self.assertEqual(d["rows"][-1]["balance"], Decimal("400.00"))
 
+    def test_overview_matches_notes_balance_on_business_date(self):
+        """总览应收票据须与余额表同口径（按背书业务日，不按 created_at）。"""
+        from django.utils import timezone
+        from apps.finance.models import NoteSettlement
+        from apps.opening.reports import company_overview, receivable_notes_balance
+
+        # 模拟：业务日在 6 月，操作日（created_at）落在 7 月
+        s = NoteSettlement.objects.get(note_id=self.note.pk, is_endorsement=True)
+        NoteSettlement.objects.filter(pk=s.pk).update(
+            created_at=timezone.make_aware(
+                timezone.datetime(2026, 7, 15, 12, 0, 0)))
+        dfrom, dto = date(2026, 6, 1), date(2026, 6, 30)
+        rows = receivable_notes_balance(self.c1, dfrom, dto)
+        ov = company_overview(self.c1, dfrom, dto)["note_recv"]
+        self.assertEqual(ov["outgo"], rows[0]["outgo"])
+        self.assertEqual(ov["ending"], rows[0]["ending"])
+        self.assertEqual(ov["outgo"], Decimal("600.00"))
+        # 7 月区间不应再把这笔背书算作本期发出
+        ov7 = company_overview(self.c1, date(2026, 7, 1), date(2026, 7, 31))["note_recv"]
+        self.assertEqual(ov7["outgo"], Decimal("0.00"))
+        self.assertEqual(ov7["opening"], Decimal("400.00"))
+        self.assertEqual(ov7["ending"], Decimal("400.00"))
+
 
 class BankAccountsReportTests(TestCase):
     """银行存款分户余额表（总览下钻第一层）。"""

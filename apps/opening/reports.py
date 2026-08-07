@@ -130,16 +130,14 @@ def company_overview(company, dfrom, dto):
                                dfrom, dto)
     _add_opening(receivable, _s(ar_all.filter(is_opening=True), "amount_taxed"))
 
-    # 应收票据：期初票据(is_opening)恒计期初；增=本期出票；减=票据「出去」(背书/托收)。
-    # 核销应收(is_endorsement=False)是票收进来抵应收账款、不消耗票面，不在此减。
-    nr_all = NoteReceivable.objects.filter(company=company).exclude(status=NoteReceivable.Status.VOID)
-    nr = nr_all.filter(is_opening=False)
-    nr_use = NoteSettlement.objects.filter(company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
-                                           is_endorsement=True)
-    nr_disp = NoteDisposal.objects.filter(company=company)   # 兑付/贴现也是票出去
-    note_recv = _merge_period(nr, "draw_date", "amount",
-                              [(nr_use, "created_at__date"), (nr_disp, "date")], dfrom, dto)
-    _add_opening(note_recv, _s(nr_all.filter(is_opening=True), "amount"))
+    # 应收票据：与应收票据余额表同口径（减项按背书/兑付业务日 date，不用 created_at）
+    nr_rows = receivable_notes_balance(company, dfrom, dto)
+    note_recv = _row(
+        sum((r["opening"] for r in nr_rows), Z),
+        sum((r["income"] for r in nr_rows), Z),
+        sum((r["outgo"] for r in nr_rows), Z),
+        sum((r["ending"] for r in nr_rows), Z),
+    )
 
     return {"bank": bank, "stock": stock, "goods_shipped": goods_shipped,
             "payable": payable, "ap_accrual": ap_accrual,
