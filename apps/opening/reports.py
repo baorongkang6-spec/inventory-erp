@@ -23,6 +23,7 @@ from apps.finance.models import (
     NoteSettlement,
     PaymentAllocation,
     PurchaseInvoice,
+    Receipt,
     ReceiptAllocation,
     SalesInvoice,
 )
@@ -37,6 +38,59 @@ def _purchase_note_settlement_supplier(ns, inv_supplier_map, order_supplier_map)
     if ns.purchase_order_id:
         return order_supplier_map.get(ns.purchase_order_id)
     return None
+
+
+def _unapplied_ar_events(company):
+    """未核销到销售发票的收款：银行收款未分配额 + 非期初收票未冲应收额。
+
+    收票分录为借应收票据/贷应收账款；即使未勾发票，也应减少该客户应收（多收=预收）。
+    已冲发票的部分仍由 NoteSettlement 计入，此处只补「票面−已冲应收」以免重复。
+    期初导入票据不计入（期初应收已单独导入）。
+    """
+    from django.urls import reverse
+    from apps.core.docrefs import doc_url
+
+    events = []
+    for rec in (Receipt.objects.filter(company=company, status=Receipt.Status.POSTED)
+                .exclude(customer_id=None).select_related("customer")):
+        leftover = rec.amount - rec.settled_amount
+        if leftover > 0:
+            events.append({
+                "partner": rec.customer, "date": rec.doc_date, "amount": leftover,
+                "kind": "收款预收", "doc_no": rec.doc_no,
+                "ref_url": doc_url("Receipt", rec.pk),
+            })
+    applied = {
+        r["note_id"]: r["s"]
+        for r in (NoteSettlement.objects.filter(
+            company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            is_endorsement=False)
+            .values("note_id").annotate(s=Sum("amount")))
+    }
+    for n in (NoteReceivable.objects.filter(company=company, is_opening=False)
+              .exclude(status=NoteReceivable.Status.VOID)
+              .exclude(customer_id=None)
+              .select_related("customer")):
+        leftover = n.amount - (applied.get(n.pk) or Z)
+        if leftover > 0:
+            events.append({
+                "partner": n.customer, "date": n.draw_date, "amount": leftover,
+                "kind": "收票预收", "doc_no": n.doc_no,
+                "ref_url": (reverse("receivable_note_ledger")
+                            + f"?company={company.pk}&note={n.pk}&all=1"),
+            })
+    return events
+
+
+def _fold_unapplied_ar(row, events, dfrom, dto):
+    """把未核销收款/收票折进 期初/本期减/期末。"""
+    for ev in events:
+        if ev["date"] < dfrom:
+            row["opening"] -= ev["amount"]
+        elif ev["date"] <= dto:
+            row["outgo"] += ev["amount"]
+    row["ending"] = row["opening"] + row["income"] - row["outgo"]
+    return row
 
 
 def _purchase_endorsement_settlements(company):
@@ -117,7 +171,8 @@ def company_overview(company, dfrom, dto):
     # 应付账款-暂估（不含税）：增=本期外部采购入库；减=本期收票对应入库不含税
     ap_accrual = ap_accrual_period(company, dfrom, dto)
 
-    # 客户往来（应收）：期初发票恒计期初；增=本期销售发票；减=收款核销+应收票据冲应收+往来对冲
+    # 客户往来（应收）：期初发票恒计期初；增=本期销售发票；
+    # 减=收款核销+应收票据冲应收+往来对冲+未核销收款/收票（预收）
     ar_all = SalesInvoice.objects.filter(company=company, status=SalesInvoice.Status.REGISTERED)
     ar_inv = ar_all.filter(is_opening=False)
     ar_rec = ReceiptAllocation.objects.filter(receipt__company=company)
@@ -129,6 +184,7 @@ def company_overview(company, dfrom, dto):
                                [(ar_rec, "date"), (ar_note, "date"), (ar_off, "offset__doc_date")],
                                dfrom, dto)
     _add_opening(receivable, _s(ar_all.filter(is_opening=True), "amount_taxed"))
+    _fold_unapplied_ar(receivable, _unapplied_ar_events(company), dfrom, dto)
 
     # 应收票据：与应收票据余额表同口径（减项按背书/兑付业务日 date，不用 created_at）
     nr_rows = receivable_notes_balance(company, dfrom, dto)
@@ -676,6 +732,13 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
                 d["opening"] -= ln.amount
             elif od <= dto:
                 d["outgo"] += ln.amount
+        for ev in _unapplied_ar_events(company):
+            partner = ev["partner"]
+            d = data.setdefault(partner, _pset())
+            if ev["date"] < dfrom:
+                d["opening"] -= ev["amount"]
+            elif ev["date"] <= dto:
+                d["outgo"] += ev["amount"]
     rows = []
     for partner, d in sorted(data.items(), key=lambda kv: kv[0].code):
         ending = d["opening"] + d["income"] - d["outgo"]
@@ -903,6 +966,13 @@ def partner_ledger(company, partner, kind, dfrom, dto):
                 "date": ln.offset.doc_date, "kind": "往来对冲",
                 "doc_no": ln.offset.doc_no, "inc": Z, "dec": ln.amount,
                 "ref_url": reverse("partner_offset_detail", args=[ln.offset_id]),
+            })
+        for ev in _unapplied_ar_events(company):
+            if ev["partner"].pk != partner.pk:
+                continue
+            events.append({
+                "date": ev["date"], "kind": ev["kind"], "doc_no": ev["doc_no"],
+                "inc": Z, "dec": ev["amount"], "ref_url": ev["ref_url"],
             })
 
     opening = Z

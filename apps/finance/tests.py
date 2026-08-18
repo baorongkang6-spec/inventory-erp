@@ -751,6 +751,81 @@ class PartnerDrilldownTests(TestCase):
         self.assertEqual(d["ending"], Decimal("630.00"))
 
 
+class UnappliedARCollectionTests(TestCase):
+    """收票/收款未勾销售发票时，仍应按客户减少应收（多收=预收/期末可为负）。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货A")
+        cls.acc = BankAccount.objects.create(company=cls.c1, name="基本户",
+                                             opening_balance=Decimal("100000"))
+
+    def test_note_receipt_without_invoice_reduces_ar(self):
+        from apps.finance.services import create_note_receivable
+        from apps.opening.reports import receivable_partners_balance, partner_ledger, company_overview
+        create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 8, 6),
+            amount=Decimal("1640000"), customer=self.cust, note_no="N164",
+        )
+        rows = receivable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
+        r = next(x for x in rows if x["partner"] == self.cust)
+        self.assertEqual(r["opening"], Decimal("0.00"))
+        self.assertEqual(r["income"], Decimal("0.00"))
+        self.assertEqual(r["outgo"], Decimal("1640000.00"))
+        self.assertEqual(r["ending"], Decimal("-1640000.00"))
+        d = partner_ledger(self.c1, self.cust, "receivable", date(2026, 8, 1), date(2026, 8, 31))
+        self.assertEqual(d["outgo"], Decimal("1640000.00"))
+        self.assertEqual(d["rows"][0]["kind"], "收票预收")
+        ov = company_overview(self.c1, date(2026, 8, 1), date(2026, 8, 31))["receivable"]
+        self.assertEqual(ov["outgo"], Decimal("1640000.00"))
+        self.assertEqual(ov["ending"], Decimal("-1640000.00"))
+
+    def test_note_then_settle_invoice_no_double_count(self):
+        from apps.finance.services import (
+            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+        )
+        from apps.opening.reports import receivable_partners_balance
+        inv = create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 8, 1), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0")}])
+        note = create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 8, 6),
+            amount=Decimal("1640"), customer=self.cust, note_no="N2",
+        )
+        settle_receivable_against_sales(
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("1000")}])
+        r = next(x for x in receivable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
+                 if x["partner"] == self.cust)
+        self.assertEqual(r["income"], Decimal("1000.00"))
+        self.assertEqual(r["outgo"], Decimal("1640.00"))  # 核销1000 + 未冲640，不重复
+        self.assertEqual(r["ending"], Decimal("-640.00"))
+
+    def test_unallocated_bank_receipt_reduces_ar(self):
+        from apps.finance.services import create_receipt
+        from apps.opening.reports import receivable_partners_balance
+        create_receipt(
+            company=self.c1, user=None, doc_date=date(2026, 8, 10),
+            bank_account=self.acc, customer=self.cust, amount=Decimal("500"),
+        )
+        r = next(x for x in receivable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
+                 if x["partner"] == self.cust)
+        self.assertEqual(r["outgo"], Decimal("500.00"))
+        self.assertEqual(r["ending"], Decimal("-500.00"))
+
+    def test_opening_note_not_counted_until_settled(self):
+        from apps.finance.services import create_note_receivable
+        from apps.opening.reports import receivable_partners_balance
+        create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 7, 1),
+            amount=Decimal("800"), customer=self.cust, note_no="OPEN", is_opening=True,
+        )
+        rows = receivable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
+        self.assertFalse(any(x["partner"] == self.cust for x in rows))
+
+
 class NoteDrilldownTests(TestCase):
     """应收票据两级下钻（M9-4）：票据余额表 + 使用明细。"""
 
