@@ -53,7 +53,7 @@ def _unapplied_ar_events(company):
     events = []
     for rec in (Receipt.objects.filter(company=company, status=Receipt.Status.POSTED)
                 .exclude(customer_id=None).select_related("customer")):
-        leftover = rec.amount - rec.settled_amount
+        leftover = round_money(rec.amount - rec.settled_amount)
         if leftover > 0:
             events.append({
                 "partner": rec.customer, "date": rec.doc_date, "amount": leftover,
@@ -61,7 +61,7 @@ def _unapplied_ar_events(company):
                 "ref_url": doc_url("Receipt", rec.pk),
             })
     applied = {
-        r["note_id"]: r["s"]
+        r["note_id"]: round_money(r["s"] or 0)
         for r in (NoteSettlement.objects.filter(
             company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
             is_endorsement=False)
@@ -71,7 +71,7 @@ def _unapplied_ar_events(company):
               .exclude(status=NoteReceivable.Status.VOID)
               .exclude(customer_id=None)
               .select_related("customer")):
-        leftover = n.amount - (applied.get(n.pk) or Z)
+        leftover = round_money(n.amount - (applied.get(n.pk) or Z))
         if leftover > 0:
             events.append({
                 "partner": n.customer, "date": n.draw_date, "amount": leftover,
@@ -89,7 +89,9 @@ def _fold_unapplied_ar(row, events, dfrom, dto):
             row["opening"] -= ev["amount"]
         elif ev["date"] <= dto:
             row["outgo"] += ev["amount"]
-    row["ending"] = row["opening"] + row["income"] - row["outgo"]
+    row["opening"] = round_money(row["opening"])
+    row["outgo"] = round_money(row["outgo"])
+    row["ending"] = round_money(row["opening"] + row["income"] - row["outgo"])
     return row
 
 
@@ -741,10 +743,13 @@ def _partner_balance(company, invoices, partner_attr, allocations, alloc_partner
                 d["outgo"] += ev["amount"]
     rows = []
     for partner, d in sorted(data.items(), key=lambda kv: kv[0].code):
-        ending = d["opening"] + d["income"] - d["outgo"]
-        if d["opening"] or d["income"] or d["outgo"] or ending:
-            rows.append({"partner": partner, "opening": d["opening"], "income": d["income"],
-                         "outgo": d["outgo"], "ending": ending})
+        opening = round_money(d["opening"])
+        income = round_money(d["income"])
+        outgo = round_money(d["outgo"])
+        ending = round_money(opening + income - outgo)
+        if opening or income or outgo or ending:
+            rows.append({"partner": partner, "opening": opening, "income": income,
+                         "outgo": outgo, "ending": ending})
     return rows
 
 
@@ -983,14 +988,15 @@ def partner_ledger(company, partner, kind, dfrom, dto):
         elif e["date"] <= dto:
             period.append(e)
     period.sort(key=lambda e: (e["date"], 0 if e["inc"] else 1))
+    opening = round_money(opening)
     bal, income, outgo, rows = opening, Z, Z, []
     for e in period:
-        bal += e["inc"] - e["dec"]
-        income += e["inc"]
-        outgo += e["dec"]
+        bal = round_money(bal + e["inc"] - e["dec"])
+        income = round_money(income + e["inc"])
+        outgo = round_money(outgo + e["dec"])
         rows.append({**e, "balance": bal})
     return {"opening": opening, "rows": rows, "income": income, "outgo": outgo,
-            "ending": opening + income - outgo}
+            "ending": round_money(opening + income - outgo)}
 
 
 def sales_revenue_cost_by_outbound(company, dfrom, dto):

@@ -427,8 +427,9 @@ def _receipt_rows(company):
     from django.db.models import Sum
     from .models import NoteSettlement
     from .services import note_receivable_delete_block_reason
+    from apps.core.money import round_money
     ar_applied = {
-        r["note_id"]: r["s"]
+        r["note_id"]: round_money(r["s"] or 0)
         for r in (NoteSettlement.objects.filter(
             company=company, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
             is_endorsement=False).values("note_id").annotate(s=Sum("amount")))
@@ -439,7 +440,7 @@ def _receipt_rows(company):
         rows.append({
             "doc_no": n.doc_no, "date": n.draw_date, "method": "应收票据",
             "party": str(n.customer) if n.customer_id else "—",
-            "amount": n.amount, "settled": settled_ar, "unsettled": n.amount - settled_ar,
+            "amount": n.amount, "settled": settled_ar, "unsettled": round_money(n.amount - settled_ar),
             "status": n.get_status_display(), "is_note": True,
             "detail_url": reverse("note_receivable_list"),
             "can_edit": n.status != NoteReceivable.Status.VOID,

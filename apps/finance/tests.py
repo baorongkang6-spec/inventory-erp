@@ -825,6 +825,32 @@ class UnappliedARCollectionTests(TestCase):
         rows = receivable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
         self.assertFalse(any(x["partner"] == self.cust for x in rows))
 
+    def test_partial_note_settle_amounts_are_two_decimals(self):
+        """SQLite SUM 浮点不得把预收差额带成长尾小数。"""
+        from apps.finance.services import (
+            create_note_receivable, create_sales_invoice, settle_receivable_against_sales,
+        )
+        from apps.opening.reports import partner_ledger, receivable_partners_balance
+        inv = create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 8, 1), customer=self.cust,
+            lines=[{"product": self.p, "description": "", "amount_untaxed": Decimal("438460.18"),
+                    "tax_rate": Decimal("0")}])
+        note = create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 8, 6),
+            amount=Decimal("480000.00"), customer=self.cust, note_no="N480",
+        )
+        settle_receivable_against_sales(
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("438460.18")}])
+        r = next(x for x in receivable_partners_balance(self.c1, date(2026, 8, 1), date(2026, 8, 31))
+                 if x["partner"] == self.cust)
+        self.assertEqual(r["outgo"], Decimal("480000.00"))
+        self.assertEqual(r["ending"].as_tuple().exponent, -2)
+        d = partner_ledger(self.c1, self.cust, "receivable", date(2026, 8, 1), date(2026, 8, 31))
+        prepaid = next(x for x in d["rows"] if x["kind"] == "收票预收")
+        self.assertEqual(prepaid["dec"], Decimal("41539.82"))
+        self.assertEqual(prepaid["balance"], Decimal("-41539.82"))
+        self.assertEqual(str(prepaid["dec"]), "41539.82")
+
 
 class NoteDrilldownTests(TestCase):
     """应收票据两级下钻（M9-4）：票据余额表 + 使用明细。"""
