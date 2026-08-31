@@ -364,6 +364,7 @@ def _export_cash_rows(name, rows, company, party_label):
 def _payment_rows(company):
     """付款一览行：银行付款 + 应收票据背书抵应付（每笔背书一行）。"""
     from apps.opening.reports import _purchase_endorsement_settlements
+    from .services import note_settlement_business_date
     today = timezone.localdate()
     rows = []
     for p in (Payment.objects.filter(company=company)
@@ -397,7 +398,8 @@ def _payment_rows(company):
             else:
                 party, settled, unsettled, status = "—", e.amount, Decimal("0.00"), "已背书"
             rows.append({
-                "doc_no": e.note_no, "date": e.date or e.created_at.date(),
+                "doc_no": e.note_no,
+                "date": note_settlement_business_date(e, draw_date=n.draw_date if n else None),
                 "method": "应收票据背书", "party": party,
                 "amount": e.amount, "settled": settled, "unsettled": unsettled,
                 "status": status, "is_note": True,

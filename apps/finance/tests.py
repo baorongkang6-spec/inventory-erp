@@ -871,8 +871,9 @@ class NoteDrilldownTests(TestCase):
         pi = create_purchase_invoice(company=cls.c1, user=None, doc_date=date(2026, 6, 18),
             supplier=cls.sup, lines=[{"product": None, "description": "货",
                                       "amount_untaxed": Decimal("600"), "tax_rate": Decimal("0")}])
-        endorse_receivable_against_purchase(note=cls.note,
-                                            allocations=[{"invoice": pi, "amount": Decimal("600")}])
+        endorse_receivable_against_purchase(
+            note=cls.note, allocations=[{"invoice": pi, "amount": Decimal("600")}],
+            settle_date=date(2026, 6, 18))
 
     def test_notes_balance(self):
         from apps.opening.reports import receivable_notes_balance
@@ -2033,6 +2034,53 @@ class InvoiceSettlementBreakdownTests(TestCase):
         self.assertIn("核销明细", html)
         self.assertIn("应收票据背书抵付", html)     # 核销方式标明是背书
         self.assertIn("YSP-C1-20260611-005", html)  # 指向那张票据
+
+
+class EndorsementBusinessDateTests(TestCase):
+    """历史背书误存出票日时，业务日应回退为登记日。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C3", name="鸿威达", short_name="鸿威达")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
+        cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
+
+    def test_business_date_when_stored_draw_before_registration(self):
+        from django.utils import timezone
+        from apps.finance.services import note_settlement_business_date
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C3-20260730-003", note_no="BJ-C3",
+            draw_date=date(2026, 7, 30), customer=self.cust, amount=Decimal("1000"))
+        ns = NoteSettlement.objects.create(
+            company=self.c1, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            note_id=note.pk, note_no=note.doc_no, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+            invoice_id=None, invoice_no="", amount=Decimal("500"), is_endorsement=True,
+            date=date(2026, 7, 30))
+        reg = timezone.make_aware(timezone.datetime(2026, 8, 15, 10, 0, 0))
+        NoteSettlement.objects.filter(pk=ns.pk).update(created_at=reg)
+        ns.refresh_from_db()
+        self.assertEqual(
+            note_settlement_business_date(ns, draw_date=note.draw_date), date(2026, 8, 15))
+
+    def test_migration_fixes_stored_draw_to_registration(self):
+        import importlib
+        from django.utils import timezone
+        from django.apps import apps as django_apps
+        fix_mod = importlib.import_module(
+            "apps.finance.migrations.0031_fixup_endorsement_settlement_dates")
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C3-20260713-004", note_no="BJ-C3-2",
+            draw_date=date(2026, 7, 13), customer=self.cust, amount=Decimal("800"))
+        ns = NoteSettlement.objects.create(
+            company=self.c1, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            note_id=note.pk, note_no=note.doc_no, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+            invoice_id=None, invoice_no="", amount=Decimal("800"), is_endorsement=True,
+            date=date(2026, 7, 13))
+        NoteSettlement.objects.filter(pk=ns.pk).update(
+            created_at=timezone.make_aware(timezone.datetime(2026, 8, 20, 9, 0, 0)))
+        fix_mod.fix_endorsement_dates(django_apps, None)
+        ns.refresh_from_db()
+        self.assertEqual(ns.date, date(2026, 8, 20))
 
 
 class UnifiedCashListTests(TestCase):
