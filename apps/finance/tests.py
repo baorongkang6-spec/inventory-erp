@@ -11,6 +11,7 @@ from apps.finance.models import (  # noqa: F401
     BankJournal,
     NotePayable,
     NoteReceivable,
+    NoteSettlement,
     Payment,
     PurchaseInvoice,
     Receipt,
@@ -1324,7 +1325,7 @@ class ReceiptPaymentByNoteTests(TestCase):
         cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
         cls.user = U.objects.create_user(username="cashier", password="x",
                                          can_view_all_companies=True)
-        for code in ("add_receipt", "add_payment", "view_notereceivable"):
+        for code in ("add_receipt", "add_payment", "view_payment", "view_notereceivable"):
             cls.user.user_permissions.add(
                 Permission.objects.get(content_type__app_label="finance", codename=code))
 
@@ -1375,6 +1376,8 @@ class ReceiptPaymentByNoteTests(TestCase):
         self.assertEqual(note.unused, Decimal("1000.00"))
         inv.refresh_from_db()
         self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应收 600 已冲平
+        ns = NoteSettlement.objects.get(note_id=note.pk)
+        self.assertEqual(ns.date, date(2026, 6, 10))                 # 冲应收业务日=收款登记日
 
     def test_payment_by_note_endorses_to_purchase(self):
         # 先有一张在手应收票据，再用它背书抵采购应付
@@ -1398,6 +1401,8 @@ class ReceiptPaymentByNoteTests(TestCase):
         inv.refresh_from_db()
         self.assertEqual(inv.outstanding, Decimal("0.00"))           # 应付已冲平
         self.assertEqual(BankJournal.objects.filter(company=self.c1).count(), 0)
+        ns = NoteSettlement.objects.get(note_id=note.pk, invoice_id=inv.pk)
+        self.assertEqual(ns.date, date(2026, 6, 10))                 # 业务日=付款登记日，非出票日
 
     def test_payment_by_note_amount_must_match_allocations(self):
         NoteReceivable.objects.create(

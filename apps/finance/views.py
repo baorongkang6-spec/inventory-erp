@@ -615,7 +615,7 @@ def _handle_payment_by_note(request, company, cd, inv_candidates):
         return None
     try:
         kwargs = dict(note=note, allocations=allocations, user=request.user,
-                      purchase_order=cd.get("purchase_order"))
+                      purchase_order=cd.get("purchase_order"), settle_date=cd["doc_date"])
         if not allocations:
             kwargs["prepaid_amount"] = amount
         endorse_receivable_against_purchase(**kwargs)
@@ -672,7 +672,8 @@ def payment_edit(request, pk):
                             old_no = pay.doc_no
                             delete_payment(pay, user=request.user)
                             kw = dict(note=note, allocations=allocations, user=request.user,
-                                      purchase_order=cd.get("purchase_order"))
+                                      purchase_order=cd.get("purchase_order"),
+                                      settle_date=cd["doc_date"])
                             if not allocations:
                                 kw["prepaid_amount"] = amount
                             endorse_receivable_against_purchase(**kw)
@@ -1126,7 +1127,8 @@ def _create_note_receipt(request, company, cd, amount, allocations):
         amount=amount, customer=cd["customer"], note_no=cd["note_no"],
         due_date=cd["due_date"], remark=cd.get("summary", ""))
     if allocations:
-        settle_receivable_against_sales(note=note, allocations=allocations, user=request.user)
+        settle_receivable_against_sales(
+            note=note, allocations=allocations, user=request.user, settle_date=cd["doc_date"])
     return note
 
 
@@ -2403,7 +2405,8 @@ def _note_settle(request, *, note, candidates, service, title, hint, redirect_to
                     break
         else:
             try:
-                service(note=note, allocations=allocations, user=request.user)
+                service(note=note, allocations=allocations, user=request.user,
+                        settle_date=timezone.localdate())
             except SettlementError as e:
                 messages.error(request, f"冲销失败：{e}")
             else:

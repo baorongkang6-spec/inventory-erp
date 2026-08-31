@@ -811,7 +811,8 @@ def note_has_usage(note) -> bool:
 
 
 def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
-                is_endorsement, user, purchase_order=None, prepaid_amount=None):
+                is_endorsement, user, purchase_order=None, prepaid_amount=None,
+                settle_date=None):
     """票据冲销通用核心：把票据冲抵若干发票未核销额。
 
     口径（关键）：
@@ -857,11 +858,11 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
             raise SettlementError("预付金额必须大于 0")
         if total > note.unused:
             raise SettlementError(f"预付金额 {total} 超过票据未用额 {note.unused}")
-        settle_date = getattr(note, "draw_date", None)
+        biz_date = settle_date or getattr(note, "draw_date", None)
         NoteSettlement.objects.create(
             company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
             invoice_kind=NoteSettlement.InvoiceKind.PURCHASE, invoice_id=None, invoice_no="",
-            amount=total, is_endorsement=True, purchase_order=purchase_order, date=settle_date,
+            amount=total, is_endorsement=True, purchase_order=purchase_order, date=biz_date,
         )
         note.settled_amount += total
         if note.unused == 0:
@@ -885,13 +886,13 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
         if total > room:
             raise SettlementError(f"核销应收合计 {total} 超过票据可抵应收额 {room}")
 
-    settle_date = getattr(note, "draw_date", None)
+    biz_date = settle_date or getattr(note, "draw_date", None)
     for inv, amount in cleaned:
         NoteSettlement.objects.create(
             company=note.company, note_kind=note_kind, note_id=note.pk, note_no=note.doc_no,
             invoice_kind=invoice_kind, invoice_id=inv.pk, invoice_no=inv.doc_no,
             amount=amount, is_endorsement=is_endorsement,
-            purchase_order=purchase_order if is_endorsement else None, date=settle_date,
+            purchase_order=purchase_order if is_endorsement else None, date=biz_date,
         )
         inv.settled_amount += amount
         inv.save(update_fields=["settled_amount"])
@@ -923,37 +924,39 @@ def _apply_note(*, note, note_kind, invoice_model, invoice_kind, allocations,
 
 
 @transaction.atomic
-def settle_receivable_against_sales(*, note, allocations, user=None):
+def settle_receivable_against_sales(*, note, allocations, user=None, settle_date=None):
     """应收票据 → 核销应收账款（冲销售发票）。"""
     return _apply_note(
         note=note, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
         invoice_model=SalesInvoice, invoice_kind=NoteSettlement.InvoiceKind.SALES,
-        allocations=allocations, is_endorsement=False, user=user,
+        allocations=allocations, is_endorsement=False, user=user, settle_date=settle_date,
     )
 
 
 @transaction.atomic
 def endorse_receivable_against_purchase(*, note, allocations, user=None,
-                                        purchase_order=None, prepaid_amount=None):
+                                        purchase_order=None, prepaid_amount=None,
+                                        settle_date=None):
     """应收票据 → 背书转让给供应商抵付应付账款（冲采购发票）；可挂采购订单。
 
     allocations 为空且提供 purchase_order + prepaid_amount 时记无票预付背书。
+    settle_date 为背书业务日（付款登记 doc_date）；未传则回退票据出票日。
     """
     return _apply_note(
         note=note, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
         invoice_model=PurchaseInvoice, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
         allocations=allocations, is_endorsement=True, user=user,
-        purchase_order=purchase_order, prepaid_amount=prepaid_amount,
+        purchase_order=purchase_order, prepaid_amount=prepaid_amount, settle_date=settle_date,
     )
 
 
 @transaction.atomic
-def settle_payable_against_purchase(*, note, allocations, user=None):
+def settle_payable_against_purchase(*, note, allocations, user=None, settle_date=None):
     """应付票据 → 抵减应付账款（冲采购发票）。"""
     return _apply_note(
         note=note, note_kind=NoteSettlement.NoteKind.PAYABLE,
         invoice_model=PurchaseInvoice, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
-        allocations=allocations, is_endorsement=False, user=user,
+        allocations=allocations, is_endorsement=False, user=user, settle_date=settle_date,
     )
 
 
