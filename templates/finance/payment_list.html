@@ -14,14 +14,16 @@
   <div class="table-responsive">
     <table class="table table-hover table-striped mb-0 align-middle">
       <thead class="table-light">
-        <tr><th>单据编号</th><th>日期</th><th>付款方式</th><th>{{ party_label }}</th>
+        <tr><th>单号 / 票据号</th><th>日期</th><th>付款方式</th><th>{{ party_label }}</th>
             <th class="text-end">付款金额</th><th class="text-end">已核销</th>
             <th class="text-end">未核销</th><th>状态</th><th class="text-end">操作</th></tr>
       </thead>
       <tbody>
         {% for r in rows %}
         <tr>
-          <td>{% if r.detail_url %}<a href="{{ r.detail_url }}">{{ r.doc_no }}</a>{% else %}{{ r.doc_no }}{% endif %}</td>
+          <td>{% if r.detail_url %}<a href="{{ r.detail_url }}"
+             {% if r.is_note %}title="查看票据 {{ r.doc_no }} 的本次背书明细（本行金额=本次背书额，票面见应收票据）"{% endif %}
+             >{{ r.doc_no }}</a>{% else %}{{ r.doc_no }}{% endif %}</td>
           <td>{{ r.date|date:"Y年n月j日" }}</td>
           <td>{% if r.is_note %}<span class="badge text-bg-info">{{ r.method }}</span>{% else %}{{ r.method }}{% endif %}</td>
           <td>{{ r.party }}</td>
@@ -59,5 +61,9 @@
     </table>
   </div>
 </div>
-<p class="text-muted small mt-2">「付款方式」为<strong>应收票据背书</strong>的行来自票据背书抵应付（不产生付款单、不记银行日记账），可就地「修改」补录票据信息；作废请到「资金 ▸ 应收票据」。</p>
+<p class="text-muted small mt-2">
+  银行付款行：单号为付款单号，日期为付款登记日，金额即付款额。<br>
+  <strong>应收票据背书</strong>行：无独立付款单；「单号 / 票据号」为<strong>票据编号</strong>（同一票可分次背书，故可重复出现），
+  日期为<strong>本次背书登记日</strong>，金额为<strong>本次背书额</strong>（非票面全额）。点击编号进入该票<strong>使用明细</strong>并定位到对应背书。
+</p>
 {% endblock %}

@@ -1,6 +1,7 @@
 """资金往来视图：银行账户（M2-1）、采购发票→应付（M2-2）、付款与核销（M2-3/4）。"""
 
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
@@ -353,9 +354,9 @@ def _cash_totals(rows):
             "unsettled": sum((r["unsettled"] for r in rows), z)}
 
 
-def _export_cash_rows(name, rows, company, party_label):
+def _export_cash_rows(name, rows, company, party_label, *, doc_header="单据编号"):
     from apps.core.exports import xlsx_response
-    headers = ["单据编号", "日期", "方式", party_label, "金额", "已核销", "未核销", "状态"]
+    headers = [doc_header, "日期", "方式", party_label, "金额", "已核销", "未核销", "状态"]
     data = [[r["doc_no"], r["date"], r["method"], r["party"], r["amount"],
              r["settled"], r["unsettled"], r["status"]] for r in rows]
     return xlsx_response(name, headers, data, company=company)
@@ -397,13 +398,17 @@ def _payment_rows(company):
                 settled, unsettled, status = Decimal("0.00"), e.amount, "预付未核销"
             else:
                 party, settled, unsettled, status = "—", e.amount, Decimal("0.00"), "已背书"
+            ledger_url = ""
+            if n:
+                q = urlencode({"note": n.pk, "all": "1", "settlement": e.pk})
+                ledger_url = f"{reverse('receivable_note_ledger')}?{q}#settlement-{e.pk}"
             rows.append({
                 "doc_no": e.note_no,
                 "date": note_settlement_business_date(e, draw_date=n.draw_date if n else None),
                 "method": "应收票据背书", "party": party,
                 "amount": e.amount, "settled": settled, "unsettled": unsettled,
-                "status": status, "is_note": True,
-                "detail_url": reverse("note_receivable_list"),
+                "status": status, "is_note": True, "settlement_id": e.pk,
+                "detail_url": ledger_url or reverse("note_receivable_list"),
                 "can_edit": bool(n) and n.status != NoteReceivable.Status.VOID,
                 "edit_url": reverse("note_receivable_edit", args=[n.pk]) if n else "",
                 "delete_url": ""})
@@ -459,7 +464,7 @@ def payment_list(request):
     rows = _payment_rows(company) if company else []
     rows, fctx = _cash_list_filter(request, rows, "单号/供应商")
     if company and request.GET.get("export") == "xlsx":
-        return _export_cash_rows("付款登记", rows, company, "供应商")
+        return _export_cash_rows("付款登记", rows, company, "供应商", doc_header="单号 / 票据号")
     return render(request, "finance/payment_list.html",
                   {"rows": rows, "filter": fctx, "party_label": "供应商",
                    "totals": _cash_totals(rows)})
@@ -1684,6 +1689,8 @@ def receivable_note_ledger(request):
         dfrom, dto = get_report_dates(request, company)
     note = get_object_or_404(NoteReceivable, pk=request.GET.get("note"), company=company)
     data = note_ledger(company, note, dfrom, dto)
+    highlight = request.GET.get("settlement")
+    highlight_settlement_id = int(highlight) if highlight and str(highlight).isdigit() else None
     if request.GET.get("export") == "xlsx":
         from apps.core.exports import xlsx_response
         headers = ["日期", "类型", "对应发票", "增加", "减少", "未用余额"]
@@ -1694,7 +1701,8 @@ def receivable_note_ledger(request):
         return xlsx_response(f"应收票据使用明细-{note.doc_no}", headers, rows, company=company, period=(dfrom, dto))
     return render(request, "finance/receivable_note_ledger.html", {
         "note": note, "data": data, "active_company": company,
-        "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", "")})
+        "date_from": dfrom, "date_to": dto, "company_id": request.GET.get("company", ""),
+        "highlight_settlement_id": highlight_settlement_id})
 
 
 @login_required

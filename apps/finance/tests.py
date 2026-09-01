@@ -2130,7 +2130,8 @@ class UnifiedCashListTests(TestCase):
             lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("800"),
                     "tax_rate": Decimal("0")}])
         endorse_receivable_against_purchase(
-            note=note, allocations=[{"invoice": inv, "amount": Decimal("800")}], user=self.user)
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("800")}], user=self.user,
+            settle_date=date(2026, 6, 18))
         self.client.force_login(self.user)
         h = self.client.get("/finance/payments/", SERVER_NAME="localhost").content.decode()
         self.assertIn("付款方式", h)
@@ -2138,6 +2139,12 @@ class UnifiedCashListTests(TestCase):
         self.assertIn("应收票据背书", h)              # 背书付款行
         self.assertIn("YSP-C1-20260611-009", h)
         self.assertIn("供应商甲", h)                  # 背书行的供应商
+        self.assertIn("receivable-note-ledger", h)
+        self.assertIn("settlement=", h)
+        from apps.finance.views import _payment_rows
+        endo = next(r for r in _payment_rows(self.c1) if r.get("is_note"))
+        self.assertIn("receivable-note-ledger", endo["detail_url"])
+        self.assertIn(f"settlement={endo['settlement_id']}", endo["detail_url"])
 
 
 class NoteSettlementReverseTests(TestCase):

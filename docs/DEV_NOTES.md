@@ -200,7 +200,7 @@
 ### 三、已知问题 / 临时凑合（下次回头看）
 - ~~**死代码**：`InsufficientStockError` 类自负库存放开后已无处抛出；`apps/sales/views.py` 的对应 `except` 成无害死代码（可清理）。~~ **已清理（2026-07-03）**：删除 `InsufficientStockError` 类 + `sales/views.py` 两处 `except` + 各处 import/docstring 引用。
 - ~~**核销无落库日期，用 `created_at.date()` 近似（已知限制）**~~ **已修（2026-07-03，迁移 `0021`）**：`PaymentAllocation/ReceiptAllocation/NoteSettlement` 各加 `date` 业务日期（核销取付款/收款 doc_date、票据冲销取 draw_date），报表改按 `date` 归期，跨月核销不再错记到操作月。此前依赖系统日期的 7 个测试随之转绿。
-- ~~**付款一览「应收票据背书」日期取出票日**~~ **已修（2026-08-31）**：背书 `NoteSettlement.date` 取付款登记 `doc_date`（票据页直接背书取操作日）；付款一览/应付报表与登记日一致。迁移 `0031` 将历史误存出票日、登记更晚的背书改回登记日。
+- ~~**付款一览「应收票据背书」日期取出票日**~~ **已修（2026-08-31）**：背书 `NoteSettlement.date` 取付款登记 `doc_date`（票据页直接背书取操作日）；迁移 `0031` 将历史误存出票日、登记更晚的背书改回登记日。**UX（2026-09-01）**：背书行「单号/票据号」链到该票使用明细并高亮对应背书；页脚说明本行金额=本次背书额。
 - ~~**销售出库还没有「删除」按钮**（只有作废）；采购入库已加受限硬删除。对称性待补~~ **已补（2026-06-30）**：`delete_sales_outbound` + `outbound_delete_block_reason` 完全对称采购入库受限硬删除——仅「该出库后该商品再无任何出入库变动 + 未生成关联镜像 + 未开票 + 当月 + 本人/管理员」才允许，`reverse_move` 精确反冲恢复库存再删两条流水不留痕（顺带清 ExpenseEntry/BorrowTransaction）；其余用「作废」。列表/详情按 `can_delete` 显隐，URL `outbound_delete`。新增 5 个测试（`OutboundDeleteTests`）。
 - **DB 状态偏差（本轮已修文档）**：CLAUDE.md/DEPLOY.md 原写生产用 PostgreSQL，**实际生产跑的是 SQLite**（代码两者都支持，靠 `DB_ENGINE` 切换）。已在本轮把文档改为"实际 SQLite"。
 

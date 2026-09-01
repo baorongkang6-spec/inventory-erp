@@ -33,7 +33,8 @@
         <tr class="table-secondary"><td class="text-start" colspan="5">期初未用</td>
           <td class="fw-semibold">{{ data.opening }}</td><td></td></tr>
         {% for e in data.rows %}
-        <tr>
+        <tr id="settlement-{{ e.settlement_id|default:'' }}"
+            {% if highlight_settlement_id and e.settlement_id == highlight_settlement_id %}class="table-warning"{% endif %}>
           <td class="text-start">{{ e.date|date:"Y-m-d" }}</td>
           <td class="text-start">{{ e.kind }}</td>
           <td class="text-start">{% if e.ref_url %}<a href="{{ e.ref_url }}">{{ e.doc_no }}</a>{% else %}{{ e.doc_no|default:"—" }}{% endif %}</td>
@@ -71,4 +72,9 @@
     </table>
   </div>
 </div>
+{% if highlight_settlement_id %}
+<script>
+document.getElementById('settlement-{{ highlight_settlement_id }}')?.scrollIntoView({block: 'center'});
+</script>
+{% endif %}
 {% endblock %}
