@@ -60,7 +60,7 @@ class DocRefsTests(TestCase):
     """单据来源跳转映射（M10）。"""
 
     def test_doc_url_maps_known_types(self):
-        from apps.core.docrefs import doc_url, invoice_url
+        from apps.core.docrefs import doc_url, doc_settlement_url, invoice_settlement_url, invoice_url
         self.assertEqual(doc_url("PurchaseInbound", 5), "/purchasing/inbound/5/")
         self.assertEqual(doc_url("SalesOutbound", 7), "/sales/outbound/7/")
         self.assertEqual(doc_url("Payment", 3), "/finance/payments/3/")
@@ -72,3 +72,7 @@ class DocRefsTests(TestCase):
         self.assertEqual(invoice_url("purchase", 2), "/finance/purchase-invoices/2/")
         self.assertEqual(invoice_url("sales", 9), "/finance/sales-invoices/9/")
         self.assertEqual(invoice_url("", 9), "")
+        self.assertEqual(invoice_settlement_url("purchase", 2, 99),
+                         "/finance/purchase-invoices/2/?settlement=99#settlement-99")
+        self.assertEqual(doc_settlement_url("PurchaseOrder", 5, 12),
+                         "/purchasing/orders/5/?settlement=12#settlement-12")

@@ -19,6 +19,17 @@
   </div>
 </div>
 
+{% if focus_settlement %}
+<div class="alert alert-info py-2 mb-3">
+  从票据使用明细查看：<strong>{{ focus_settlement.amount }}</strong> 元
+  {% if focus_settlement.is_endorsement %}应收票据背书抵付{% else %}应收票据冲销{% endif %}
+  （票据 <strong>{{ focus_settlement.note_no }}</strong>
+  {% if focus_settlement.date %}· {{ focus_settlement.date }}{% endif %}）。
+  下列发票为被冲销的应收；高亮行为本次核销。
+  {% if note_ledger_back %}<a href="{{ note_ledger_back }}" class="ms-2">返回票据使用明细</a>{% endif %}
+</div>
+{% endif %}
+
 <div class="card mb-3">
   <div class="card-body row g-2">
     <div class="col-md-3"><span class="text-muted">公司：</span>{{ inv.company }}</div>
@@ -76,7 +87,9 @@
       <thead class="table-light"><tr><th>核销方式</th><th>来源单号</th><th class="text-end">核销金额</th><th></th></tr></thead>
       <tbody>
         {% for s in settlements %}
-        <tr><td>{{ s.kind }}</td><td>{{ s.doc_no }}</td><td class="text-end">{{ s.amount }}</td>
+        <tr id="settlement-{{ s.settlement_id|default:'' }}"
+            {% if highlight_settlement_id and s.settlement_id == highlight_settlement_id %}class="table-warning"{% endif %}>
+          <td>{{ s.kind }}</td><td>{{ s.doc_no }}</td><td class="text-end">{{ s.amount }}</td>
           <td class="text-end">
             {% if s.settlement_id and perms.finance.add_notesettlement %}
             <form method="post" action="{% url 'note_settlement_reverse' s.settlement_id %}" class="d-inline"
@@ -95,5 +108,10 @@
     </table>
   </div>
 </div>
+{% endif %}
+{% if highlight_settlement_id %}
+<script>
+document.getElementById('settlement-{{ highlight_settlement_id }}')?.scrollIntoView({block: 'center'});
+</script>
 {% endif %}
 {% endblock %}

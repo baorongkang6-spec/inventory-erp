@@ -2035,6 +2035,49 @@ class InvoiceSettlementBreakdownTests(TestCase):
         self.assertIn("应收票据背书抵付", html)     # 核销方式标明是背书
         self.assertIn("YSP-C1-20260611-005", html)  # 指向那张票据
 
+    def test_note_ledger_links_invoice_with_settlement_anchor(self):
+        from apps.finance.services import endorse_receivable_against_purchase
+        from apps.opening.reports import note_ledger
+        inv = create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=date(2026, 6, 18), supplier=self.sup,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0")}])
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260611-006", note_no="BJ233",
+            draw_date=date(2026, 6, 11), customer=self.cust, amount=Decimal("1000"))
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("600")}], user=self.user,
+            settle_date=date(2026, 6, 18))
+        ns = NoteSettlement.objects.get(note_id=note.pk, is_endorsement=True)
+        rows = note_ledger(self.c1, note, date(2026, 6, 1), date(2026, 6, 30))["rows"]
+        endo = next(r for r in rows if r["dec"] == Decimal("600"))
+        self.assertIn(f"settlement={ns.pk}", endo["ref_url"])
+        self.assertIn(f"#settlement-{ns.pk}", endo["ref_url"])
+
+    def test_purchase_invoice_highlights_settlement_from_note_ledger(self):
+        from apps.finance.services import endorse_receivable_against_purchase
+        inv = create_purchase_invoice(
+            company=self.c1, user=self.user, doc_date=date(2026, 6, 18), supplier=self.sup,
+            lines=[{"product": None, "description": "x", "amount_untaxed": Decimal("1000"),
+                    "tax_rate": Decimal("0")}])
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260611-007", note_no="BJ234",
+            draw_date=date(2026, 6, 11), customer=self.cust, amount=Decimal("1000"))
+        endorse_receivable_against_purchase(
+            note=note, allocations=[{"invoice": inv, "amount": Decimal("600")}], user=self.user,
+            settle_date=date(2026, 6, 18))
+        ns = NoteSettlement.objects.get(note_id=note.pk, is_endorsement=True)
+        self.client.force_login(self.user)
+        r = self.client.get(
+            f"/finance/purchase-invoices/{ns.invoice_id}/?settlement={ns.pk}",
+            SERVER_NAME="localhost")
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        self.assertIn("从票据使用明细查看", html)
+        self.assertIn("600", html)
+        self.assertIn(f'id="settlement-{ns.pk}"', html)
+        self.assertIn("table-warning", html)
+
 
 class EndorsementBusinessDateTests(TestCase):
     """历史背书误存出票日时，业务日应回退为登记日。"""

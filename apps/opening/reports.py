@@ -1370,7 +1370,7 @@ def note_ledger(company, note, dfrom, dto):
     核销应收(冲应收账款)是票收进来抵应收、不消耗票面，不影响未用余额，故不在本表减项；
     其与发票的勾稽见对应发票「核销明细」。
     """
-    from apps.core.docrefs import doc_url, invoice_url
+    from apps.core.docrefs import doc_settlement_url, invoice_settlement_url
     events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
                "inc": note.amount, "dec": Z, "ref_url": "", "is_opening": note.is_opening}]
     for s in (NoteSettlement.objects.filter(company=company, note_id=note.pk,
@@ -1378,11 +1378,11 @@ def note_ledger(company, note, dfrom, dto):
                                             is_endorsement=True)
               .select_related("purchase_order")):
         if s.invoice_id:
-            ref_url = invoice_url(s.invoice_kind, s.invoice_id)
+            ref_url = invoice_settlement_url(s.invoice_kind, s.invoice_id, s.pk)
             doc_no = s.invoice_no
             kind = "背书抵应付"
         elif s.purchase_order_id:
-            ref_url = doc_url("PurchaseOrder", s.purchase_order_id)
+            ref_url = doc_settlement_url("PurchaseOrder", s.purchase_order_id, s.pk)
             doc_no = s.purchase_order.doc_no
             kind = "背书预付"
         else:

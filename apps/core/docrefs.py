@@ -40,3 +40,19 @@ def invoice_url(invoice_kind, invoice_id):
         return reverse(name, args=[invoice_id])
     except (NoReverseMatch, ValueError):
         return ""
+
+
+def invoice_settlement_url(invoice_kind, invoice_id, settlement_id):
+    """发票详情 + 定位到某笔票据冲销核销行（从票据使用明细跳入）。"""
+    base = invoice_url(invoice_kind, invoice_id)
+    if base and settlement_id:
+        return f"{base}?settlement={settlement_id}#settlement-{settlement_id}"
+    return base
+
+
+def doc_settlement_url(source_type, source_id, settlement_id):
+    """原单据详情 + 定位到某笔票据冲销（如背书预付挂订单）。"""
+    base = doc_url(source_type, source_id)
+    if base and settlement_id:
+        return f"{base}?settlement={settlement_id}#settlement-{settlement_id}"
+    return base
