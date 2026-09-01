@@ -989,6 +989,27 @@ def note_settlement_business_date(settlement, *, draw_date=None):
     return stored
 
 
+def note_settlement_focus_context(request, allowed_ids):
+    """从票据使用明细 ?settlement= 跳入时，返回高亮/说明/返回链接上下文。"""
+    from django.urls import reverse
+    from urllib.parse import urlencode
+    raw = request.GET.get("settlement")
+    if not raw or not str(raw).isdigit():
+        return {}
+    sid = int(raw)
+    if sid not in allowed_ids:
+        return {}
+    ns = NoteSettlement.objects.filter(pk=sid).first()
+    if ns is None:
+        return {}
+    q = urlencode({"note": ns.note_id, "all": "1", "settlement": ns.pk})
+    return {
+        "highlight_settlement_id": sid,
+        "focus_settlement": ns,
+        "note_ledger_back": f"{reverse('receivable_note_ledger')}?{q}#settlement-{ns.pk}",
+    }
+
+
 def note_settlement_reverse_block_reason(settlement) -> str | None:
     """票据冲销可否撤销（恢复发票未核销额 + 票据未用额）。可撤返回 None。"""
     note = _note_of(settlement)

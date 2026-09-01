@@ -155,21 +155,16 @@ def _invoice_settlements(inv, invoice_kind):
 def _invoice_detail_settlement_context(request, inv, settlements):
     """?settlement= 从票据使用明细跳入时，定位并校验该笔冲销属于本发票。"""
     from .models import NoteSettlement
-    raw = request.GET.get("settlement")
-    if not raw or not str(raw).isdigit():
+    from .services import note_settlement_focus_context
+    allowed = {s["settlement_id"] for s in settlements if s.get("settlement_id")}
+    sid = request.GET.get("settlement")
+    if not sid or not str(sid).isdigit() or int(sid) not in allowed:
         return {}
-    sid = int(raw)
-    if not any(s.get("settlement_id") == sid for s in settlements):
-        return {}
-    ns = NoteSettlement.objects.filter(pk=sid, invoice_id=inv.pk, company_id=inv.company_id).first()
+    ns = NoteSettlement.objects.filter(
+        pk=int(sid), invoice_id=inv.pk, company_id=inv.company_id).first()
     if ns is None:
         return {}
-    from django.urls import reverse
-    from urllib.parse import urlencode
-    q = urlencode({"note": ns.note_id, "all": "1", "settlement": ns.pk})
-    note_ledger_back = f"{reverse('receivable_note_ledger')}?{q}#settlement-{ns.pk}"
-    return {"highlight_settlement_id": sid, "focus_settlement": ns,
-            "note_ledger_back": note_ledger_back}
+    return note_settlement_focus_context(request, {ns.pk})
 
 
 class PurchaseInvoiceDetailView(CompanyScopedMixin, DetailView):

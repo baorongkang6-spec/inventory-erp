@@ -24,8 +24,8 @@
   从票据使用明细查看：<strong>{{ focus_settlement.amount }}</strong> 元
   {% if focus_settlement.is_endorsement %}应收票据背书抵付{% else %}票据冲销{% endif %}
   （票据 <strong>{{ focus_settlement.note_no }}</strong>
-  {% if focus_settlement.date %}· {{ focus_settlement.date }}{% endif %}）。
-  下列发票为被冲销的应付；高亮行为本次核销。
+  {% if focus_settlement.date %}· 背书登记 {{ focus_settlement.date }}{% endif %}）。
+  发票日期 {{ inv.doc_date }} 为开票日，与背书登记日可能不同；高亮行为本次核销。
   {% if note_ledger_back %}<a href="{{ note_ledger_back }}" class="ms-2">返回票据使用明细</a>{% endif %}
 </div>
 {% endif %}

@@ -46,6 +46,16 @@
   </div>
 </div>
 
+{% if focus_settlement %}
+<div class="alert alert-info py-2 mb-3">
+  从票据使用明细查看：<strong>{{ focus_settlement.amount }}</strong> 元
+  票据背书预付（票据 <strong>{{ focus_settlement.note_no }}</strong>
+  {% if focus_settlement.date %}· 背书登记 {{ focus_settlement.date }}{% endif %}）。
+  订单日期 {{ order.doc_date }} 为采购订单日，与背书登记日可能不同；高亮行为本次预付。
+  {% if note_ledger_back %}<a href="{{ note_ledger_back }}" class="ms-2">返回票据使用明细</a>{% endif %}
+</div>
+{% endif %}
+
 <div class="card mb-3">
   <div class="card-header">订单明细</div>
   <div class="table-responsive">
@@ -147,12 +157,17 @@
   <div class="card-header">票据背书预付<small class="text-muted ms-2">无票背书挂本订单；到票后请先撤销再背书冲发票</small></div>
   <ul class="list-group list-group-flush">
     {% for ns in pay.note_prepaids %}
-    <li class="list-group-item d-flex justify-content-between">
-      <span>票据 {{ ns.note_no }} · {{ ns.date|default:"—" }}</span>
+    <li id="settlement-{{ ns.pk }}" class="list-group-item d-flex justify-content-between{% if highlight_settlement_id == ns.pk %} list-group-item-warning{% endif %}">
+      <span>票据 {{ ns.note_no }} · {% if ns.date %}背书 {{ ns.date }}{% else %}—{% endif %}</span>
       <strong class="text-warning">{{ ns.amount }}</strong>
     </li>
     {% endfor %}
   </ul>
 </div>
+{% endif %}
+{% if highlight_settlement_id %}
+<script>
+document.getElementById('settlement-{{ highlight_settlement_id }}')?.scrollIntoView({block: 'center'});
+</script>
 {% endif %}
 {% endblock %}

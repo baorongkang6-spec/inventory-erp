@@ -93,6 +93,42 @@ class NoteEndorsePrepaidOrderTests(TestCase):
         self.assertIn("500.00", h)
         self.assertIn("预付未核销", h)
 
+    def test_purchase_order_highlights_prepaid_settlement_from_note_ledger(self):
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Permission
+        note = create_note_receivable(
+            company=self.c1, user=None, draw_date=date(2026, 7, 10),
+            amount=Decimal("60000"), note_no="N-PO", due_date=date(2026, 12, 1),
+        )
+        order = create_purchase_order(
+            company=self.c1, user=None, doc_date=date(2026, 7, 24), supplier=self.sup,
+            lines=[{"product": self.p, "quantity": Decimal("5"), "unit_price": Decimal("12000"),
+                    "tax_rate": Decimal("0")}],
+        )
+        endorse_receivable_against_purchase(
+            note=note, allocations=[], user=None,
+            purchase_order=order, prepaid_amount=Decimal("60000"),
+            settle_date=date(2026, 8, 6),
+        )
+        ns = NoteSettlement.objects.get(note_id=note.pk, purchase_order=order)
+        user = get_user_model().objects.create_user(
+            username="po_detail", password="x", can_view_all_companies=True)
+        user.user_permissions.add(
+            Permission.objects.get(content_type__app_label="purchasing", codename="view_purchaseorder"))
+        client = Client()
+        client.force_login(user)
+        session = client.session
+        session["active_company_id"] = self.c1.pk
+        session.save()
+        r = client.get(f"{reverse('purchase_order_detail', args=[order.pk])}?settlement={ns.pk}")
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        self.assertIn("从票据使用明细查看", html)
+        self.assertIn("60,000", html)
+        self.assertIn("2026年8月6日", html)
+        self.assertIn(f'id="settlement-{ns.pk}"', html)
+        self.assertIn("list-group-item-warning", html)
+
 
 class ReceiptSalesOrderTests(TestCase):
     @classmethod

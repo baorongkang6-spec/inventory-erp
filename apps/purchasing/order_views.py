@@ -89,6 +89,9 @@ class PurchaseOrderDetailView(CompanyScopedMixin, DetailView):
             rows.append({"line": ln, **line_progress(ln)})
         ctx["line_rows"] = rows
         ctx["pay"] = order_payment_summary(order)
+        allowed = {ns.pk for ns in ctx["pay"].get("note_prepaids") or []}
+        from apps.finance.services import note_settlement_focus_context
+        ctx.update(note_settlement_focus_context(self.request, allowed))
         ctx["can_receive"] = (order.status == PurchaseOrder.Status.OPEN
                               and any(r["qty_open_receive"] > 0 for r in rows))
         ctx["can_invoice"] = (order.status == PurchaseOrder.Status.OPEN
