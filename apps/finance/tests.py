@@ -2160,6 +2160,42 @@ class HongweidaEndorsementDateMigrationTests(TestCase):
         self.assertEqual(ns.date, date(2026, 7, 22))
 
 
+class AnbonuoEndorsementDateMigrationTests(TestCase):
+    """迁移 0033：按财务 Excel 更正 C1 背书业务日。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户")
+        cls.w0008 = Supplier.objects.create(company=cls.c1, code="W0008", name="昕特玛")
+        from apps.masterdata.models import Product
+        from apps.purchasing.order_services import create_purchase_order
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货")
+        cls.order = create_purchase_order(
+            company=cls.c1, user=None, doc_date=date(2026, 8, 19), supplier=cls.w0008,
+            lines=[{"product": cls.p, "quantity": Decimal("1"), "unit_price": Decimal("11508.91"),
+                    "tax_rate": Decimal("0")}],
+        )
+
+    def test_migration_applies_excel_date_for_prepaid(self):
+        import importlib
+        from django.apps import apps as django_apps
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260819-003", note_no="N1",
+            draw_date=date(2026, 8, 19), customer=self.cust, amount=Decimal("50000"))
+        ns = NoteSettlement.objects.create(
+            company=self.c1, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            note_id=note.pk, note_no=note.doc_no,
+            invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+            invoice_id=None, amount=Decimal("11508.91"), is_endorsement=True,
+            purchase_order=self.order, date=date(2026, 8, 31))
+        mod = importlib.import_module(
+            "apps.finance.migrations.0033_anbonuo_endorsement_dates_20260901")
+        mod.apply_anbonuo_endorsement_dates(django_apps, None)
+        ns.refresh_from_db()
+        self.assertEqual(ns.date, date(2026, 8, 28))
+
+
 class UnifiedCashListTests(TestCase):
     """收款/付款列表统一一览：银行 + 应收票据都出现，方式列正确。"""
 
