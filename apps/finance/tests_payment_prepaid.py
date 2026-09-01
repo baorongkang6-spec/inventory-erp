@@ -96,6 +96,7 @@ class PaymentPrepaidOrderTests(TestCase):
         r = client.get(reverse("payment_create") + f"?order={self.order.pk}")
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, self.order.doc_no)
+        self.assertContains(r, 'value="2026-08-01"')  # 挂订单时付款日默认订单日
         r2 = client.post(reverse("payment_create"), {
             "doc_date": "2026-08-05",
             "method": f"bank:{self.acc.pk}",

@@ -566,6 +566,7 @@ def payment_create(request):
         if pre is not None:
             initial["purchase_order"] = pre.pk
             initial["supplier"] = pre.supplier_id
+            initial["doc_date"] = pre.doc_date  # 挂订单预付：默认用订单日，避免补录时误用当天
 
     if request.method == "POST":
         form = PaymentForm(request.POST, company=company)
@@ -1098,6 +1099,7 @@ def receipt_create(request):
         if pre is not None:
             initial["sales_order"] = pre.pk
             initial["customer"] = pre.customer_id
+            initial["doc_date"] = pre.doc_date
 
     if request.method == "POST":
         form = ReceiptForm(request.POST, company=company)
