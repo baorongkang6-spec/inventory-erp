@@ -2088,8 +2088,7 @@ class EndorsementBusinessDateTests(TestCase):
         cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户甲")
         cls.sup = Supplier.objects.create(company=cls.c1, code="S1", name="供应商甲")
 
-    def test_business_date_when_stored_draw_before_registration(self):
-        from django.utils import timezone
+    def test_business_date_uses_stored_date(self):
         from apps.finance.services import note_settlement_business_date
         note = NoteReceivable.objects.create(
             company=self.c1, doc_no="YSP-C3-20260730-003", note_no="BJ-C3",
@@ -2098,12 +2097,9 @@ class EndorsementBusinessDateTests(TestCase):
             company=self.c1, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
             note_id=note.pk, note_no=note.doc_no, invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
             invoice_id=None, invoice_no="", amount=Decimal("500"), is_endorsement=True,
-            date=date(2026, 7, 30))
-        reg = timezone.make_aware(timezone.datetime(2026, 8, 15, 10, 0, 0))
-        NoteSettlement.objects.filter(pk=ns.pk).update(created_at=reg)
-        ns.refresh_from_db()
+            date=date(2026, 8, 11))
         self.assertEqual(
-            note_settlement_business_date(ns, draw_date=note.draw_date), date(2026, 8, 15))
+            note_settlement_business_date(ns, draw_date=note.draw_date), date(2026, 8, 11))
 
     def test_migration_fixes_stored_draw_to_registration(self):
         import importlib
@@ -2124,6 +2120,44 @@ class EndorsementBusinessDateTests(TestCase):
         fix_mod.fix_endorsement_dates(django_apps, None)
         ns.refresh_from_db()
         self.assertEqual(ns.date, date(2026, 8, 20))
+
+
+class HongweidaEndorsementDateMigrationTests(TestCase):
+    """迁移 0032：按财务 Excel 更正 C3 背书业务日。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c3 = Company.objects.create(code="C3", name="鸿威达", short_name="鸿威达")
+        cls.cust = Customer.objects.create(company=cls.c3, code="K1", name="客户")
+        cls.w0013 = Supplier.objects.create(company=cls.c3, code="W0013", name="宁夏胜佳")
+        cls.order = None  # set in test
+
+    def test_migration_applies_excel_dates(self):
+        import importlib
+        from django.apps import apps as django_apps
+        from apps.purchasing.order_services import create_purchase_order
+        from apps.masterdata.models import Product
+
+        p = Product.objects.create(company=self.c3, code="A02", name="货")
+        order = create_purchase_order(
+            company=self.c3, user=None, doc_date=date(2026, 7, 24), supplier=self.w0013,
+            lines=[{"product": p, "quantity": Decimal("5"), "unit_price": Decimal("12000"),
+                    "tax_rate": Decimal("0")}],
+        )
+        note = NoteReceivable.objects.create(
+            company=self.c3, doc_no="YSP-C3-20260710-003", note_no="N1",
+            draw_date=date(2026, 7, 10), customer=self.cust, amount=Decimal("400000"))
+        ns = NoteSettlement.objects.create(
+            company=self.c3, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            note_id=note.pk, note_no=note.doc_no,
+            invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+            invoice_id=None, amount=Decimal("60000.00"), is_endorsement=True,
+            purchase_order=order, date=date(2026, 8, 6))
+        mod = importlib.import_module(
+            "apps.finance.migrations.0032_hongweida_endorsement_dates_20260901")
+        mod.apply_hongweida_endorsement_dates(django_apps, None)
+        ns.refresh_from_db()
+        self.assertEqual(ns.date, date(2026, 7, 22))
 
 
 class UnifiedCashListTests(TestCase):

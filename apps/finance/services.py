@@ -968,25 +968,11 @@ def _note_of(settlement):
 
 
 def note_settlement_business_date(settlement, *, draw_date=None):
-    """NoteSettlement 业务日期（付款一览 / 往来 / 票据报表共用）。
-
-    优先落库 date；历史背书若误存出票日且登记日晚于出票日，则以登记日（created_at）为准。
-    """
+    """NoteSettlement 业务日期（付款一览 / 往来 / 票据报表共用）。"""
     from django.utils import timezone
-    stored = settlement.date
-    reg = timezone.localtime(settlement.created_at).date()
-    if stored is None:
-        return reg
-    if not settlement.is_endorsement:
-        return stored
-    if reg <= stored:
-        return stored
-    if draw_date is None:
-        note = _note_of(settlement)
-        draw_date = getattr(note, "draw_date", None) if note else None
-    if draw_date is not None and stored == draw_date:
-        return reg
-    return stored
+    if settlement.date is not None:
+        return settlement.date
+    return timezone.localtime(settlement.created_at).date()
 
 
 def note_settlement_focus_context(request, allowed_ids):
