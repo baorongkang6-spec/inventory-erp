@@ -2196,6 +2196,42 @@ class AnbonuoEndorsementDateMigrationTests(TestCase):
         self.assertEqual(ns.date, date(2026, 8, 28))
 
 
+class AnbonuoEndorsementDate20260908MigrationTests(TestCase):
+    """迁移 0034：按财务 Excel 更正 C1 1 笔背书业务日。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户")
+        cls.w0016 = Supplier.objects.create(company=cls.c1, code="W0016", name="紫荆蓝新")
+        from apps.masterdata.models import Product
+        from apps.purchasing.order_services import create_purchase_order
+        cls.p = Product.objects.create(company=cls.c1, code="P1", name="货")
+        cls.order = create_purchase_order(
+            company=cls.c1, user=None, doc_date=date(2026, 8, 11), supplier=cls.w0016,
+            lines=[{"product": cls.p, "quantity": Decimal("1"), "unit_price": Decimal("200000"),
+                    "tax_rate": Decimal("0")}],
+        )
+
+    def test_migration_applies_excel_date(self):
+        import importlib
+        from django.apps import apps as django_apps
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260811-001", note_no="N1",
+            draw_date=date(2026, 8, 11), customer=self.cust, amount=Decimal("200000"))
+        ns = NoteSettlement.objects.create(
+            company=self.c1, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            note_id=note.pk, note_no=note.doc_no,
+            invoice_kind=NoteSettlement.InvoiceKind.PURCHASE,
+            invoice_id=None, amount=Decimal("200000.00"), is_endorsement=True,
+            purchase_order=self.order, date=date(2026, 9, 11))
+        mod = importlib.import_module(
+            "apps.finance.migrations.0034_anbonuo_endorsement_dates_20260908")
+        mod.apply_anbonuo_endorsement_dates_20260908(django_apps, None)
+        ns.refresh_from_db()
+        self.assertEqual(ns.date, date(2026, 8, 11))
+
+
 class UnifiedCashListTests(TestCase):
     """收款/付款列表统一一览：银行 + 应收票据都出现，方式列正确。"""
 
