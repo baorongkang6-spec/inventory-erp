@@ -2232,6 +2232,27 @@ class AnbonuoEndorsementDate20260908MigrationTests(TestCase):
         self.assertEqual(ns.date, date(2026, 8, 11))
 
 
+class AnbonuoNoteDrawDate20260915MigrationTests(TestCase):
+    """迁移 0035：更正 C1 YSP-C1-20260721-001 出票日为 7/21。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="K1", name="客户")
+
+    def test_migration_fixes_draw_date(self):
+        import importlib
+        from django.apps import apps as django_apps
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260721-001", note_no="N1",
+            draw_date=date(2026, 8, 6), customer=self.cust, amount=Decimal("800000"))
+        mod = importlib.import_module(
+            "apps.finance.migrations.0035_anbonuo_note_draw_date_20260915")
+        mod.fix_anbonuo_note_draw_date(django_apps, None)
+        note.refresh_from_db()
+        self.assertEqual(note.draw_date, date(2026, 7, 21))
+
+
 class UnifiedCashListTests(TestCase):
     """收款/付款列表统一一览：银行 + 应收票据都出现，方式列正确。"""
 
