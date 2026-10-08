@@ -2253,6 +2253,47 @@ class AnbonuoNoteDrawDate20260915MigrationTests(TestCase):
         self.assertEqual(note.draw_date, date(2026, 7, 21))
 
 
+class HongweidaPaymentDate20261015MigrationTests(TestCase):
+    """迁移 0036：已核销付款 FK-C3-20261015-001 日期改为 9/15。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        cls.c3 = Company.objects.create(code="C3", name="鸿威达", short_name="鸿威达")
+        cls.acc = BankAccount.objects.create(company=cls.c3, name="招商银行710101")
+        cls.sup = Supplier.objects.create(company=cls.c3, code="W0010", name="上海中安材化工科技有限公司")
+        cls.user = get_user_model().objects.create_user(username="payfix", password="x")
+
+    def test_migration_moves_payment_journal_and_allocation_dates(self):
+        import importlib
+        from django.apps import apps as django_apps
+        pay = create_payment(
+            company=self.c3, user=self.user, doc_date=date(2026, 10, 15),
+            bank_account=self.acc, supplier=self.sup, amount=Decimal("500000"))
+        self.assertEqual(pay.doc_no, "FK-C3-20261015-001")
+        inv = create_purchase_invoice(
+            company=self.c3, user=self.user, doc_date=date(2026, 9, 1), supplier=self.sup,
+            lines=[{"amount_untaxed": Decimal("500000"), "tax_rate": Decimal("0")}])
+        allocate_payment(payment=pay, allocations=[{"invoice": inv, "amount": Decimal("500000")}],
+                         user=self.user)
+        pay.refresh_from_db()
+        self.assertEqual(pay.settled_amount, Decimal("500000.00"))
+
+        mod = importlib.import_module(
+            "apps.finance.migrations.0036_hongweida_payment_date_fk_c3_20261015")
+        mod.fix_hongweida_payment_date(django_apps, None)
+
+        pay.refresh_from_db()
+        pay.bank_journal.refresh_from_db()
+        alloc = pay.allocations.get()
+        self.assertEqual(pay.doc_date, date(2026, 9, 15))
+        self.assertEqual(pay.bank_journal.date, date(2026, 9, 15))
+        self.assertEqual(alloc.date, date(2026, 9, 15))
+        self.assertEqual(pay.doc_no, "FK-C3-20261015-001")
+        self.assertEqual(pay.settled_amount, Decimal("500000.00"))
+        self.assertEqual(pay.amount, Decimal("500000.00"))
+
+
 class UnifiedCashListTests(TestCase):
     """收款/付款列表统一一览：银行 + 应收票据都出现，方式列正确。"""
 
