@@ -18,7 +18,7 @@ class SeedInitTests(TestCase):
 
     def test_seed_creates_companies_roles_and_demo_documents(self):
         self._run()
-        self.assertEqual(Company.objects.count(), 3)
+        self.assertEqual(Company.objects.count(), 4)
         self.assertEqual(Group.objects.count(), 5)
         self.assertTrue(get_user_model().objects.filter(username="purchaser").exists())
 
@@ -49,7 +49,7 @@ class SeedInitTests(TestCase):
     def test_seed_is_idempotent(self):
         self._run()
         self._run()  # 第二次不应报错，也不应重复建公司/单据
-        self.assertEqual(Company.objects.count(), 3)
+        self.assertEqual(Company.objects.count(), 4)
         self.assertEqual(
             StockBalance.objects.get(company__code="C1", product__code="P001").quantity,
             Decimal("90.000"),
@@ -76,3 +76,30 @@ class DocRefsTests(TestCase):
                          "/finance/purchase-invoices/2/?settlement=99#settlement-99")
         self.assertEqual(doc_settlement_url("PurchaseOrder", 5, 12),
                          "/purchasing/orders/5/?settlement=12#settlement-12")
+
+
+class ZijinglanCompanyMigrationTests(TestCase):
+    """迁移 0006：已有紫荆蓝供应商时挂到 C4，不另建一条。"""
+
+    def test_links_existing_partner_and_creates_mirror(self):
+        import importlib
+        from django.apps import apps as django_apps
+        from apps.masterdata.models import BusinessPartner
+
+        c3 = Company.objects.create(
+            code="C3", name="鸿威达新材料科技（上海）有限公司", short_name="鸿威达")
+        partner = BusinessPartner.objects.create(
+            company=c3, code="W0016", name="紫荆蓝新材料科技（上海）有限公司",
+            is_supplier=True)
+        mod = importlib.import_module("apps.core.migrations.0006_company_zijinglan")
+        mod.add_zijinglan(django_apps, None)
+
+        c4 = Company.objects.get(code="C4")
+        self.assertEqual(c4.short_name, "紫荆蓝")
+        partner.refresh_from_db()
+        self.assertEqual(partner.related_company_id, c4.pk)
+        self.assertTrue(partner.is_customer)
+        self.assertEqual(
+            BusinessPartner.objects.filter(company=c3, name__contains="紫荆蓝").count(), 1)
+        mirror = BusinessPartner.objects.get(company=c4, related_company=c3)
+        self.assertIn("鸿威达", mirror.name)

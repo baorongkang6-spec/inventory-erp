@@ -22,6 +22,7 @@ COMPANIES = [
     ("C1", "安博诺新材料科技（上海）有限公司", "安博诺"),
     ("C2", "上海恒本源化学有限公司", "恒本源"),
     ("C3", "鸿威达新材料科技（上海）有限公司", "鸿威达"),
+    ("C4", "紫荆蓝新材料科技（上海）有限公司", "紫荆蓝"),
 ]
 
 # 各角色权限点（RBAC：角色 → 权限），格式 "app_label.codename"，跨应用。
@@ -141,7 +142,7 @@ class Command(BaseCommand):
         self.companies = {}
         for code, name, short in COMPANIES:
             obj, created = Company.objects.get_or_create(
-                code=code, defaults={"name": name, "short_name": short}
+                code=code, defaults={"name": name, "short_name": short, "full_name": name}
             )
             self.companies[code] = obj
             self.stdout.write(("  + " if created else "  · ") + f"公司 {code} {short}")
