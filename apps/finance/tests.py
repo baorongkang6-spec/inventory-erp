@@ -2294,6 +2294,38 @@ class HongweidaPaymentDate20261015MigrationTests(TestCase):
         self.assertEqual(pay.amount, Decimal("500000.00"))
 
 
+class AnbonuoNoteSettlementDate20260928MigrationTests(TestCase):
+    """迁移 0037：C1 票据冲应收核销日由 10/9 改为出票日 9/28。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.c1 = Company.objects.create(code="C1", name="安博诺", short_name="安博诺")
+        cls.cust = Customer.objects.create(company=cls.c1, code="W0005", name="恒本源")
+
+    def test_migration_moves_settlement_date_to_draw_date(self):
+        import importlib
+        from django.apps import apps as django_apps
+        note = NoteReceivable.objects.create(
+            company=self.c1, doc_no="YSP-C1-20260928-003", note_no="N1",
+            draw_date=date(2026, 9, 28), customer=self.cust, amount=Decimal("314641.72"))
+        inv = create_sales_invoice(
+            company=self.c1, user=None, doc_date=date(2026, 8, 7), customer=self.cust,
+            lines=[{"amount_untaxed": Decimal("314641.72"), "tax_rate": Decimal("0")}])
+        inv.doc_no = "XSF-C1-20260807-001"
+        inv.save(update_fields=["doc_no"])
+        ns = NoteSettlement.objects.create(
+            company=self.c1, note_kind=NoteSettlement.NoteKind.RECEIVABLE,
+            note_id=note.pk, note_no=note.doc_no,
+            invoice_kind=NoteSettlement.InvoiceKind.SALES,
+            invoice_id=inv.pk, invoice_no=inv.doc_no,
+            amount=Decimal("314641.72"), is_endorsement=False, date=date(2026, 10, 9))
+        mod = importlib.import_module(
+            "apps.finance.migrations.0037_anbonuo_note_settlement_date_20260928")
+        mod.fix_anbonuo_note_settlement_date(django_apps, None)
+        ns.refresh_from_db()
+        self.assertEqual(ns.date, date(2026, 9, 28))
+
+
 class UnifiedCashListTests(TestCase):
     """收款/付款列表统一一览：银行 + 应收票据都出现，方式列正确。"""
 
