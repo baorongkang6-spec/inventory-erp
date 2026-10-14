@@ -100,3 +100,30 @@ class NoteLoanTests(TestCase):
         self.note.refresh_from_db()
         self.assertEqual(lend.status, NoteLoan.Status.CLOSED)
         self.assertEqual(self.note.unused, Decimal("10000.00"))
+
+    def test_overview_ending_matches_unused_after_loan(self):
+        """总览/应收票据余额表须扣拆借，与票据余额表未用额一致。"""
+        from apps.opening.reports import company_overview, receivable_notes_balance
+        lend = lend_note_receivable(
+            company=self.c1, user=None, doc_date=date(2026, 6, 15),
+            note=self.note, borrower_company=self.c2, amount=Decimal("3000"))
+        self.note.refresh_from_db()
+        rows = receivable_notes_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(rows[0]["income"], Decimal("10000.00"))
+        self.assertEqual(rows[0]["outgo"], Decimal("3000.00"))
+        self.assertEqual(rows[0]["ending"], self.note.unused)
+        overview = company_overview(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(overview["note_recv"]["ending"], Decimal("7000.00"))
+        borrowed = receivable_notes_balance(self.c2, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(borrowed[0]["income"], Decimal("3000.00"))
+        self.assertEqual(borrowed[0]["ending"], Decimal("3000.00"))
+
+        return_note_loan(lend, user=None, amount=Decimal("3000"), return_date=date(2026, 7, 1))
+        july = receivable_notes_balance(self.c1, date(2026, 7, 1), date(2026, 7, 31))
+        self.assertEqual(july[0]["opening"], Decimal("7000.00"))
+        self.assertEqual(july[0]["income"], Decimal("3000.00"))
+        self.assertEqual(july[0]["ending"], Decimal("10000.00"))
+        july_b = receivable_notes_balance(self.c2, date(2026, 7, 1), date(2026, 7, 31))
+        self.assertEqual(july_b[0]["opening"], Decimal("3000.00"))
+        self.assertEqual(july_b[0]["outgo"], Decimal("3000.00"))
+        self.assertEqual(july_b[0]["ending"], Decimal("0.00"))

@@ -17,7 +17,9 @@ from apps.core.money import round_money, round_qty
 from apps.finance.models import (
     BankAccount,
     BankJournal,
+    IntercoBalance,
     NoteDisposal,
+    NoteLoan,
     NotePayable,
     NoteReceivable,
     NoteSettlement,
@@ -93,6 +95,53 @@ def _fold_unapplied_ar(row, events, dfrom, dto):
     row["outgo"] = round_money(row["outgo"])
     row["ending"] = round_money(row["opening"] + row["income"] - row["outgo"])
     return row
+
+
+def _note_loan_adjustments(company):
+    """拆借对票据持有额的增减。返回 {note_id: [(date, delta)]}，delta>0 为持有增加。
+
+    出借方：拆出日减少、归还日增加。借入方：归还日减少（拆入日本身用拆借日计「收入」）。
+    """
+    adjustments = {}
+    loans = NoteLoan.objects.filter(
+        company=company, note_receivable__isnull=False,
+    ).exclude(status=NoteLoan.Status.VOID)
+    for loan in loans:
+        if loan.role == NoteLoan.Role.LEND:
+            adjustments.setdefault(loan.note_receivable_id, []).append(
+                (loan.doc_date, -loan.amount))
+        for bal in IntercoBalance.objects.filter(
+            company=company, source_type="NoteLoanReturn", source_id=str(loan.pk),
+            direction=IntercoBalance.Direction.OUT,
+        ):
+            sign = 1 if loan.role == NoteLoan.Role.LEND else -1
+            adjustments.setdefault(loan.note_receivable_id, []).append(
+                (bal.date, sign * bal.amount))
+    return adjustments
+
+
+def _borrow_entry_dates(company):
+    """拆入票据进入本账套的日期是拆借日，不是原票出票日。"""
+    return {
+        loan.note_receivable_id: loan.doc_date
+        for loan in NoteLoan.objects.filter(
+            company=company, role=NoteLoan.Role.BORROW, note_receivable__isnull=False,
+        ).exclude(status=NoteLoan.Status.VOID)
+    }
+
+
+def _apply_holding_delta(opening, income, outgo, dt, delta, dfrom, dto):
+    """把一笔持有额变动拆进期初或本期。delta>0 记收入，delta<0 记发出。"""
+    if dt is None:
+        return opening, income, outgo
+    if dt < dfrom:
+        opening += delta
+    elif dt <= dto:
+        if delta >= 0:
+            income += delta
+        else:
+            outgo -= delta
+    return opening, income, outgo
 
 
 def _purchase_endorsement_settlements(company):
@@ -188,7 +237,7 @@ def company_overview(company, dfrom, dto):
     _add_opening(receivable, _s(ar_all.filter(is_opening=True), "amount_taxed"))
     _fold_unapplied_ar(receivable, _unapplied_ar_events(company), dfrom, dto)
 
-    # 应收票据：与应收票据余额表同口径（减项按背书/兑付业务日 date，不用 created_at）
+    # 应收票据：与应收票据余额表同口径（背书/兑付/拆借按业务日，不用 created_at）
     nr_rows = receivable_notes_balance(company, dfrom, dto)
     note_recv = _row(
         sum((r["opening"] for r in nr_rows), Z),
@@ -1345,18 +1394,24 @@ def receivable_notes_balance(company, dfrom, dto):
             {"date": s.date or s.created_at.date(), "amount": s.amount})
     for d in NoteDisposal.objects.filter(company=company):
         sett.setdefault(d.note_id, []).append({"date": d.date, "amount": d.amount})
+    adjustments = _note_loan_adjustments(company)
+    entries = _borrow_entry_dates(company)
     rows = []
     for n in notes:
         opening = income = outgo = Z
-        if n.is_opening or n.draw_date < dfrom:
+        entry_date = entries.get(n.pk, n.draw_date)
+        if n.is_opening or entry_date < dfrom:
             opening += n.amount
-        elif n.draw_date <= dto:
+        elif entry_date <= dto:
             income += n.amount
         for s in sett.get(n.pk, []):
             if s["date"] < dfrom:
                 opening -= s["amount"]
             elif s["date"] <= dto:
                 outgo += s["amount"]
+        for dt, delta in adjustments.get(n.pk, []):
+            opening, income, outgo = _apply_holding_delta(
+                opening, income, outgo, dt, delta, dfrom, dto)
         ending = opening + income - outgo
         if opening or income or outgo or ending:
             rows.append({"note": n, "opening": opening, "income": income,
@@ -1371,8 +1426,19 @@ def note_ledger(company, note, dfrom, dto):
     其与发票的勾稽见对应发票「核销明细」。
     """
     from apps.core.docrefs import doc_settlement_url, invoice_settlement_url
-    events = [{"date": note.draw_date, "kind": "出票", "doc_no": note.note_no or note.doc_no,
-               "inc": note.amount, "dec": Z, "ref_url": "", "is_opening": note.is_opening}]
+    entry_date = _borrow_entry_dates(company).get(note.pk)
+    events = [{"date": entry_date or note.draw_date,
+               "kind": "拆入" if entry_date else "出票",
+               "doc_no": note.note_no or note.doc_no,
+               "inc": note.amount, "dec": Z, "ref_url": "",
+               "is_opening": False if entry_date else note.is_opening}]
+    for dt, delta in _note_loan_adjustments(company).get(note.pk, []):
+        if delta < 0:
+            events.append({"date": dt, "kind": "票据拆出" if not entry_date else "拆借归还",
+                           "doc_no": note.doc_no, "inc": Z, "dec": -delta, "ref_url": ""})
+        else:
+            events.append({"date": dt, "kind": "拆借归还",
+                           "doc_no": note.doc_no, "inc": delta, "dec": Z, "ref_url": ""})
     for s in (NoteSettlement.objects.filter(company=company, note_id=note.pk,
                                             note_kind=NoteSettlement.NoteKind.RECEIVABLE,
                                             is_endorsement=True)
