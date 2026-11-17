@@ -13,7 +13,11 @@ from apps.core.money import DEFAULT_TAX_RATE  # noqa: F401
 
 
 class Product(CompanyScopedModel):
-    """库存商品（主数据）。实际库存数量/金额/移动加权单价在库存模块维护。"""
+    """库存商品（主数据）。实际库存数量/金额/移动加权单价在库存模块维护。
+
+    count_in_inventory=False 的编码（如 D98运费 / D99服务费）可挂发票，但不进入
+    库存商品余额表 / 总览库存 / 发出商品 / 库存对账统计。
+    """
 
     code = models.CharField("商品编码", max_length=32)
     name = models.CharField("商品名称", max_length=128)
@@ -22,6 +26,10 @@ class Product(CompanyScopedModel):
     category = models.CharField("分类", max_length=64, blank=True)
     default_tax_rate = models.DecimalField(
         "默认税率", max_digits=5, decimal_places=4, default=DEFAULT_TAX_RATE
+    )
+    count_in_inventory = models.BooleanField(
+        "计入库存商品", default=True,
+        help_text="取消勾选后不进入库存余额表、总览库存、发出商品等存货统计（运费/服务费等非存货编码用）。",
     )
     is_active = models.BooleanField("启用", default=True)
     remark = models.CharField("备注", max_length=255, blank=True)

@@ -10,7 +10,7 @@ class ProductForm(CompanyScopedModelForm):
         model = Product
         fields = [
             "code", "name", "spec", "unit", "category",
-            "default_tax_rate", "is_active", "remark",
+            "default_tax_rate", "count_in_inventory", "is_active", "remark",
         ]
 
 

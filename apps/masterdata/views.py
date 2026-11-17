@@ -22,7 +22,8 @@ class ProductListView(ScopedListView):
     model = Product
     title = "商品"
     columns = [("编码", "code"), ("名称", "name"), ("规格", "spec"),
-               ("单位", "unit"), ("分类", "category"), ("启用", "is_active")]
+               ("单位", "unit"), ("分类", "category"),
+               ("计入库存", "count_in_inventory"), ("启用", "is_active")]
     search_fields = ["code", "name", "spec", "category"]
     q_placeholder = "编码/名称/规格"
     create_url_name = "product_create"

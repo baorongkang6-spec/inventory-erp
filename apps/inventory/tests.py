@@ -256,6 +256,22 @@ class StockDrilldownTests(TestCase):
         self.assertEqual(row["outgo_qty"], D("0.000"))
         self.assertEqual(row["ending_qty"], D("0.000"))
 
+    def test_non_inventory_product_excluded_from_balance(self):
+        """D98/D99 等 count_in_inventory=False 不进库存商品余额表与总览库存。"""
+        from datetime import date
+        from apps.opening.reports import company_overview, stock_products_balance
+
+        fee = Product.objects.create(
+            company=self.c1, code="D99", name="服务费", count_in_inventory=False)
+        post_inbound(self.c1, fee, D("1"), D("188679.25"), date=date(2026, 6, 10))
+        rows = stock_products_balance(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertFalse(any(r["product"].code == "D99" for r in rows))
+        # 仍只统计普通商品 P1
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["product"].code, "P1")
+        overview = company_overview(self.c1, date(2026, 6, 1), date(2026, 6, 30))
+        self.assertEqual(overview["stock"]["ending"], D("1200.00"))
+
 
 class StockMoveDateTests(TestCase):
     @classmethod

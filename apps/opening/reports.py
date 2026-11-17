@@ -316,7 +316,8 @@ def recon_lines(company, category):
             if n.unused > 0:
                 out.append({"label": f"{n.doc_no} {n.note_no}", "system_amount": n.unused})
     elif category == "stock":
-        for b in StockBalance.objects.filter(company=company).select_related("product").order_by("product__code"):
+        for b in (StockBalance.objects.filter(company=company, product__count_in_inventory=True)
+                  .select_related("product").order_by("product__code")):
             if b.amount or b.quantity:
                 out.append({"label": f"{b.product.code} {b.product.name}（{b.quantity}）",
                             "system_amount": b.amount})
@@ -363,11 +364,13 @@ def stock_products_balance(company, dfrom, dto):
 
     金额维度同总览（移动加权金额），同时给出数量便于下钻。当期无发生 期初=期末。
     作废冲正与台账一致：按原业务方向以收入/发出红字计入（非对面方向正数）。
+    不统计 count_in_inventory=False 的商品（如 D98运费 / D99服务费）。
     """
     from apps.inventory.ledger import period_flow_cols
 
     ZQ = Decimal("0.000")
-    moves = StockMove.objects.filter(company=company).select_related("product")
+    moves = (StockMove.objects.filter(company=company, product__count_in_inventory=True)
+             .select_related("product"))
     data = {}
     for m in moves:
         d = data.setdefault(m.product, {"opening": Z, "income": Z, "outgo": Z,
@@ -422,7 +425,8 @@ def goods_shipped_products_balance(company, dfrom, dto):
 
     lines = (SalesOutboundLine.objects
              .filter(outbound__company=company,
-                     outbound__sales_type=SalesOutbound.SalesType.SALE)
+                     outbound__sales_type=SalesOutbound.SalesType.SALE,
+                     product__count_in_inventory=True)
              .exclude(outbound__status=SalesOutbound.Status.VOID)
              .select_related("product", "outbound"))
     for ln in lines:
@@ -438,7 +442,8 @@ def goods_shipped_products_balance(company, dfrom, dto):
                  .filter(invoice__company=company,
                          invoice__status=SalesInvoice.Status.REGISTERED,
                          invoice__is_opening=False,
-                         source_outbound_line__isnull=False)
+                         source_outbound_line__isnull=False,
+                         source_outbound_line__product__count_in_inventory=True)
                  .select_related("source_outbound_line", "source_outbound_line__product", "invoice"))
     for il in inv_lines:
         ob = il.source_outbound_line
@@ -485,7 +490,8 @@ def goods_shipped_detail(companies, dfrom, dto):
 
     lines = (SalesOutboundLine.objects
              .filter(outbound__company__in=companies,
-                     outbound__sales_type=SalesOutbound.SalesType.SALE)
+                     outbound__sales_type=SalesOutbound.SalesType.SALE,
+                     product__count_in_inventory=True)
              .exclude(outbound__status=SalesOutbound.Status.VOID)
              .select_related("outbound", "outbound__company", "outbound__customer", "product"))
 
@@ -494,7 +500,8 @@ def goods_shipped_detail(companies, dfrom, dto):
                          invoice__status=SalesInvoice.Status.REGISTERED,
                          invoice__is_opening=False,
                          source_outbound_line__isnull=False,
-                         source_outbound_line__outbound__sales_type=SalesOutbound.SalesType.SALE)
+                         source_outbound_line__outbound__sales_type=SalesOutbound.SalesType.SALE,
+                         source_outbound_line__product__count_in_inventory=True)
                  .exclude(source_outbound_line__outbound__status=SalesOutbound.Status.VOID)
                  .select_related("invoice", "source_outbound_line"))
 

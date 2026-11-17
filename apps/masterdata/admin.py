@@ -5,8 +5,9 @@ from .models import BusinessPartner, Customer, ExpenseCategory, Product, Supplie
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ("code", "name", "spec", "unit", "company", "default_tax_rate", "is_active")
-    list_filter = ("company", "is_active", "category")
+    list_display = ("code", "name", "spec", "unit", "company", "default_tax_rate",
+                    "count_in_inventory", "is_active")
+    list_filter = ("company", "is_active", "count_in_inventory", "category")
     search_fields = ("code", "name", "spec")
 
 
